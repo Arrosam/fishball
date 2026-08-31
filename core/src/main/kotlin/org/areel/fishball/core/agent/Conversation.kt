@@ -32,6 +32,7 @@ import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.session.SessionManager
+import org.areel.fishball.core.session.estimateTokens
 import org.areel.fishball.core.trust.ClaimContext
 import org.areel.fishball.core.trust.Evidence
 import org.areel.fishball.core.trust.SourceRegistry
@@ -87,6 +88,7 @@ class Conversation(
     suspend fun ask(userText: String, progress: TurnProgress = TurnProgress.Silent): Reply {
         val at = now()
         rollSession(at)
+
         store.appendTurn(
             ConversationTurn(store.nextId(), session!!.id, at, Speaker.USER, userText),
         )
@@ -143,7 +145,11 @@ class Conversation(
         val result = llm.complete(
             LlmRequest(
                 system = AgentPrompt.SYSTEM,
-                messages = listOf(LlmMessage.user("${AgentPrompt.CLASSIFY}\n\n${userText}")),
+                // The tail, so a pronoun has something to point at: "那它呢" is a factual
+                // question about whatever was last discussed, and unaccompanied it is a
+                // question about nothing.
+                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
+                    LlmMessage.user("${AgentPrompt.CLASSIFY}\n\n${userText}"),
                 tools = listOf(Tools.classify),
                 forceTool = Tools.CLASSIFY,
                 maxTokens = 256,
@@ -416,17 +422,19 @@ class Conversation(
     ): Reply {
         val sources = evidence.map { SourceText(it.hit.url, it.text) }
         val verified = mutableMapOf<String, String>()
-        val messages = mutableListOf(
-            LlmMessage.user(
-                "${AgentPrompt.Label.QUESTION}${ctx.userText}\n\n$brief\n\n${AgentPrompt.COMPOSE}",
-            ),
+        // The turn is asked inside the conversation, not on its own. Without this the model
+        // reads every question as the first one it has ever been asked, which is what made
+        // follow-ups like "那它呢" answer about nothing.
+        val messages = priorTurns().toMutableList()
+        messages += LlmMessage.user(
+            "${AgentPrompt.Label.QUESTION}${ctx.userText}\n\n$brief\n\n${AgentPrompt.COMPOSE}",
         )
 
         repeat(MAX_COMPOSE_ROUNDS) { round ->
             val lastRound = round == MAX_COMPOSE_ROUNDS - 1
             val result = llm.complete(
                 LlmRequest(
-                    system = AgentPrompt.SYSTEM,
+                    system = systemWithBridge(),
                     messages = messages,
                     tools = if (evidence.isEmpty()) listOf(Tools.answer) else listOf(Tools.quote, Tools.answer),
                     // Free to quote as often as it likes, until the last round - where the
@@ -494,6 +502,12 @@ class Conversation(
             UiCopy.SERVICE_UNAVAILABLE,
             detail = "gave up after $MAX_COMPOSE_ROUNDS rounds without an ${Tools.ANSWER} call",
         )
+    }
+
+    /** Spec §8's bridge, when there is one: the previous session folded into a paragraph. */
+    private fun systemWithBridge(): String {
+        val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return AgentPrompt.SYSTEM
+        return AgentPrompt.SYSTEM + "\n\n" + AgentPrompt.Label.BRIDGE + bridge
     }
 
     /**
@@ -565,18 +579,84 @@ class Conversation(
 
     // ---- sessions -----------------------------------------------------------------------
 
-    private fun rollSession(at: Long) {
+    private suspend fun rollSession(at: Long) {
         // §8 — invisible to the user. Crossing the boundary bounds the prompt; it does not
         // clear anything they can see, and the log survives it untouched.
-        when (val decision = sessions.decide(session, store.lastTurnAt(), at) { store.nextId() }) {
-            is org.areel.fishball.core.session.SessionDecision.Start ->
-                session = Session(decision.newSessionId, at)
+        if (session == null) session = store.loadSession()
+        val sofar = session?.let { store.turnsInSession(it.id) }.orEmpty()
+        val size = estimateTokens(sofar.joinToString("\n") { it.text })
 
-            is org.areel.fishball.core.session.SessionDecision.RollOver ->
-                session = Session(decision.newSessionId, at, bridge = decision.previous.bridge)
+        when (
+            val decision =
+                sessions.decide(session, store.lastTurnAt(), at, size) { store.nextId() }
+        ) {
+            is org.areel.fishball.core.session.SessionDecision.Start ->
+                begin(Session(decision.newSessionId, at))
+
+            is org.areel.fishball.core.session.SessionDecision.RollOver -> {
+                // Both stale and large. Everything said is still in the log; what rides forward
+                // is a paragraph, so a back-reference still resolves without carrying the whole
+                // conversation into every future prompt.
+                val bridge = if (sessions.needsBridge(sofar.size)) summarise(sofar) else null
+                begin(Session(decision.newSessionId, at, bridge = bridge))
+            }
 
             is org.areel.fishball.core.session.SessionDecision.Continue -> Unit
         }
+    }
+
+    private fun begin(next: Session) {
+        session = next
+        store.saveSession(next)
+    }
+
+    /**
+     * Fold the conversation so far into one paragraph and start again from it.
+     *
+     * Called when the model changes, as well as on the §8 rollover: a different model has not
+     * read any of this, and handing it a transcript written by another one is worse context
+     * than a summary of what the two of you actually settled.
+     */
+    suspend fun compact() {
+        val open = session ?: store.loadSession() ?: return
+        val sofar = store.turnsInSession(open.id)
+        val bridge = if (sofar.isEmpty()) open.bridge else summarise(sofar)
+        begin(Session(store.nextId(), now(), bridge = bridge))
+    }
+
+    private suspend fun summarise(turns: List<ConversationTurn>): String? {
+        val transcript = turns.joinToString("\n") {
+            AgentPrompt.logLine(it.speaker == Speaker.USER, it.text)
+        }
+        val result = llm.complete(
+            LlmRequest(
+                system = AgentPrompt.SYSTEM,
+                messages = listOf(LlmMessage.user("${AgentPrompt.COMPACT}\n\n$transcript")),
+                maxTokens = 1024,
+            ),
+        )
+        return (result as? LlmResult.Ok)?.text?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * What has already been said this session, as turns the model can read.
+     *
+     * Rebuilt from the log rather than held alongside it. The log is written on every turn and
+     * survives a restart, so using anything else would mean two records of one conversation and
+     * a way for them to disagree — which is how the thread came back after a restart while the
+     * model behaved as though nothing had been said.
+     *
+     * The final entry is dropped: it is the question being answered right now, already written
+     * into this turn's own prompt.
+     */
+    private fun priorTurns(): List<LlmMessage> {
+        val open = session ?: return emptyList()
+        return store.turnsInSession(open.id)
+            .dropLast(1)
+            .map {
+                if (it.speaker == Speaker.USER) LlmMessage.user(it.text)
+                else LlmMessage.assistant(it.text)
+            }
     }
 
     private fun failure(): Reply = Reply(UiCopy.SERVICE_UNAVAILABLE, detail = lastFailure)
@@ -587,6 +667,9 @@ class Conversation(
 
         /** A card the reader will actually look at. Past four it is a list, not a citation. */
         const val MAX_SOURCES_SHOWN = 4
+
+        /** Enough for a pronoun to resolve, not so much that routing costs a full transcript. */
+        const val CLASSIFY_CONTEXT_TURNS = 6
     }
 }
 

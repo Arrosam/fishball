@@ -1,5 +1,6 @@
 package org.areel.fishball.core.memory
 
+import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.text.Similarity
 
 /**
@@ -15,6 +16,7 @@ class InMemoryStore : MemoryStore {
     private val preferences = mutableListOf<PreferenceFact>()
     private val turns = mutableListOf<ConversationTurn>()
     private var idSeq = 0L
+    private var current: org.areel.fishball.core.session.Session? = null
 
     override fun nextId(): Long = ++idSeq
 
@@ -79,6 +81,12 @@ class InMemoryStore : MemoryStore {
             .take(limit)
             .map { it.first }
 
+    override fun saveSession(session: Session) {
+        current = session
+    }
+
+    override fun loadSession(): Session? = current
+
     override fun recentTurns(limit: Int): List<ConversationTurn> =
         turns.sortedBy { it.at }.takeLast(limit)
 
@@ -94,6 +102,7 @@ class InMemoryStore : MemoryStore {
      * disk instead of there being a second one that has to behave identically.
      */
     fun snapshot() = MemorySnapshot(
+        session = current?.let { SessionDto(it.id, it.startedAt, it.bridge) },
         world = world.map { it.toDto() },
         preferences = preferences.map { it.toDto() },
         turns = turns.map { it.toDto() },
@@ -106,6 +115,9 @@ class InMemoryStore : MemoryStore {
         turns.clear(); turns += snapshot.turns.map { it.toDomain() }
         // Never rewind: ids handed out before a crash must not be handed out again, so this
         // takes the larger of the recorded sequence and anything actually present.
+        current = snapshot.session?.let {
+            org.areel.fishball.core.session.Session(it.id, it.startedAt, it.bridge)
+        }
         idSeq = maxOf(
             snapshot.idSeq,
             (world.maxOfOrNull { it.id } ?: 0L),

@@ -10,6 +10,25 @@
     <!-- Masthead -->
     <string name="wordmark">FISHBALL</string>
     <string name="memory">记忆</string>
+    <string name="more">更多</string>
+    <string name="settings">设置</string>
+
+    <!--
+      Settings. Two things only, because they are the only two the user can meaningfully
+      change; the model is named for what it does to them, not for what it is.
+    -->
+    <!-- Shown in the thread when the session was folded, so the change is visible rather than felt. -->
+    <string name="session_compacted">好，我把刚才聊的整理了一下，接着聊。</string>
+
+    <string name="settings_mode">模式</string>
+    <string name="mode_fast">快速模式</string>
+    <string name="mode_pro">专业模式</string>
+    <string name="mode_note">换模式以后，之前聊的会整理成一段摘要再接着聊。</string>
+    <string name="mode_unavailable">这个激活码用不了专业模式。</string>
+    <string name="settings_key">激活码</string>
+    <string name="settings_change">更改</string>
+    <string name="settings_save">保存</string>
+    <string name="settings_cancel">取消</string>
 
     <!-- Composer: no placeholder by design. The field and the send control carry it. -->
     <string name="send">发送</string>
@@ -42,6 +61,10 @@
     <!-- The gate's failure detail, one tap under the message. For whoever gets asked for help. -->
     <!-- Spec §21 — the wait, named. -->
     <string name="thinking">思考中…</string>
+
+    <!-- The working-out, kept after the answer arrives rather than discarded with the wait. -->
+    <string name="process_show">看过程</string>
+    <string name="open_source">打开原网页</string>
 
     <string name="detail_show">详情</string>
     <string name="detail_hide">收起</string>

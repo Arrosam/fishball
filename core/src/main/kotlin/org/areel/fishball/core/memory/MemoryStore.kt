@@ -1,5 +1,6 @@
 package org.areel.fishball.core.memory
 
+import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.trust.Topic
 
 /**
@@ -51,6 +52,18 @@ interface MemoryStore {
     fun recentTurns(limit: Int = 100): List<ConversationTurn>
 
     fun lastTurnAt(): Long?
+
+    // ---- session --------------------------------------------------------------------
+
+    /**
+     * The session in progress, so closing the app does not silently start a new one. Without
+     * this the thread survives a restart but the model's sense of the conversation does not,
+     * which is a worse failure than either alone: it answers as though it had never been told
+     * anything, about a conversation the user can still see.
+     */
+    fun saveSession(session: Session)
+
+    fun loadSession(): Session?
 
     fun nextId(): Long
 }

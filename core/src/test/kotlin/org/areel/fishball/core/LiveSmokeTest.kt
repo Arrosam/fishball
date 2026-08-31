@@ -62,6 +62,40 @@ class LiveSmokeTest {
         assertTrue(llm.model == "fishball-flash", "client kept the refused model")
     }
 
+    /**
+     * The change that is easiest to break without noticing: a turn is asked inside a
+     * conversation, not on its own. Before this, every question was the first one the model had
+     * ever seen, so a follow-up carrying a pronoun answered about nothing at all.
+     */
+    @Test
+    fun `a follow-up knows what it is following up on`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val store = InMemoryStore()
+        val conversation = Conversation(
+            llm = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = store,
+        )
+
+        runBlocking { conversation.ask("布洛芬常见的副作用是什么？") }
+        // No subject of its own. Only the previous turn says what "它" is.
+        val followUp = runBlocking { conversation.ask("那它伤肝吗？") }
+
+        println("follow-up -> ${followUp.text.take(160)}")
+        assertTrue(
+            followUp.text.contains("布洛芬"),
+            "the follow-up lost the subject: ${followUp.text.take(200)}",
+        )
+        // One session, not two: nothing here should have tripped a rollover.
+        assertTrue(store.recentTurns().size >= 4, "turns went missing")
+    }
+
     @Test
     fun `a whole turn works against the live services`() {
         val key = key ?: run {

@@ -3,6 +3,7 @@ package org.areel.fishball.core.memory
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.areel.fishball.core.answer.AnswerShape
+import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.trust.Tier
 
 /**
@@ -27,7 +28,11 @@ data class MemorySnapshot(
     val preferences: List<PreferenceFactDto> = emptyList(),
     val turns: List<TurnDto> = emptyList(),
     val idSeq: Long = 0L,
+    val session: SessionDto? = null,
 )
+
+@Serializable
+data class SessionDto(val id: Long, val startedAt: Long, val bridge: String? = null)
 
 /*
  * DTOs rather than @Serializable on the domain types.
@@ -140,6 +145,13 @@ class PersistentStore(
         inner.searchTurns(query, from, to, limit)
 
     override fun recentTurns(limit: Int): List<ConversationTurn> = inner.recentTurns(limit)
+
+    override fun saveSession(session: Session) {
+        inner.saveSession(session)
+        flush()
+    }
+
+    override fun loadSession(): Session? = inner.loadSession()
 
     override fun lastTurnAt(): Long? = inner.lastTurnAt()
 

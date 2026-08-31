@@ -36,9 +36,19 @@ data class ChatMessage(
     val conflict: Boolean = false,
     /** Why this turn failed, when it did. Not persisted: an error is not part of the record. */
     val detail: String? = null,
+    /**
+     * How the turn was worked out. Held for as long as the app is open and not written to the
+     * log — §9 keeps what was said, and this is how it was arrived at, which is a different
+     * thing and a much larger one.
+     */
+    val steps: List<String> = emptyList(),
+    val thinking: String = "",
 )
 
-class ChatViewModel(private val backend: Backend) : ViewModel() {
+class ChatViewModel(
+    private val backend: Backend,
+    private val compactedNotice: String,
+) : ViewModel() {
 
     val messages = mutableStateListOf<ChatMessage>()
 
@@ -100,15 +110,26 @@ class ChatViewModel(private val backend: Backend) : ViewModel() {
                 // the frame thread. Narration hops back to the main thread to be shown.
                 withContext(Dispatchers.IO) { conversation.ask(question, progress) }
             }
+            val workedOut = narration.toList()
+            val reasoning = thinking
             narration.clear()
             thinking = ""
             streamed = ""
             // Also to logcat. The tap-to-expand is for whoever is holding the phone; this is
             // for whoever is holding a laptop, and it costs one line.
             reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
-            messages += reply.toMessage()
+            messages += reply.toMessage().copy(steps = workedOut, thinking = reasoning)
             busy = false
         }
+    }
+
+    /**
+     * The session was folded into a summary — because the model changed, or because §8's
+     * rollover fired. The thread stays on screen; what changed is what the model is holding,
+     * and a line saying so is better than the next answer quietly not remembering.
+     */
+    fun noteCompacted() {
+        messages += ChatMessage(fromUser = false, text = compactedNotice)
     }
 
     /** Read at the moment the memory screen opens, so it always shows what is actually stored. */
@@ -154,6 +175,7 @@ private fun ConversationTurn.toMessage() = ChatMessage(
         Source(
             name = it.displayName,
             host = normalizeHost(it.url) ?: UiCopy.UNPARSEABLE_SOURCE,
+            url = it.url,
             quote = it.quote,
         )
     },
@@ -164,6 +186,7 @@ private fun ConversationTurn.toMessage() = ChatMessage(
 private fun SourceRef.toUi() = Source(
     name = displayName,
     host = normalizeHost(url) ?: UiCopy.UNPARSEABLE_SOURCE,
+    url = url,
     quote = quote,
 )
 

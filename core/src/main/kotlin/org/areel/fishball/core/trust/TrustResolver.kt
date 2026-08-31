@@ -119,7 +119,11 @@ class TrustResolver(private val registry: SourceRegistry) {
 
         return Resolution(
             tier = Tier.LOW,
-            displayName = UiCopy.UNKNOWN_SOURCE,
+            // Named, not anonymised. An unlisted domain is one the registry has no opinion
+            // about — which is a statement about our list, not about the site — and calling
+            // every one of them 来源不明 told the user nothing while making six different
+            // sources look like the same one. The tier still says LOW; the name says bilibili.
+            displayName = registrableName(host) ?: UiCopy.UNKNOWN_SOURCE,
             via = Via.Unknown,
             promotable = true,
             notes = listOf("unlisted domain '$host'; defaulted to LOW"),

@@ -24,7 +24,9 @@ import org.areel.fishball.core.quote.SourceText
 import org.areel.fishball.core.search.Disconfirmation
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.session.SessionDecision
+import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
 import org.areel.fishball.core.session.SessionManager
+import org.areel.fishball.core.session.estimateTokens
 import org.areel.fishball.core.trust.Evidence
 import org.areel.fishball.core.trust.SearchHit
 import org.areel.fishball.core.trust.SourceRegistry
@@ -204,14 +206,36 @@ object BackendSpec {
         val next = { ++id }
         val current = Session(1, T0)
 
+        val small = 1_000
+        val large = SESSION_COMPACT_TOKENS + 1
+        val hourAgo = T0 - 61 * 60_000
+        val recently = T0 - 30 * 60_000
+
         check("§8 first ever turn starts a session",
-            sm.decide(null, null, T0, next) is SessionDecision.Start, "")
+            sm.decide(null, null, T0, small, next) is SessionDecision.Start, "")
         check("§8 active conversation continues",
-            sm.decide(current, T0 - 30 * 60_000, T0, next) is SessionDecision.Continue, "")
-        check("§8 one hour idle rolls over",
-            sm.decide(current, T0 - 61 * 60_000, T0, next) is SessionDecision.RollOver, "")
+            sm.decide(current, recently, T0, small, next) is SessionDecision.Continue, "")
+
+        // Amended by the author: idle alone used to roll over, and that made the boundary
+        // visible in the one way it must not be - come back after lunch, ask a follow-up, and
+        // it had forgotten the thing you were following up on. Compaction now needs the
+        // conversation to be both stale and big enough to be worth folding.
+        check("§8 an hour idle but small carries on",
+            sm.decide(current, hourAgo, T0, small, next) is SessionDecision.Continue, "")
+        check("§8 large but still talking carries on",
+            sm.decide(current, recently, T0, large, next) is SessionDecision.Continue, "")
+        check("§8 stale and large compacts",
+            sm.decide(current, hourAgo, T0, large, next) is SessionDecision.RollOver, "")
+
         check("§8 an empty session needs no bridge", !sm.needsBridge(1), "")
         check("§8 a real session needs a bridge", sm.needsBridge(2), "")
+
+        // The threshold is counted in tokens, not characters, and Chinese is about one token
+        // per character where English is about four characters per token.
+        check("§8 CJK counts about a token a character",
+            estimateTokens("布洛芬的常见副作用") in 8..10, "")
+        check("§8 latin counts about four characters a token",
+            estimateTokens("ibuprofen side effects") in 4..7, "")
     }
 
     // ---------------------------------------------------------------- R6

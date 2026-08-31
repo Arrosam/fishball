@@ -50,10 +50,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.areel.fishball.R
@@ -101,7 +106,11 @@ fun CheckerBand(modifier: Modifier = Modifier, cell: Dp = 8.dp, color: Color = A
 
 /** Near-black band: the mark and wordmark locked up left, the memory plate right. */
 @Composable
-fun TopBand(onMemoryClick: () -> Unit, modifier: Modifier = Modifier) {
+fun TopBand(
+    onMemoryClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier) {
         Row(
             Modifier
@@ -123,47 +132,100 @@ fun TopBand(onMemoryClick: () -> Unit, modifier: Modifier = Modifier) {
                     color = Areel.Paper,
                 )
             }
-            MemoryPlate(onClick = onMemoryClick)
+            MorePlate(onMemory = onMemoryClick, onSettings = onSettingsClick)
         }
     }
 }
 
 /**
- * The memory entry point. 44dp plate so it reads as something to press; no tilt, because the
- * app's one diagonal belongs to the mark.
+ * The masthead's one control.
  *
- * The brain is magenta and the label is ink, and that split is deliberate: magenta on paper
- * measures 3.86:1, which fails the 4.5:1 bar for text at this size and clears the 3:1 bar for
- * a non-text component. The icon may carry the accent; the word may not.
+ * It used to be 记忆 alone. A second destination made it a menu, and a menu of two is still
+ * worth having: the alternative was two plates competing for the same corner, and the corner is
+ * the only spot on the masthead that is not the wordmark.
+ *
+ * Hand-rolled rather than Material's DropdownMenu, which arrives with rounded corners and a
+ * tonal elevation that belong to a different design.
  */
 @Composable
-private fun MemoryPlate(onClick: () -> Unit) {
+private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
 
-    Column(
+    Box {
+        Box(
+            Modifier
+                .size(44.dp)
+                .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
+                .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                .clickable(interactionSource = interaction, indication = null) { open = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_more),
+                contentDescription = stringResource(R.string.more),
+                tint = Areel.Ink,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        if (open) {
+            val drop = with(LocalDensity.current) { 46.dp.roundToPx() }
+            Popup(
+                alignment = Alignment.TopEnd,
+                offset = IntOffset(0, drop),
+                onDismissRequest = { open = false },
+            ) {
+                Column(
+                    Modifier
+                        // The width lives here, not on the rows. A Popup gives its content the
+                        // whole screen to measure against, and the divider inside fills what it
+                        // is given - so an unconstrained menu came out full-bleed.
+                        .width(190.dp)
+                        .shadow(8.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
+                        .background(Areel.Paper, RectangleShape)
+                        .border(1.dp, Areel.Ink),
+                ) {
+                    MenuRow(R.drawable.ic_brain, stringResource(R.string.memory)) {
+                        open = false
+                        onMemory()
+                    }
+                    Hairline(color = Areel.Ink20)
+                    MenuRow(R.drawable.ic_gear, stringResource(R.string.settings)) {
+                        open = false
+                        onSettings()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuRow(icon: Int, label: String, onClick: () -> Unit) {
+    Row(
         Modifier
-            .size(44.dp)
-            .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
-            .background(if (pressed) Areel.Concrete2 else Areel.Paper, RectangleShape)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_brain),
+            painter = painterResource(icon),
             contentDescription = null,
             tint = Areel.Magenta,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(17.dp),
         )
         Text(
-            stringResource(R.string.memory),
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 13.sp),
             color = Areel.Ink,
+            modifier = Modifier.padding(start = 12.dp),
         )
     }
 }
+
 
 // ---------------------------------------------------------------- the thread
 
@@ -185,9 +247,14 @@ fun AssistantBubble(
      * thing anyone helping them will ask for.
      */
     detail: String? = null,
+    /** §21's narration for this turn, kept after the answer landed rather than discarded. */
+    steps: List<String> = emptyList(),
+    /** What it was thinking while it worked. Same: kept, not thrown away when the answer came. */
+    thinking: String = "",
 ) {
     val edge = remember { Path() }
     var showDetail by remember(detail) { mutableStateOf(false) }
+    var showWork by remember(thinking) { mutableStateOf(false) }
     Box(
         modifier
             .fillMaxWidth()
@@ -224,6 +291,51 @@ fun AssistantBubble(
                 }
             }
             SourceCard(sources)
+
+            // The working-out does not vanish when the answer arrives. Watching it and then
+            // losing it is worse than never seeing it — the one moment you want to check how
+            // something was reached is after you have read what it says.
+            if (steps.isNotEmpty() || thinking.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(if (showWork) R.string.detail_hide else R.string.process_show),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Areel.Ink40,
+                    modifier = Modifier.clickable { showWork = !showWork },
+                )
+                if (showWork) {
+                    Spacer(Modifier.height(9.dp))
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Areel.Concrete2)
+                            .padding(11.dp),
+                    ) {
+                        steps.forEach {
+                            Row(
+                                Modifier.padding(bottom = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(Modifier.size(4.dp).background(Areel.Ink40))
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Areel.Ink,
+                                    modifier = Modifier.padding(start = 9.dp),
+                                )
+                            }
+                        }
+                        if (thinking.isNotBlank()) {
+                            if (steps.isNotEmpty()) Spacer(Modifier.height(6.dp))
+                            Text(
+                                thinking,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Ink40,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -346,6 +458,7 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
             // retrieved text by the verifier, never the model's rendering of it. A source with
             // nothing to open says so rather than opening onto a paraphrase.
             var open by remember(source) { mutableStateOf(false) }
+            val uriHandler = LocalUriHandler.current
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -354,13 +467,22 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
                     .padding(horizontal = 11.dp, vertical = 9.dp),
             ) {
                 Row(verticalAlignment = Alignment.Top) {
+                    // The mark opens the page; the rest of the row opens the quotation. Two
+                    // targets on one row, and the smaller one is the one that leaves the app,
+                    // which is the right way round for a control nobody meant to press.
                     Icon(
                         painter = painterResource(R.drawable.ic_source),
-                        contentDescription = null,
-                        tint = Areel.Ink,
-                        modifier = Modifier.size(12.dp).offset(y = 2.dp),
+                        contentDescription = stringResource(R.string.open_source),
+                        tint = if (source.url.isBlank()) Areel.Ink40 else Areel.Magenta,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .offset(x = (-6).dp, y = (-4).dp)
+                            .clickable(enabled = source.url.isNotBlank()) {
+                                runCatching { uriHandler.openUri(source.url) }
+                            }
+                            .padding(9.dp),
                     )
-                    Column(Modifier.padding(start = 9.dp).weight(1f)) {
+                    Column(Modifier.padding(start = 3.dp).weight(1f)) {
                         Text(source.name, style = MaterialTheme.typography.labelSmall, color = Areel.Ink)
                         Text(source.host, style = MaterialTheme.typography.labelMedium, color = Areel.Ink40)
                     }
@@ -396,6 +518,8 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
 data class Source(
     val name: String,
     val host: String,
+    /** Where it came from. The card opens this. */
+    val url: String = "",
     /**
      * Spec §25 — the source's own wording, sliced out of the retrieved text by the verifier.
      * Null when the model cited a source without quoting it, which is allowed; what is not

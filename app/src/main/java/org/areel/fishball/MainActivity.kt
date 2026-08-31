@@ -28,6 +28,8 @@ import org.areel.fishball.ui.ChatScreen
 import org.areel.fishball.ui.ChatViewModel
 import org.areel.fishball.ui.KeyGate
 import org.areel.fishball.ui.MemoryScreen
+import org.areel.fishball.ui.SettingsScreen
+import org.areel.fishball.ui.Mode
 import org.areel.fishball.ui.theme.FishBallTheme
 
 /**
@@ -51,7 +53,7 @@ private fun FishBallApp() {
     // The key is stored, so the gate is a first-run screen rather than a login. Someone who
     // has to type a key every morning will stop using the app by Thursday.
     var signedIn by remember { mutableStateOf(backend.restore()) }
-    var showMemory by remember { mutableStateOf(false) }
+    var screen by remember { mutableStateOf(Screen.THREAD) }
     var checking by remember { mutableStateOf(false) }
     var gateError by remember { mutableStateOf<String?>(null) }
     var gateDetail by remember { mutableStateOf<String?>(null) }
@@ -111,24 +113,82 @@ private fun FishBallApp() {
         return
     }
 
+    val compacted = stringResource(R.string.session_compacted)
     val vm: ChatViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ChatViewModel(backend) as T
+                ChatViewModel(backend, compacted) as T
         },
     )
 
-    if (showMemory) {
-        // System back leaves the memory screen rather than the app — the user has no concept
-        // of a screen stack, so "back" has to mean the obvious thing.
-        BackHandler { showMemory = false }
-        MemoryScreen(
+    // System back leaves whichever screen is open rather than the app — the user has no concept
+    // of a screen stack, so "back" has to mean the obvious thing.
+    if (screen != Screen.THREAD) BackHandler { screen = Screen.THREAD }
+
+    when (screen) {
+        Screen.THREAD -> ChatScreen(
+            vm = vm,
+            onMemoryClick = { screen = Screen.MEMORY },
+            onSettingsClick = { screen = Screen.SETTINGS },
+        )
+
+        Screen.MEMORY -> MemoryScreen(
             world = remember { vm.worldMemories() },
             personal = remember { vm.personalMemories() },
-            onBack = { showMemory = false },
+            onBack = { screen = Screen.THREAD },
         )
-    } else {
-        ChatScreen(vm = vm, onMemoryClick = { showMemory = true })
+
+        Screen.SETTINGS -> {
+            var mode by remember { mutableStateOf(if (backend.modelId == Backend.PRO) Mode.PRO else Mode.FAST) }
+            var settingsBusy by remember { mutableStateOf(false) }
+            var settingsError by remember { mutableStateOf<String?>(null) }
+            var keyHint by remember { mutableStateOf(backend.keyHint()) }
+            val modeUnavailable = stringResource(R.string.mode_unavailable)
+
+            SettingsScreen(
+                mode = mode,
+                keyHint = keyHint,
+                busy = settingsBusy,
+                error = settingsError,
+                onModeChange = { wanted ->
+                    settingsBusy = true
+                    settingsError = null
+                    scope.launch {
+                        val id = if (wanted == Mode.PRO) Backend.PRO else Backend.FAST
+                        if (backend.setModel(id)) {
+                            mode = wanted
+                            // The switch compacted the session, so the thread on screen is no
+                            // longer the conversation the model is holding. Saying so beats
+                            // letting the next answer quietly not remember.
+                            vm.noteCompacted()
+                        } else {
+                            settingsError = modeUnavailable
+                        }
+                        settingsBusy = false
+                    }
+                },
+                onKeyChange = { key ->
+                    settingsBusy = true
+                    settingsError = null
+                    scope.launch {
+                        when (val check = backend.signIn(key)) {
+                            is KeyCheck.Valid -> {
+                                keyHint = backend.keyHint()
+                                mode = if (backend.modelId == Backend.PRO) Mode.PRO else Mode.FAST
+                            }
+                            KeyCheck.Rejected -> settingsError = rejected
+                            is KeyCheck.NoModel -> settingsError = noModel
+                            is KeyCheck.Unreachable -> settingsError = unreachable
+                        }
+                        settingsBusy = false
+                    }
+                },
+                onBack = { screen = Screen.THREAD },
+            )
+        }
     }
 }
+
+/** The three destinations. A nav graph would be more machinery than this routes. */
+private enum class Screen { THREAD, MEMORY, SETTINGS }

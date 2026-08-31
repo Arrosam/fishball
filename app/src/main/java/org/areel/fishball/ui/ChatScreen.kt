@@ -66,7 +66,11 @@ import org.areel.fishball.ui.theme.Areel
 // competing overscroll effects, so the opt-in is the lesser problem.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
+fun ChatScreen(
+    vm: ChatViewModel,
+    onMemoryClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
     // Starts empty. An opening bubble would say what the empty state already says, and saying
     // it twice - once as ground, once as a message - would make the app look like it had been
     // talking before the user arrived.
@@ -105,7 +109,7 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
     ) {
         // The ink row only. Its checker is not part of this Column - it is painted over the
         // top of the thread below, so the thread genuinely runs underneath it.
-        TopBand(onMemoryClick = onMemoryClick)
+        TopBand(onMemoryClick = onMemoryClick, onSettingsClick = onSettingsClick)
 
         val bounce = rememberBounceState()
         // clipToBounds is load-bearing, not tidiness: the bounce translates the whole list
@@ -144,6 +148,8 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
                                 conflict = message.conflict,
                                 sources = message.sources,
                                 detail = message.detail,
+                                steps = message.steps,
+                                thinking = message.thinking,
                             )
                         }
                     }

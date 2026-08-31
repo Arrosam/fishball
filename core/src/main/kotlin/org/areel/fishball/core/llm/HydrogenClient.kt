@@ -119,6 +119,14 @@ class HydrogenClient(
         KeyCheck.Unreachable("${e::class.simpleName}: ${e.message ?: "no detail"}  @ $baseUrl")
     }
 
+    /**
+     * Whether this key may drive [candidate].
+     *
+     * Asked before switching rather than discovered afterwards: picking 专业模式 and having it
+     * silently fall back on the next question is worse than being told it is not available.
+     */
+    suspend fun entitled(candidate: String): Boolean = probe(candidate).first in 200..299
+
     /** The cheapest real call there is, to find out whether this key may drive this model. */
     private suspend fun probe(candidate: String): Pair<Int, String> = try {
         val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/messages") {

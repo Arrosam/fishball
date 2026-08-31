@@ -35,6 +35,40 @@ class Backend private constructor(
 
     val signedIn: Boolean get() = conversation != null
 
+    /** The model in use, as stored. Empty before the first sign-in. */
+    val modelId: String get() = prefs().getString(KEY_MODEL, null).orEmpty()
+
+    /** Enough of the code to recognise it by, and not enough to read it off a screen. */
+    fun keyHint(): String {
+        val key = prefs().getString(KEY_API, null).orEmpty()
+        return if (key.length <= 10) key else key.take(6) + "…" + key.takeLast(4)
+    }
+
+    /**
+     * Switch models, then fold the conversation so far into a summary.
+     *
+     * The compaction is not housekeeping. The new model has read none of this conversation, and
+     * a transcript written by a different one is worse context than a paragraph describing what
+     * the two of you actually settled — so the switch and the compaction are one action.
+     *
+     * Returns false when the key is not entitled to that model, having changed nothing.
+     */
+    suspend fun setModel(id: String): Boolean {
+        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
+        val client = HydrogenClient(apiKey = key, model = id, onModelChanged = ::rememberModel)
+        if (!client.entitled(id)) return false
+
+        rememberModel(id)
+        conversation?.compact()
+        conversation = Conversation(
+            llm = client,
+            search = search,
+            registry = registry,
+            store = store,
+        )
+        return true
+    }
+
     /**
      * Spec §1 — the only thing the user is ever asked for. Checks the key against the proxy,
      * and on success discovers which model it can drive rather than assuming one.
@@ -83,8 +117,14 @@ class Backend private constructor(
 
     private fun prefs() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+
     companion object {
         const val SEARCH_URL = "https://search.areel.org"
+
+        /** The two the settings screen offers, named there for what they do rather than what they are. */
+        const val FAST = "fishball-flash"
+        const val PRO = "fishball-pro"
+
         const val LLM_URL = HydrogenClient.DEFAULT_BASE_URL
 
         private const val PREFS = "fishball"

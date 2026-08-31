@@ -17,6 +17,16 @@ data class Session(
     val bridge: String? = null,
 )
 
+/**
+ * Spec §8, as amended by the author: idle alone is not enough.
+ *
+ * A session is meant to be invisible, and rolling over on the clock alone makes it visible in
+ * the worst way — you come back after lunch, ask a follow-up, and it has forgotten what you
+ * were talking about. So the conversation runs on until it is *both* stale and large enough to
+ * be worth compacting. Either condition on its own leaves it exactly where it was.
+ */
+const val SESSION_COMPACT_TOKENS = 256_000
+
 sealed class SessionDecision {
     data class Continue(val session: Session) : SessionDecision()
 
@@ -30,12 +40,24 @@ sealed class SessionDecision {
     data class Start(val newSessionId: Long) : SessionDecision()
 }
 
-class SessionManager(private val idleTimeoutMs: Long = SESSION_IDLE_TIMEOUT_MS) {
+class SessionManager(
+    private val idleTimeoutMs: Long = SESSION_IDLE_TIMEOUT_MS,
+    private val compactTokens: Int = SESSION_COMPACT_TOKENS,
+) {
 
-    fun decide(current: Session?, lastTurnAt: Long?, now: Long, nextId: () -> Long): SessionDecision {
+    fun decide(
+        current: Session?,
+        lastTurnAt: Long?,
+        now: Long,
+        /** Rough size of what would be carried forward. See [estimateTokens]. */
+        contextTokens: Int,
+        nextId: () -> Long,
+    ): SessionDecision {
         if (current == null) return SessionDecision.Start(nextId())
         if (lastTurnAt == null) return SessionDecision.Continue(current)
-        return if (now - lastTurnAt >= idleTimeoutMs) {
+        val stale = now - lastTurnAt >= idleTimeoutMs
+        val large = contextTokens >= compactTokens
+        return if (stale && large) {
             SessionDecision.RollOver(current, nextId())
         } else {
             SessionDecision.Continue(current)
@@ -47,4 +69,22 @@ class SessionManager(private val idleTimeoutMs: Long = SESSION_IDLE_TIMEOUT_MS) 
      * carry, and asking the model to summarise silence wastes a call and produces noise.
      */
     fun needsBridge(previousTurnCount: Int): Boolean = previousTurnCount >= 2
+}
+
+/**
+ * Roughly how many tokens a piece of text will cost.
+ *
+ * Deliberately crude. A real tokeniser would have to match whichever model is behind the proxy
+ * today, and the only decision this feeds is a 256,000-token threshold — a number chosen to be
+ * far from any borderline. CJK runs about a token a character; Latin runs about four characters
+ * to the token, so each is counted on its own terms rather than averaged into something wrong
+ * for both.
+ */
+fun estimateTokens(text: String): Int {
+    var cjk = 0
+    var other = 0
+    for (c in text) {
+        if (c.code in 0x2E80..0x9FFF || c.code in 0xF900..0xFAFF) cjk++ else other++
+    }
+    return cjk + other / 4
 }

@@ -197,6 +197,22 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
      */
     val SUBMIT_ANSWER = "核对结果在上面。现在把最终答案用 answer 工具交上来。".trim()
 
+    /**
+     * Spec §8 — what rides forward when a session is compacted.
+     *
+     * Asked for as prose rather than notes because the next session reads it as context, not as
+     * a record: what was being discussed, what was settled, and what was left hanging.
+     */
+    val COMPACT = """
+下面是你和他之前的对话。把它压缩成一段话，写给「接着聊下去的你」看。
+
+要留下的：他问过什么、你查到的结论是什么、还有什么没聊完。
+要留下的还有：他顺带说到的关于他自己的事，比如在吃什么药、有什么忌口。
+不要留：具体的网址、搜索过程、你当时的措辞。
+
+只写这一段话，不要加标题，不要分点。
+""".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："
@@ -207,6 +223,7 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
         const val FROM_MEMORY = "这是以前查过、现在还没过期的结论，可以直接用，不用再查："
         const val FROM_LOG = "这是他以前跟你说过的话："
         const val NOTHING_LOGGED = "（没有找到相关的记录）"
+        const val BRIDGE = "你们之前聊过的："
     }
 
     /** One search result, as the model sees it. The index is what `select_evidence` reports back. */
