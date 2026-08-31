@@ -27,6 +27,41 @@ class LiveSmokeTest {
 
     private val key: String? = System.getenv("HYDROGEN_KEY")?.takeIf { it.isNotBlank() }
 
+    /**
+     * The state a phone was actually found in: a model id stored by an earlier build, which the
+     * key is no longer entitled to use. Nothing re-opens the gate once it has been passed, so
+     * without recovery here every turn fails 403 forever and the only fix is clearing app data
+     * — which the device in question does not permit.
+     */
+    @Test
+    fun `a stale model id recovers instead of failing every turn`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        var persisted: String? = null
+        val llm = HydrogenClient(
+            apiKey = key,
+            model = "fishball-pro",
+            onModelChanged = { persisted = it },
+        )
+
+        val result = runBlocking {
+            llm.complete(
+                org.areel.fishball.core.llm.LlmRequest(
+                    system = "你是一个测试。",
+                    messages = listOf(org.areel.fishball.core.llm.LlmMessage.user("说一个字")),
+                    maxTokens = 64,
+                ),
+            )
+        }
+        println("recovered to -> $persisted")
+        println("result       -> ${result::class.simpleName}")
+        assertTrue(result is org.areel.fishball.core.llm.LlmResult.Ok, "did not recover: $result")
+        assertTrue(persisted == "fishball-flash", "did not re-pick and report: $persisted")
+        assertTrue(llm.model == "fishball-flash", "client kept the refused model")
+    }
+
     @Test
     fun `a whole turn works against the live services`() {
         val key = key ?: run {

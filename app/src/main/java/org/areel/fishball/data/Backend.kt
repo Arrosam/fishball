@@ -40,7 +40,7 @@ class Backend private constructor(
      * and on success discovers which model it can drive rather than assuming one.
      */
     suspend fun signIn(key: String): KeyCheck {
-        val client = HydrogenClient(apiKey = key)
+        val client = HydrogenClient(apiKey = key, onModelChanged = ::rememberModel)
         val check = client.validate()
         if (check is KeyCheck.Valid) {
             prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).apply()
@@ -65,12 +65,20 @@ class Backend private constructor(
         val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
         val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: return false
         conversation = Conversation(
-            llm = HydrogenClient(apiKey = key, model = model),
+            llm = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel),
             search = search,
             registry = registry,
             store = store,
         )
         return true
+    }
+
+    /**
+     * A model id is a cache, not a setting. The client re-picks when the stored one is refused,
+     * and this is what stops that costing a wasted round trip on every turn afterwards.
+     */
+    private fun rememberModel(model: String) {
+        prefs().edit().putString(KEY_MODEL, model).apply()
     }
 
     private fun prefs() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

@@ -51,6 +51,11 @@ class HydrogenClient(
      * catalogue changes, and it is the user's catalogue, not ours.
      */
     var model: String = "",
+    /**
+     * Called when a turn had to re-pick the model, so the caller can persist the new one.
+     * Without it the recovery below would repeat on every single turn forever.
+     */
+    private val onModelChanged: (String) -> Unit = {},
     private val http: HttpClient = defaultClient(),
 ) : LlmClient {
 
@@ -146,7 +151,17 @@ class HydrogenClient(
         0 to "${e::class.simpleName}: ${e.message ?: "no detail"}"
     }
 
-    override suspend fun complete(request: LlmRequest): LlmResult {
+    override suspend fun complete(request: LlmRequest): LlmResult = complete(request, recover = true)
+
+    /**
+     * [recover] guards the one retry. A model id is remembered between launches, and an
+     * entitlement is not a property of the id — the key can lose access, or the id can have
+     * been written by a build that chose it differently. Either way the symptom is every turn
+     * failing 403 with no way back, because nothing re-opens the gate once it has been passed.
+     * So a permission refusal re-runs discovery, tells the caller what to store, and tries once
+     * more; anything else is reported as it stands.
+     */
+    private suspend fun complete(request: LlmRequest, recover: Boolean): LlmResult {
         if (model.isBlank()) {
             return LlmResult.Failed("no model selected; validate() first", retryable = false)
         }
@@ -157,8 +172,18 @@ class HydrogenClient(
                 setBody(body(request).toString())
             }
             if (!response.status.isSuccess()) {
+                val body = response.bodyAsText()
+                val refused = response.status.value == 403 && body.contains("permission")
+                if (recover && refused) {
+                    val stale = model
+                    val recheck = validate()
+                    if (recheck is KeyCheck.Valid && recheck.chosen != stale) {
+                        onModelChanged(recheck.chosen)
+                        return complete(request, recover = false)
+                    }
+                }
                 return LlmResult.Failed(
-                    "HTTP ${response.status.value}: ${response.bodyAsText().take(200)}",
+                    "HTTP ${response.status.value}: ${body.take(200)}",
                     // 429 and 5xx are worth another go; a 400 will fail identically forever.
                     retryable = response.status.value == 429 || response.status.value >= 500,
                 )
