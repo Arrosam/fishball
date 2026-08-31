@@ -113,6 +113,8 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
             .statusBarsPadding()
             .imePadding(),
     ) {
+        // The ink row only. Its checker is not part of this Column - it is painted over the
+        // top of the thread below, so the thread genuinely runs underneath it.
         TopBand(onMemoryClick = onMemoryClick)
 
         val bounce = rememberBounceState()
@@ -134,7 +136,10 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
                 modifier = Modifier
                     .fillMaxSize()
                     .offset { IntOffset(0, bounce.translation) },
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp),
+                // 32dp of top padding, not 16: the checker is an overlay now rather than a
+                // row in the Column above, so the list has to leave its height clear or the
+                // first message would start life half-hidden under it.
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 32.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 itemsIndexed(messages) { index, message ->
@@ -162,6 +167,12 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
                 }
             }
             }
+
+            // The masthead's checker, over the thread rather than above it. The squares that
+            // are not ink are left unpainted, so a message scrolled up under the band shows
+            // through the gaps instead of disappearing behind a grey chequerboard - which is
+            // the whole reason the strip is a checker and not a rule.
+            CheckerBand(Modifier.align(Alignment.TopCenter))
 
             // The shade the composer casts on the thread running under it. Modifier.shadow on
             // the bar alone is not enough: Android throws elevation shadows downward, so a bar

@@ -118,7 +118,6 @@ fun TopBand(onMemoryClick: () -> Unit, modifier: Modifier = Modifier) {
             }
             MemoryPlate(onClick = onMemoryClick)
         }
-        CheckerBand()
     }
 }
 
