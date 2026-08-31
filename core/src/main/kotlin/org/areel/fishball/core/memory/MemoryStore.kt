@@ -19,6 +19,21 @@ interface MemoryStore {
     /** Best match for a question, whether or not it is still fresh. Null if nothing is close. */
     fun recallWorldFact(question: String, now: Long): WorldRecall?
 
+    /**
+     * The few facts worth asking a reranker about, best first.
+     *
+     * Two passes on purpose. This one is cheap and local and casts a wide net; deciding whether
+     * the closest neighbour is actually an answer to *this* question is a judgement, and it is
+     * made outside — with a model, by the caller, which is the only part of it that needs a
+     * network.
+     */
+    fun recallCandidates(
+        question: String,
+        vector: List<Float>,
+        now: Long,
+        limit: Int = 4,
+    ): List<WorldRecall>
+
     /** Spec §19 — a world-fact correction invalidates the cache and forces a fresh search. */
     fun invalidateWorldFact(id: Long, at: Long)
 

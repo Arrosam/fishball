@@ -62,6 +62,7 @@ class Backend private constructor(
         conversation?.compact()
         conversation = Conversation(
             llm = client,
+            retrieval = client,
             search = search,
             registry = registry,
             store = store,
@@ -80,6 +81,7 @@ class Backend private constructor(
             prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).apply()
             conversation = Conversation(
                 llm = client,
+                retrieval = client,
                 search = search,
                 registry = registry,
                 store = store,
@@ -98,8 +100,10 @@ class Backend private constructor(
     fun restore(): Boolean {
         val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
         val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: return false
+        val client = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel)
         conversation = Conversation(
-            llm = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel),
+            llm = client,
+            retrieval = client,
             search = search,
             registry = registry,
             store = store,

@@ -10,6 +10,27 @@ package org.areel.fishball.core.text
  * Used for two different jobs: detecting reposted text (spec R5, echo is not corroboration)
  * and matching a repeat question against cached world knowledge (spec §10).
  */
+/**
+ * Cosine of two embeddings.
+ *
+ * Length-guarded rather than assumed equal: a store can outlive a change of embedding model,
+ * and comparing a 1024-dimension vector against a 768-dimension one would otherwise return a
+ * confident number about nothing.
+ */
+fun cosine(a: List<Float>, b: List<Float>): Double {
+    if (a.isEmpty() || a.size != b.size) return 0.0
+    var dot = 0.0
+    var na = 0.0
+    var nb = 0.0
+    for (i in a.indices) {
+        dot += a[i] * b[i].toDouble()
+        na += a[i] * a[i].toDouble()
+        nb += b[i] * b[i].toDouble()
+    }
+    if (na == 0.0 || nb == 0.0) return 0.0
+    return dot / (kotlin.math.sqrt(na) * kotlin.math.sqrt(nb))
+}
+
 object Similarity {
 
     fun bigrams(text: String): Set<String> {

@@ -120,6 +120,12 @@ class ChatViewModel(
             reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
             messages += reply.toMessage().copy(steps = workedOut, thinking = reasoning)
             busy = false
+
+            // §10/§20, after the answer is readable. Deciding what to keep is another whole
+            // model call, and nobody should be made to wait on it to read what they asked for.
+            if (reply.detail == null) {
+                launch(Dispatchers.IO) { runCatching { conversation?.harvest() } }
+            }
         }
     }
 

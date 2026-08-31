@@ -118,6 +118,31 @@ sealed class LlmResult {
     data class Failed(val reason: String, val retryable: Boolean) : LlmResult()
 }
 
+/**
+ * Meaning-based recall, as two models that are not the chat model.
+ *
+ * Kept separate from [LlmClient] because it answers a different question. The chat model writes;
+ * these two decide what the app is allowed to remember having read — and the reason memory needs
+ * them is that word overlap is the wrong test: "布洛芬伤胃吗" and "吃布洛芬会不会胃疼" share
+ * almost no characters and are the same question.
+ */
+interface Retrieval {
+
+    /** One vector per input, in the order given. Empty on failure — never a partial list. */
+    suspend fun embed(texts: List<String>): List<List<Float>>
+
+    /**
+     * Indices of [documents], best first, as judged against [query].
+     *
+     * A second opinion on top of the vectors: cosine finds things in the same neighbourhood,
+     * which for a cache of answers is not the same as finding the question that was asked.
+     * Returns the original order on failure, so a dead reranker degrades to cosine alone.
+     */
+    suspend fun rerank(query: String, documents: List<String>): List<Scored>
+}
+
+data class Scored(val index: Int, val score: Double)
+
 sealed class KeyCheck {
     data class Valid(val models: List<String>, val chosen: String) : KeyCheck()
 

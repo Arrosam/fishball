@@ -55,12 +55,19 @@ class HydrogenClient(
      */
     var model: String = "",
     /**
+     * Named separately from the chat model because they are separate deployments on the proxy
+     * and do not move together: the conversation switches between fast and pro, retrieval does
+     * not switch at all.
+     */
+    private val embeddingModel: String = EMBEDDING_MODEL,
+    private val rerankModel: String = RERANK_MODEL,
+    /**
      * Called when a turn had to re-pick the model, so the caller can persist the new one.
      * Without it the recovery below would repeat on every single turn forever.
      */
     private val onModelChanged: (String) -> Unit = {},
     private val http: HttpClient = defaultClient(),
-) : LlmClient {
+) : LlmClient, Retrieval {
 
     /**
      * Lists the catalogue, then *tries* each candidate before settling on one.
@@ -117,6 +124,64 @@ class HydrogenClient(
         // one-word message - UnknownHostException, SSLHandshakeException, SocketTimeoutException
         // - and the type is the part that says which of those it was.
         KeyCheck.Unreachable("${e::class.simpleName}: ${e.message ?: "no detail"}  @ $baseUrl")
+    }
+
+    override suspend fun embed(texts: List<String>): List<List<Float>> {
+        if (texts.isEmpty()) return emptyList()
+        return try {
+            val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/embeddings") {
+                authHeaders()
+                contentType(ContentType.Application.Json)
+                setBody(
+                    buildJsonObject {
+                        put("model", embeddingModel)
+                        putJsonArray("input") { texts.forEach { add(it) } }
+                    }.toString(),
+                )
+            }
+            if (!response.status.isSuccess()) return emptyList()
+            val data = Json.parseToJsonElement(response.bodyAsText())
+                .jsonObject["data"]?.jsonArray ?: return emptyList()
+            val vectors = data.mapNotNull { entry ->
+                (entry as? JsonObject)?.get("embedding")?.jsonArray
+                    ?.map { it.jsonPrimitive.content.toFloat() }
+            }
+            // All or nothing. A short list would silently pair vectors with the wrong texts,
+            // and a memory recalled against the wrong vector is worse than one not recalled.
+            if (vectors.size == texts.size) vectors else emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    override suspend fun rerank(query: String, documents: List<String>): List<Scored> {
+        if (documents.isEmpty()) return emptyList()
+        val untouched = documents.indices.map { Scored(it, 0.0) }
+        return try {
+            val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/rerank") {
+                authHeaders()
+                contentType(ContentType.Application.Json)
+                setBody(
+                    buildJsonObject {
+                        put("model", rerankModel)
+                        put("query", query)
+                        putJsonArray("documents") { documents.forEach { add(it) } }
+                    }.toString(),
+                )
+            }
+            if (!response.status.isSuccess()) return untouched
+            val results = Json.parseToJsonElement(response.bodyAsText())
+                .jsonObject["results"]?.jsonArray ?: return untouched
+            results.mapNotNull { entry ->
+                val row = entry as? JsonObject ?: return@mapNotNull null
+                val index = row["index"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val score = row["relevance_score"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0
+                Scored(index, score)
+            }.ifEmpty { untouched }
+        } catch (e: Exception) {
+            untouched
+        }
     }
 
     /**
@@ -538,6 +603,10 @@ class HydrogenClient(
 
     companion object {
         const val DEFAULT_BASE_URL = "https://llm.areel.org"
+
+        /** The proxy's own names for these. Not the chat catalogue, and not switchable. */
+        const val EMBEDDING_MODEL = "embedding"
+        const val RERANK_MODEL = "reranker"
 
         private const val ANTHROPIC_VERSION = "2023-06-01"
 

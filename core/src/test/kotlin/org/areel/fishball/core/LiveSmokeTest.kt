@@ -67,6 +67,49 @@ class LiveSmokeTest {
      * conversation, not on its own. Before this, every question was the first one the model had
      * ever seen, so a follow-up carrying a pronoun answered about nothing at all.
      */
+    /**
+     * The complaint this was built to answer: nothing was ever written to memory.
+     *
+     * The answer tool carried the fields, and the model answers in prose most turns and never
+     * reached them - so the feature existed entirely in the schema. Harvesting is now its own
+     * forced call, made after the answer is on screen.
+     */
+    @Test
+    fun `a turn is remembered, and found again by meaning`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val store = InMemoryStore()
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = store,
+        )
+
+        runBlocking {
+            conversation.ask("我对青霉素过敏。布洛芬常见的副作用是什么？")
+            conversation.harvest()
+        }
+
+        val facts = store.worldFacts()
+        println("world facts -> " + facts.joinToString { "${it.question} = ${it.answer} [${it.ttl.label}]" })
+        println("about user  -> " + store.preferences().joinToString { "${it.text} [${it.kind}]" })
+        assertTrue(facts.isNotEmpty(), "nothing was remembered")
+        assertTrue(facts.any { it.embedding.isNotEmpty() }, "a fact was stored without a vector")
+
+        // Asked again in different words. Word overlap would miss this; meaning should not.
+        val asked = "吃布洛芬会不会胃疼？"
+        val vector = runBlocking { llm.embed(listOf(asked)) }.first()
+        val candidates = store.recallCandidates(asked, vector, System.currentTimeMillis())
+        println("candidates  -> " + candidates.joinToString { "%.3f %s".format(it.similarity, it.fact.question) })
+        assertTrue(candidates.isNotEmpty(), "the paraphrase found nothing")
+    }
+
     @Test
     fun `a follow-up knows what it is following up on`() {
         val key = key ?: run {

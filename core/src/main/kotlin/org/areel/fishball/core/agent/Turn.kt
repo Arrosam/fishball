@@ -3,6 +3,7 @@ package org.areel.fishball.core.agent
 import org.areel.fishball.core.answer.AnswerPlan
 import org.areel.fishball.core.memory.PreferenceFact
 import org.areel.fishball.core.memory.WorldFact
+import org.areel.fishball.core.memory.WorldRecall
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.trust.Topic
 
@@ -45,6 +46,14 @@ data class TurnContext(
     val fork: ForkAnswer? = null,
     /** Set once the §16 clarifying turn has been answered. */
     val clarified: Boolean = false,
+    /**
+     * Spec §10 — what memory turned up for this question, decided before the engine runs.
+     *
+     * Recall used to be a store call inside the engine, which was fine while it was word
+     * overlap and impossible once it needed an embedding and a reranker. The lookup is IO, so
+     * it belongs to the driver; what to *do* with the result is a rule, so it stays here.
+     */
+    val recalled: WorldRecall? = null,
     /** Time window for a LOG_QUERY, if the user named one. */
     val logFrom: Long? = null,
     val logTo: Long? = null,

@@ -213,6 +213,26 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 只写这一段话，不要加标题，不要分点。
 """.trim()
 
+    /**
+     * Spec §10 and §20 — what to keep from a turn that has already been answered.
+     *
+     * A separate call, made after the answer is on screen, rather than fields hung off the
+     * answer tool. The model answers in prose most of the time and simply never reaches those
+     * fields, so memory that depended on them was never written at all. Asking one narrow
+     * question and forcing the tool is the difference between a feature and an intention.
+     */
+    val HARVEST = """
+下面是刚刚结束的一轮对话。判断这里面有没有值得记下来的东西，然后调用 remember。
+
+值得记的事实：查到的、以后再问还能用的结论。要写成一句完整的话，别写「见上文」。
+不值得记的：这一次特有的、或者你不确定的东西。宁可不记。
+
+值得记的关于他的事：他自己说到的情况，比如在吃什么药、对什么过敏、做什么工作。
+只记他真的说过的，不要从问题里猜。他问了某个病不代表他有这个病。
+
+两样都没有就把 nothing 设成 true。
+""".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："

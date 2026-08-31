@@ -72,6 +72,12 @@ data class WorldFact(
     val ttl: WorldTtl,
     val tier: Tier,
     val sources: List<String> = emptyList(),
+    /**
+     * The question, embedded. Empty when it could not be computed, in which case this fact is
+     * only findable by word overlap — which is worth keeping as a fallback and useless as the
+     * primary test: "布洛芬伤胃吗" and "吃布洛芬会不会胃疼" share almost no characters.
+     */
+    val embedding: List<Float> = emptyList(),
     val recordedAt: Long,
     /** Set when the user contradicted it (§19) — kept for provenance, never served. */
     val invalidatedAt: Long? = null,

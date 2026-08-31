@@ -160,7 +160,7 @@ object BackendSpec {
         val store = InMemoryStore()
         store.recordWorldFact(
             WorldFact(store.nextId(), "iPhone 17 Pro 电池容量是多少", "3582mAh",
-                WorldTtl.PERMANENT, Tier.AUTHORITATIVE, listOf("https://www.apple.com"), T0),
+                WorldTtl.PERMANENT, Tier.AUTHORITATIVE, listOf("https://www.apple.com"), recordedAt = T0),
         )
         check("§10 repeat question hits cache",
             store.recallWorldFact("iPhone 17 Pro 电池容量是多少", T0)?.servableWithoutSearch == true, "")
@@ -170,7 +170,7 @@ object BackendSpec {
         val staleId = store.nextId()
         store.recordWorldFact(
             WorldFact(staleId, "某只 ETF 今年表现如何", "涨了 3%",
-                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), T0),
+                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), recordedAt = T0),
         )
         check("§10 time-sensitive fact is never served from cache",
             store.recallWorldFact("某只 ETF 今年表现如何", T0)?.servableWithoutSearch == false, "")
@@ -396,19 +396,34 @@ object BackendSpec {
         val (e2, store2) = engine()
         store2.recordWorldFact(
             WorldFact(store2.nextId(), "iPhone 17 Pro 电池容量是多少", "3582mAh",
-                WorldTtl.PERMANENT, Tier.AUTHORITATIVE, emptyList(), T0),
+                WorldTtl.PERMANENT, Tier.AUTHORITATIVE, emptyList(), recordedAt = T0),
         )
         check("§10 fresh cache answers without searching",
-            e2.firstStep(TurnContext("iPhone 17 Pro 电池容量是多少", TurnKind.FACTUAL, now = T0))
-                is Step.ServeFromMemory, "")
+            e2.firstStep(
+                TurnContext(
+                    "iPhone 17 Pro 电池容量是多少",
+                    TurnKind.FACTUAL,
+                    now = T0,
+                    // Recall moved out of the engine when it grew a network call. What the
+                    // engine still owns is the rule: fresh answers, and only fresh ones.
+                    recalled = store2.recallWorldFact("iPhone 17 Pro 电池容量是多少", T0),
+                ),
+            ) is Step.ServeFromMemory, "")
 
         val (e3, store3) = engine()
         store3.recordWorldFact(
             WorldFact(store3.nextId(), "某只 ETF 今年表现如何", "涨了 3%",
-                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), T0),
+                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), recordedAt = T0),
         )
         check("§10 time-sensitive question re-searches",
-            e3.firstStep(TurnContext("某只 ETF 今年表现如何", TurnKind.FACTUAL, now = T0))
+            e3.firstStep(
+                TurnContext(
+                    "某只 ETF 今年表现如何",
+                    TurnKind.FACTUAL,
+                    now = T0,
+                    recalled = store3.recallWorldFact("某只 ETF 今年表现如何", T0),
+                ),
+            )
                 is Step.Search, "")
 
         // §20 confirmation gate

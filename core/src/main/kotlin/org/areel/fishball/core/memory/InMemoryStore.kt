@@ -2,6 +2,7 @@ package org.areel.fishball.core.memory
 
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.text.Similarity
+import org.areel.fishball.core.text.cosine
 
 /**
  * Reference implementation of [MemoryStore], held in RAM.
@@ -16,6 +17,11 @@ class InMemoryStore : MemoryStore {
     private val preferences = mutableListOf<PreferenceFact>()
     private val turns = mutableListOf<ConversationTurn>()
     private var idSeq = 0L
+
+    private companion object {
+        /** Low. This pass is a net, not a decision — the reranker makes the decision. */
+        const val CANDIDATE_FLOOR = 0.25
+    }
     private var current: org.areel.fishball.core.session.Session? = null
 
     override fun nextId(): Long = ++idSeq
@@ -36,6 +42,32 @@ class InMemoryStore : MemoryStore {
             ?: return null
         val (fact, score) = best
         return WorldRecall(fact, score, fact.isFresh(now))
+    }
+
+    override fun recallCandidates(
+        question: String,
+        vector: List<Float>,
+        now: Long,
+        limit: Int,
+    ): List<WorldRecall> {
+        val live = world.filter { it.invalidatedAt == null }
+        if (live.isEmpty()) return emptyList()
+
+        val scored = live.map { fact ->
+            // Cosine where both sides have a vector, word overlap where either does not. The
+            // fallback matters on a store written before embeddings existed, or written while
+            // the embedding model was unreachable.
+            val score = if (vector.isNotEmpty() && fact.embedding.isNotEmpty()) {
+                cosine(vector, fact.embedding)
+            } else {
+                Similarity.jaccard(question, fact.question)
+            }
+            WorldRecall(fact, score, fact.isFresh(now))
+        }
+        return scored
+            .filter { it.similarity >= CANDIDATE_FLOOR }
+            .sortedByDescending { it.similarity }
+            .take(limit)
     }
 
     override fun invalidateWorldFact(id: Long, at: Long) {

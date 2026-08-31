@@ -51,6 +51,7 @@ data class WorldFactDto(
     val ttl: String,
     val tier: String,
     val sources: List<String> = emptyList(),
+    val embedding: List<Float> = emptyList(),
     val recordedAt: Long,
     val invalidatedAt: Long? = null,
 )
@@ -117,6 +118,13 @@ class PersistentStore(
     override fun recallWorldFact(question: String, now: Long): WorldRecall? =
         inner.recallWorldFact(question, now)
 
+    override fun recallCandidates(
+        question: String,
+        vector: List<Float>,
+        now: Long,
+        limit: Int,
+    ): List<WorldRecall> = inner.recallCandidates(question, vector, now, limit)
+
     override fun invalidateWorldFact(id: Long, at: Long) {
         inner.invalidateWorldFact(id, at)
         flush()
@@ -166,7 +174,7 @@ class PersistentStore(
 // ---- mapping ------------------------------------------------------------------------------
 
 internal fun WorldFact.toDto() = WorldFactDto(
-    id, question, answer, ttl.name, tier.name, sources, recordedAt, invalidatedAt,
+    id, question, answer, ttl.name, tier.name, sources, embedding, recordedAt, invalidatedAt,
 )
 
 internal fun WorldFactDto.toDomain() = WorldFact(
@@ -178,6 +186,7 @@ internal fun WorldFactDto.toDomain() = WorldFact(
     ttl = enumOrNull<WorldTtl>(ttl) ?: WorldTtl.ALWAYS_RESEARCH,
     tier = enumOrNull<Tier>(tier) ?: Tier.LOW,
     sources = sources,
+    embedding = embedding,
     recordedAt = recordedAt,
     invalidatedAt = invalidatedAt,
 )

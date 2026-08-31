@@ -26,6 +26,7 @@ object Tools {
     const val SELECT = "select_evidence"
     const val QUOTE = "quote"
     const val ANSWER = "answer"
+    const val REMEMBER = "remember"
 
     val classify = LlmTool(
         name = CLASSIFY,
@@ -103,19 +104,23 @@ object Tools {
         },
     )
 
-    val answer = LlmTool(
-        name = ANSWER,
-        description = "把写好的答案交上来，顺便记下这一轮值得记住的东西。",
+    /**
+     * Spec §10/§20. Asked on its own after the answer, because hanging these off `answer` meant
+     * they were only ever filled on the turns where the model happened to use that tool.
+     */
+    val remember = LlmTool(
+        name = REMEMBER,
+        description = "记下这一轮里值得长期保留的东西。没有就把 nothing 设成 true。",
         inputSchema = obj {
             put("type", "object")
             putJsonObject("properties") {
-                stringProp("text", "给用户看的答案正文。纯文字，不要 markdown。")
+                boolProp("nothing", "这一轮没有值得记的东西。")
                 putJsonObject("world_fact") {
                     put("type", "object")
-                    put("description", "这一轮查到的、以后可以直接用的事实。没有就不要填。")
+                    put("description", "查到的、以后还能用的事实。没有就不要填。")
                     putJsonObject("properties") {
-                        stringProp("question", "这个事实回答的是什么问题。")
-                        stringProp("answer", "一句话的结论。")
+                        stringProp("question", "这个事实回答的是什么问题。写成一句完整的问句。")
+                        stringProp("answer", "一句话的结论。要能单独看懂。")
                         enumProp(
                             "ttl",
                             listOf(
@@ -124,14 +129,14 @@ object Tools {
                                 Vocabulary.TTL_ONE_MONTH,
                                 Vocabulary.TTL_ALWAYS_RESEARCH,
                             ),
-                            "这个事实多久会过期。价格、排行、政策这类容易变的选「总是重查」。",
+                            "多久会过期。价格、排行、政策这类容易变的选「总是重查」。",
                         )
                     }
                     putJsonArray("required") { add("question"); add("answer"); add("ttl") }
                 }
                 putJsonObject("about_user") {
                     put("type", "array")
-                    put("description", "这一轮他主动说到的、关于他自己的事。没有就不要填。")
+                    put("description", "他自己说到的、关于他本人的事。没有就不要填。")
                     putJsonObject("items") {
                         put("type", "object")
                         putJsonObject("properties") {
@@ -146,6 +151,18 @@ object Tools {
                         putJsonArray("required") { add("text"); add("kind") }
                     }
                 }
+            }
+            putJsonArray("required") { add("nothing") }
+        },
+    )
+
+    val answer = LlmTool(
+        name = ANSWER,
+        description = "把写好的答案交上来。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                stringProp("text", "给用户看的答案正文。纯文字，不要 markdown。")
             }
             putJsonArray("required") { add("text") }
         },

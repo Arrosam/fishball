@@ -55,7 +55,7 @@ class TurnEngine(
 
         // §10 — live cached knowledge answers immediately; anything expired or unclassifiable
         // goes back to search, because being confidently stale is the expensive failure.
-        val recall = store.recallWorldFact(ctx.userText, ctx.now)
+        val recall = ctx.recalled
         if (recall != null && recall.servableWithoutSearch) {
             return Step.ServeFromMemory(recall.fact)
         }

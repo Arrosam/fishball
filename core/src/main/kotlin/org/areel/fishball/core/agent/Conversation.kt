@@ -16,6 +16,7 @@ import org.areel.fishball.core.llm.LlmDelta
 import org.areel.fishball.core.llm.LlmMessage
 import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
+import org.areel.fishball.core.llm.Retrieval
 import org.areel.fishball.core.memory.CitedSource
 import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.MemoryStore
@@ -23,6 +24,7 @@ import org.areel.fishball.core.memory.PreferenceFact
 import org.areel.fishball.core.memory.PreferenceKind
 import org.areel.fishball.core.memory.Speaker
 import org.areel.fishball.core.memory.WorldFact
+import org.areel.fishball.core.memory.WorldRecall
 import org.areel.fishball.core.memory.WorldTtl
 import org.areel.fishball.core.quote.QuoteRequest
 import org.areel.fishball.core.quote.QuoteResult
@@ -51,6 +53,12 @@ import org.areel.fishball.core.trust.TrustResolver
  */
 class Conversation(
     private val llm: LlmClient,
+    /**
+     * Meaning-based recall. Null falls back to word overlap, which finds a cached answer only
+     * when the question is asked in nearly the same words - useful as a floor, useless as the
+     * only test.
+     */
+    private val retrieval: Retrieval? = null,
     private val search: SearchGateway,
     private val registry: SourceRegistry,
     private val store: MemoryStore,
@@ -81,6 +89,10 @@ class Conversation(
      */
     private var lastFailure: String? = null
 
+    /** The turn just finished, so [harvest] can be asked about it after the answer is on screen. */
+    private var lastExchange: Pair<String, String>? = null
+    private var lastSources: List<String> = emptyList()
+
     private data class Pending(val original: TurnContext, val kind: Kind) {
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
     }
@@ -94,9 +106,17 @@ class Conversation(
         )
 
         lastFailure = null
-        val ctx = context(userText, at, progress) ?: return failure()
+        val base = context(userText, at, progress) ?: return failure()
+        // §10 — only factual turns can be served from memory, so only they pay for the lookup.
+        val ctx = if (base.kind == TurnKind.FACTUAL) {
+            base.copy(recalled = recall(base.userText, at))
+        } else {
+            base
+        }
         val reply = run(engine.firstStep(ctx), ctx, progress)
 
+        lastExchange = userText to reply.text
+        lastSources = reply.sources.map { it.url }
         store.appendTurn(
             ConversationTurn(
                 id = store.nextId(),
@@ -190,6 +210,92 @@ class Conversation(
         // Defaulting to VENT: mistaking a request for advice as venting costs one extra turn,
         // mistaking venting as a request for advice talks over someone who wanted to be heard.
         return if (choice == "advice") ForkAnswer.WANT_ADVICE else ForkAnswer.VENT
+    }
+
+    /**
+     * Spec §10 — has this been answered before?
+     *
+     * Two stages, because they answer different questions. The vector pass finds things in the
+     * same neighbourhood; the reranker decides whether the nearest of them is actually an answer
+     * to *this* question, which cosine cannot tell you. Serving a stale near-miss as though it
+     * were the answer is the failure this guards against, and it is worse than searching again.
+     */
+    private suspend fun recall(question: String, at: Long): WorldRecall? {
+        val engine = retrieval ?: return store.recallWorldFact(question, at)
+
+        val vector = engine.embed(listOf(question)).firstOrNull().orEmpty()
+        val candidates = store.recallCandidates(question, vector, at)
+        if (candidates.isEmpty()) return null
+
+        val ranked = engine.rerank(question, candidates.map { it.fact.question })
+        val best = ranked.firstOrNull() ?: return null
+        if (best.score < RERANK_FLOOR) return null
+        return candidates.getOrNull(best.index)
+    }
+
+    /**
+     * Spec §10 and §20 — decide what to keep, once the answer is already on screen.
+     *
+     * Deliberately not part of [ask]. It is a whole extra model call and nobody should wait on
+     * it to read their answer; the caller runs it afterwards. It is also asked as its own
+     * narrow question rather than as fields on the answer tool, which is why memory now gets
+     * written at all - the model replies in prose most turns and never reached those fields.
+     */
+    suspend fun harvest() {
+        val (question, answer) = lastExchange ?: return
+        if (answer.isBlank()) return
+
+        val result = llm.complete(
+            LlmRequest(
+                system = AgentPrompt.SYSTEM,
+                messages = listOf(
+                    LlmMessage.user("${AgentPrompt.HARVEST}\n\n问：$question\n答：$answer"),
+                ),
+                tools = listOf(Tools.remember),
+                forceTool = Tools.REMEMBER,
+                maxTokens = 512,
+            ),
+        )
+        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input ?: return
+        if (input.bool("nothing") == true) return
+        keep(input)
+    }
+
+    private suspend fun keep(input: JsonObject) {
+        (input["world_fact"] as? JsonObject)?.let { fact ->
+            val question = fact.str("question").orEmpty()
+            val answer = fact.str("answer").orEmpty()
+            if (question.isNotBlank() && answer.isNotBlank()) {
+                store.recordWorldFact(
+                    WorldFact(
+                        id = store.nextId(),
+                        question = question,
+                        answer = answer,
+                        ttl = WorldTtl.parse(fact.str("ttl")),
+                        tier = Tier.LOW,
+                        sources = lastSources,
+                        // Embedded on the way in, so recall never has to embed the whole store.
+                        embedding = retrieval?.embed(listOf(question))?.firstOrNull().orEmpty(),
+                        recordedAt = now(),
+                    ),
+                )
+            }
+        }
+        (input["about_user"] as? kotlinx.serialization.json.JsonArray)?.forEach { element ->
+            val item = element as? JsonObject ?: return@forEach
+            val text = item.str("text").orEmpty()
+            if (text.isBlank()) return@forEach
+            val kind = preferenceKind(item.str("kind"))
+            store.recordPreference(
+                PreferenceFact(
+                    id = store.nextId(),
+                    text = text,
+                    kind = kind,
+                    ttl = kind.defaultTtl,
+                    recordedAt = now(),
+                ),
+            )
+        }
     }
 
     // ---- the step machine ---------------------------------------------------------------
@@ -455,7 +561,6 @@ class Conversation(
 
             val answerCall = result.toolCalls.firstOrNull { it.name == Tools.ANSWER }
             if (answerCall != null) {
-                remember(answerCall.input, ctx, plan, evidence)
                 return Reply(
                     text = answerCall.input.str("text").orEmpty().ifBlank { result.text },
                     shape = plan?.shape,
@@ -542,40 +647,6 @@ class Conversation(
 
     // ---- memory -------------------------------------------------------------------------
 
-    private fun remember(input: JsonObject, ctx: TurnContext, plan: AnswerPlan?, evidence: List<Evidence>) {
-        input["world_fact"]?.let { it as? JsonObject }?.let { fact ->
-            val question = fact.str("question").orEmpty()
-            val answer = fact.str("answer").orEmpty()
-            if (question.isNotBlank() && answer.isNotBlank()) {
-                store.recordWorldFact(
-                    WorldFact(
-                        id = store.nextId(),
-                        question = question,
-                        answer = answer,
-                        ttl = WorldTtl.parse(fact.str("ttl")),
-                        tier = evidence.maxOfOrNull { it.resolution.tier } ?: Tier.LOW,
-                        sources = plan?.sources.orEmpty(),
-                        recordedAt = now(),
-                    ),
-                )
-            }
-        }
-        input["about_user"]?.jsonArrayOrNull()?.forEach { element ->
-            val item = element as? JsonObject ?: return@forEach
-            val text = item.str("text").orEmpty()
-            if (text.isBlank()) return@forEach
-            val kind = preferenceKind(item.str("kind"))
-            store.recordPreference(
-                PreferenceFact(
-                    id = store.nextId(),
-                    text = text,
-                    kind = kind,
-                    ttl = kind.defaultTtl,
-                    recordedAt = now(),
-                ),
-            )
-        }
-    }
 
     // ---- sessions -----------------------------------------------------------------------
 
@@ -664,6 +735,15 @@ class Conversation(
     private companion object {
         /** Enough for a few rejected quotes; short enough that a loop cannot bill forever. */
         const val MAX_COMPOSE_ROUNDS = 5
+
+        /**
+         * How sure the reranker has to be before a cached answer is served instead of a search.
+         *
+         * Measured against the live model: a genuine match scored 0.96, an unrelated document
+         * 0.00002, and a same-topic-different-question one 0.24. Half is comfortably clear of
+         * the near-misses, which are the dangerous ones.
+         */
+        const val RERANK_FLOOR = 0.5
 
         /** A card the reader will actually look at. Past four it is a list, not a citation. */
         const val MAX_SOURCES_SHOWN = 4
