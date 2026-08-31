@@ -9,10 +9,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.areel.fishball.ui.theme.Areel
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /*
  * The two surfaces everything else sits on, plus the mark.
@@ -56,12 +62,26 @@ fun Modifier.cadGrid(
 }
 
 /**
- * areel.org's `.shell`, translated.
+ * areel.org's `.shell`, translated line by line from the CSS in `docs/preview/designs.html`
+ * rather than from memory:
  *
- * CSS gets four stacked box-shadows, two of them inset. Compose has no inset shadow, so the
- * top light lip and the bottom inner shade are drawn explicitly instead. The result is close
- * enough that the two surfaces read as the same material; it is not pixel-identical, and the
- * approximation is the reason this lives in one place.
+ * ```
+ * background: linear-gradient(148deg, rgba(255,255,255,.26) 0%,
+ *                                     rgba(255,255,255,.06) 46%,
+ *                                     rgba(255,255,255,.18) 100%);
+ * border: 1px solid rgba(255,255,255,.6);
+ * box-shadow: rgba(255,255,255,.7) 0 1px 0 inset,
+ *             rgba(16,16,16,.10)  0 0 0 1px inset,
+ *             rgba(16,16,16,.40)  0 -16px 30px -28px inset,
+ *             rgba(16,16,16,.45)  0 22px 40px -32px;
+ * ::before  linear-gradient(112deg, transparent 40%, rgba(255,255,255,.22) 46%, transparent 52%)
+ * ```
+ *
+ * Every earlier attempt at this paraphrased it, and each paraphrase cost a round: a
+ * corner-to-corner fill instead of 148deg, a hand-rolled streak instead of 112deg, an even
+ * elevation instead of a directional drop. Compose has no inset shadow, so the lip, the ring
+ * and the bottom shade are drawn explicitly — that is the one genuine approximation left, and
+ * it is why this lives in exactly one place.
  *
  * [small] retunes the drop for card-sized surfaces — a spread tuned for a 400px panel reads as
  * a rendering bug under a 40dp source card.
@@ -75,73 +95,110 @@ fun Modifier.cadGrid(
 fun Modifier.glassSurface(
     small: Boolean = false,
     /**
-     * The white outline and the bright top lip. They make a card read as a mounted slip, which
-     * suits the source card and the memory ledger. On a large surface they read as a white
-     * frame drawn around the pane instead — so the user's own surfaces turn them off and let
-     * the magenta rule be the only edge.
+     * The white outline and the bright top lip. Part of the shell as specified, so it is on by
+     * default; the gate turns it off because its 2dp ink frame supersedes it, which is the one
+     * exception the design doc calls out.
      */
     framed: Boolean = true,
 ): Modifier = this
-    // No elevation. Android draws an elevation shadow behind the whole node, and opaque content
-    // is what normally hides it — translucent glass does not, so the shadow showed *through*
-    // the pane as a dark band inside its own edges: 11px down the top, 8px in from the left,
-    // measured on device. The right edge looked fine only because the opaque magenta rule
-    // covered it. That inset grey frame is what kept reading as "the white part is smaller
-    // than the pane". A stronger fill carries the pane on its own now; nothing floats.
+    // rgba(16,16,16,.45) 0 22px 40px -32px is the one line of the recipe that is *not* here.
+    //
+    // It is a smudge under the lower edge: offset down, blurred wide, then pulled back in hard
+    // by the negative spread. Compose offers only `elevation`, which surrounds the box evenly,
+    // and the platform paints it behind the whole node — so through a translucent pane it shows
+    // up inside the edges as a grey frame several pixels deep. Suppressing the ambient
+    // component and keeping only the spot did not fix it either; measured on device the ring
+    // was still there. Against the mockup rendered at 4x, which has no such ring, the honest
+    // choice is to drop the shadow rather than approximate it into an artefact. It is the
+    // faintest line in the recipe and the only one Compose cannot express.
     .drawBehind {
-        // Mostly clear. The CAD grid underneath must stay legible through the pane — that
-        // show-through is the whole point, and it is also the speaker cue in the thread.
-        //
-        // This covers the node edge to edge. It has to: drawn any smaller it becomes a pale
-        // rectangle floating inside a larger pane, which is exactly the "white part" that got
-        // reported three times. The fill IS the pane, so its bounds are the pane's bounds.
+        val px = 1.dp.toPx()
+
+        // background — the CAD grid underneath stays legible through it. That show-through is
+        // the whole point, and it is also the speaker cue in the thread.
         drawRect(
-            Brush.linearGradient(
-                0f to Areel.GlassHi,
-                0.5f to Areel.GlassMid,
-                1f to Areel.GlassLo,
-                start = Offset(0f, 0f),
-                end = Offset(size.width, size.height),
+            cssGradient(148f, 0f to Areel.GlassHi, 0.46f to Areel.GlassMid, 1f to Areel.GlassLo),
+        )
+
+        // ::before — the specular streak.
+        drawRect(
+            cssGradient(
+                112f,
+                0.40f to Color.Transparent,
+                0.46f to Areel.GlassStreak,
+                0.52f to Color.Transparent,
             ),
         )
-        // Specular streak on a fixed slope rather than one normalised to the box. Normalising
-        // it made the glint a near-vertical bar on wide, short panes like a chat bubble, which
-        // read as a rendering artefact rather than a highlight.
-        val run = size.height * 2.5f
-        val originX = size.width * 0.22f
+
+        // rgba(16,16,16,.40) 0 -16px 30px -28px inset — blur 30 against spread -28 barely
+        // reaches in. A sheet of plastic, not a bevel.
+        val reach = (if (small) 8.dp else 18.dp).toPx()
         drawRect(
-            Brush.linearGradient(
-                0.00f to Color.Transparent,
-                0.46f to Color.Transparent,
-                0.50f to Areel.GlassStreak,
-                0.54f to Color.Transparent,
-                1.00f to Color.Transparent,
-                start = Offset(originX - run, size.height),
-                end = Offset(originX + run, 0f),
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                1f to Areel.GlassShade.copy(alpha = if (small) 0.09f else 0.13f),
+                startY = size.height - reach,
+                endY = size.height,
             ),
         )
-        // Top light lip only. The bottom inner shade is gone with the drop shadow and for the
-        // same reason: any tone that fades in near an edge stops the sheet short of that edge,
-        // and at this size a few pixels of that is plainly visible.
+
+        // rgba(16,16,16,.10) 0 0 0 1px inset — the pane's actual edge, one pixel inside the
+        // white border. The border is the highlight sitting on this, not the edge itself.
+        val ring = if (framed) px else 0f
+        drawRect(
+            color = Areel.GlassInset,
+            topLeft = Offset(ring + px / 2f, ring + px / 2f),
+            size = Size(size.width - 2f * ring - px, size.height - 2f * ring - px),
+            style = Stroke(px),
+        )
+
+        // rgba(255,255,255,.7) 0 1px 0 inset — the top lip, inside the border.
         if (framed) {
-            drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
+            drawLine(Areel.GlassLip, Offset(px, px * 1.5f), Offset(size.width - px, px * 1.5f), px)
         }
     }
+    // border: 1px solid rgba(255,255,255,.6)
     .then(if (framed) Modifier.border(1.dp, Areel.GlassBorder) else Modifier)
 
 /**
- * The user's surface: bare glass with the magenta rule as its only hard edge.
+ * A CSS `linear-gradient(<deg>, …)`, in Compose terms.
  *
- * Shared by their message bubbles and the composer field on purpose — what they are typing and
- * what they have already said should look like the same object, so the composer reads as the
- * next bubble rather than as a separate control.
+ * CSS measures the angle from north, clockwise, and sizes the gradient line so the percentage
+ * stops land where the spec says on *this* box. Compose takes two points, so the tempting
+ * translation is a corner-to-corner diagonal — but that only equals 148deg at one aspect ratio.
+ * On a wide chat bubble it dragged the 6% stop out towards two corners, and the sheet looked
+ * like it faded out before reaching its own edges.
  */
-fun Modifier.userPane(): Modifier = this
-    .glassSurface(framed = false)
-    .drawBehind {
-        val w = 3.dp.toPx()
-        drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))
-    }
+private fun DrawScope.cssGradient(deg: Float, vararg stops: Pair<Float, Color>): Brush {
+    val rad = (deg * PI / 180.0).toFloat()
+    // Screen coordinates put y downwards, so north is -y: 0deg → (0,-1), 90deg → (1,0).
+    val dx = sin(rad)
+    val dy = -cos(rad)
+    val len = abs(size.width * dx) + abs(size.height * dy)
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    return Brush.linearGradient(
+        *stops,
+        start = Offset(cx - dx * len / 2f, cy - dy * len / 2f),
+        end = Offset(cx + dx * len / 2f, cy + dy * len / 2f),
+    )
+}
+
+/**
+ * `.user`'s `border-right: 3px solid --magenta`.
+ *
+ * It belongs to the *text block*, not to the pane around it. An earlier version drew it down
+ * the pane's own right edge at full height, which is a border on a box; here the wrap's 12dp of
+ * vertical padding insets it top and bottom, and that inset is what makes it read as a margin
+ * rule standing beside the words.
+ *
+ * Shared by the message bubble and the composer field, so that what is being typed and what has
+ * already been said are the same object.
+ */
+fun Modifier.userRule(): Modifier = this.drawBehind {
+    val w = 3.dp.toPx()
+    drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))
+}
 
 /**
  * The mark. Every edge lands on 0/45/90 with the head into the upper-right, so it reads as a

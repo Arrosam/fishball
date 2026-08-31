@@ -47,16 +47,20 @@ object Areel {
      * affordable on a phone.
      * See Modifier.glassSurface().
      */
-    // The spread between these three is narrow on purpose. Wide, the diagonal gradient fell
-    // to 6% white near two corners, so the sheet visibly stopped short of its own edges and
-    // read as a small white box floating inside a bigger pane. They vary; they never vanish.
-    val GlassHi = Color(0x4DFFFFFF)
-    val GlassMid = Color(0x33FFFFFF)
-    val GlassLo = Color(0x40FFFFFF)
+    // rgba(255,255,255,.26 / .06 / .18) - the stops of the shell's 148deg fill, verbatim.
+    // They were widened once to stop the sheet fading out near two corners, which was treating
+    // the symptom: the corners faded because the gradient was being drawn corner-to-corner
+    // instead of at 148deg, so on a wide bubble the stops landed in the wrong places.
+    val GlassHi = Color(0x42FFFFFF)
+    val GlassMid = Color(0x0FFFFFFF)
+    val GlassLo = Color(0x2EFFFFFF)
     val GlassBorder = Color(0x99FFFFFF)
     val GlassLip = Color(0xB3FFFFFF)
     val GlassStreak = Color(0x38FFFFFF)
     val GlassShade = Color(0x66101010)
+    // rgba(16,16,16,.10) 0 0 0 1px inset - a dark hairline just inside the white border. This
+    // is the pane's actual edge; the white border is the highlight sitting on it.
+    val GlassInset = Color(0x1A101010)
 }
 
 /*

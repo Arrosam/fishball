@@ -77,12 +77,16 @@ fun CheckerBand(modifier: Modifier = Modifier, cell: Dp = 8.dp, color: Color = A
     Canvas(modifier.fillMaxWidth().height(cell)) {
         val c = cell.toPx()
         val cols = (size.width / c).toInt() + 1
-        val rows = (size.height / c).toInt() + 1
-        for (row in 0 until rows) {
-            for (col in 0 until cols) {
-                if ((row + col) % 2 == 0) {
-                    drawRect(color, Offset(col * c, row * c), Size(c, c))
-                }
+        // One row, and only the ink squares. The CSS is a 16px conic-gradient tile clipped to
+        // an 8px-tall strip, so exactly half of one row of it is ever visible and the gaps are
+        // transparent - the ground reads straight through them.
+        //
+        // This drew a second row before. Nothing was wrong with the arithmetic; drawBehind
+        // simply does not clip, so the row that should have fallen outside the 8dp band was
+        // painted over the thread below it and the first message covered half of it.
+        for (col in 0 until cols) {
+            if (col % 2 == 0) {
+                drawRect(color, Offset(col * c, 0f), Size(c, size.height))
             }
         }
     }
@@ -197,16 +201,26 @@ fun AssistantBubble(
  */
 @Composable
 fun UserBubble(text: String, modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        // .userwrap.shell - width:86%; padding:12px 0 12px 14px. Fixed, not content-hugging:
+        // it was tried the other way, and a rule that slides left to meet a short question
+        // stops being a margin and starts being an underline on the words.
         Box(
             Modifier
-                // Hugs its content, capped at 86%. Fixed at 86% a three-word question sat in
-                // a mostly empty pane with its rule stranded far from the words.
-                .widthIn(max = maxWidth * 0.86f)
-                .userPane()
-                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+                .fillMaxWidth(0.86f)
+                .glassSurface()
+                .padding(start = 14.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+            // .user - padding:2px 13px 2px 0; border-right:3px solid --magenta. The 16dp end
+            // padding is the CSS's 13px gap plus the 3px the rule itself occupies.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .userRule()
+                    .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
+            ) {
+                Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+            }
         }
     }
 }

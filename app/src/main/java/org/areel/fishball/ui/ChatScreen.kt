@@ -228,14 +228,20 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The same two parts as a user bubble - shell outside, ruled text block inside -
+            // so what is being typed and what has already been said are the same object.
             Box(
                 Modifier
                     .weight(1f)
-                    // The same pane as a user bubble: what is being typed and what has
-                    // already been said are the same object.
-                    .userPane()
-                    .padding(horizontal = 14.dp, vertical = 15.dp),
+                    .glassSurface()
+                    .padding(start = 14.dp, top = 12.dp, bottom = 12.dp),
             ) {
+              Box(
+                Modifier
+                    .fillMaxWidth()
+                    .userRule()
+                    .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
+              ) {
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
@@ -247,6 +253,7 @@ private fun Composer(
                     keyboardActions = KeyboardActions(onSend = { onSend() }),
                     modifier = Modifier.fillMaxWidth(),
                 )
+              }
             }
             // A square plate rather than an IconButton. M3's IconButton clips its container to
             // CircleShape, so the send control came out round - the one shape this design does

@@ -63,62 +63,73 @@ fun MemoryScreen(onBack: () -> Unit) {
     var personal by remember { mutableStateOf(false) }
     val rows = remember(personal) { if (personal) Demo.personalMemories else Demo.worldMemories }
 
-    Column(
+    // The ground does not animate. Scaling the grid along with the content would read as the
+    // whole app moving rather than as this screen opening over the thread.
+    Box(
         Modifier
             .fillMaxSize()
             .background(Areel.Concrete)
-            .cadGrid()
-            .statusBarsPadding(),
+            .cadGrid(),
     ) {
-        MemoryBand(onBack = onBack)
-
-        Row(Modifier.fillMaxWidth()) {
-            MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
-                personal = false
-            }
-            MemoryTab(stringResource(R.string.memory_tab_personal), personal, Modifier.weight(1f)) {
-                personal = true
-            }
-        }
-
-        if (rows.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    stringResource(
-                        if (personal) R.string.memory_empty_personal else R.string.memory_empty_world,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Areel.Ink40,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        } else {
-            // The ledger drags and springs back exactly like the thread does. It is the same
-            // gesture on the same kind of surface, and a short list that refused to move while
-            // the thread bounced read as this screen being half-finished.
-            val bounce = rememberBounceState()
-            Box(
+        // Out of the 记忆 plate in the thread's masthead - top right - on the same curve and
+        // over the same 260ms as a message arriving.
+        EnterFrom(pivotX = 1f, pivotY = 0f) {
+            Column(
                 Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    // As in the thread: unclipped, the pulled list draws over the band above it.
-                    .clipToBounds()
-                    .bounce(bounce),
+                    .fillMaxSize()
+                    .statusBarsPadding(),
             ) {
-                CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
-                    LazyColumn(
-                        Modifier
-                            .fillMaxSize()
-                            .offset { IntOffset(0, bounce.translation) },
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(rows) { row -> MemoryRow(row, personal) }
+                MemoryBand(onBack = onBack)
+
+                Row(Modifier.fillMaxWidth()) {
+                    MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
+                        personal = false
+                    }
+                    MemoryTab(stringResource(R.string.memory_tab_personal), personal, Modifier.weight(1f)) {
+                        personal = true
                     }
                 }
+
+                if (rows.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            stringResource(
+                                if (personal) R.string.memory_empty_personal else R.string.memory_empty_world,
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Areel.Ink40,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                } else {
+                    // The ledger drags and springs back exactly like the thread does. It is the same
+                    // gesture on the same kind of surface, and a short list that refused to move while
+                    // the thread bounced read as this screen being half-finished.
+                    val bounce = rememberBounceState()
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            // As in the thread: unclipped, the pulled list draws over the band above it.
+                            .clipToBounds()
+                            .bounce(bounce),
+                    ) {
+                        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+                            LazyColumn(
+                                Modifier
+                                    .fillMaxSize()
+                                    .offset { IntOffset(0, bounce.translation) },
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                items(rows) { row -> MemoryRow(row, personal) }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
-        Spacer(Modifier.navigationBarsPadding())
     }
 }
 
