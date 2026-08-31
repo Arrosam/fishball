@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's own ground, at icon scale: concrete with the double CAD grid over it.
+
+  The spacing is not the app's 16dp/96dp. A launcher draws this at roughly a tenth of the size
+  the screen does, and the real ratio would collapse into flat grey - so the grid is redrawn at
+  9 cells across with every third line doubled, which is the same *pattern* at a size where it
+  still reads. The ink is also carried heavier than ink-06 for the same reason.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#C9C9C5"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <!-- minors -->
+    <path
+        android:strokeColor="#1A101010"
+        android:strokeWidth="0.9"
+        android:pathData="M12,0V108M24,0V108M36,0V108M48,0V108M60,0V108M72,0V108M84,0V108M96,0V108M0,12H108M0,24H108M0,36H108M0,48H108M0,60H108M0,72H108M0,84H108M0,96H108" />
+
+    <!-- majors, drawn over the minors exactly as cadGrid does -->
+    <path
+        android:strokeColor="#22101010"
+        android:strokeWidth="1.1"
+        android:pathData="M36,0V108M72,0V108M0,36H108M0,72H108" />
+</vector>

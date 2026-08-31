@@ -131,13 +131,23 @@ fun KeyGate(
     }
 }
 
-/** The mark as an architectural watermark, cropped by the lower-right corner. */
+/**
+ * The mark as an architectural watermark, cropped by the right edge.
+ *
+ * The bottom is no longer cropped. The mark's lowest point is its tail, at 21.4 of 24 down its
+ * own box - so at this size the drawing stops 50dp short of the box it is laid out in, and the
+ * old 56dp downward offset pushed the tail off the screen while looking, in code, like it was
+ * only bleeding the empty margin. 36dp leaves the tail whole with 14dp to spare.
+ *
+ * The horizontal offset scales with the size, so the head still runs off the right edge and the
+ * mark reads as a detail of something larger rather than a picture placed in the corner.
+ */
 @Composable
 private fun Watermark(modifier: Modifier = Modifier) {
     FishMark(
         modifier = modifier
-            .size(230.dp)
-            .offset(x = 70.dp, y = 56.dp)
+            .size(460.dp)
+            .offset(x = 140.dp, y = 36.dp)
             .alpha(0.10f),
         body = Areel.Ink,
         eye = null,
