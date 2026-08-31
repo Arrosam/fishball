@@ -10,9 +10,20 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FishBall">
 
+        <!--
+          Portrait only. The layout is built around a single column - a masthead, a thread,
+          and a composer pinned to the bottom - and there is nothing sensible for it to do
+          with a landscape window. Locking it also means a rotation never recreates the
+          activity, so a half-typed question survives the phone being tilted.
+
+          Note for a future targetSdk bump: from Android 16, apps targeting SDK 36+ have
+          orientation restrictions ignored on large screens, so this stops being a guarantee
+          there and the layout would need to actually handle width.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
