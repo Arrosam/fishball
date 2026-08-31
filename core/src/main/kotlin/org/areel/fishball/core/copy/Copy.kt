@@ -190,6 +190,13 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 听着，回应他说的那件事本身，然后让他接着说。
 """.trim()
 
+    /**
+     * Sent back with every tool result. Without it the model reads a verified quote, decides it
+     * now has what it needs, and writes the answer as plain prose - which loses the memory the
+     * `answer` tool also carries.
+     */
+    val SUBMIT_ANSWER = "核对结果在上面。现在把最终答案用 answer 工具交上来。".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："

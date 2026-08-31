@@ -139,6 +139,7 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
                                 confidence = message.confidence,
                                 conflict = message.conflict,
                                 sources = message.sources,
+                                detail = message.detail,
                             )
                         }
                     }

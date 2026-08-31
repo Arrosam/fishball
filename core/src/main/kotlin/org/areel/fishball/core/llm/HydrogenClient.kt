@@ -54,6 +54,15 @@ class HydrogenClient(
     private val http: HttpClient = defaultClient(),
 ) : LlmClient {
 
+    /**
+     * Lists the catalogue, then *tries* each candidate before settling on one.
+     *
+     * The listing is a catalogue, not an entitlement. `fishball-pro` appears in /v1/models for
+     * a key that is then refused it with `403 permission_error` on the first real call - so
+     * choosing from the list alone produced a sign-in that succeeded followed by every single
+     * turn failing, which is about the worst shape a bug can take: the gate says yes and the
+     * product says no. One extra request at sign-in buys a model that is known to work.
+     */
     override suspend fun validate(): KeyCheck = try {
         val response: HttpResponse = http.get("${baseUrl.trimEnd('/')}/v1/models") {
             authHeaders()
@@ -67,15 +76,31 @@ class HydrogenClient(
 
             else -> {
                 val ids = modelIds(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
-                val chosen = pickModel(ids)
-                if (chosen == null) {
-                    // The key is fine and the proxy answered; it just is not serving either
-                    // model this app is built for. Reporting that as a network problem would
-                    // send the user off to check their wifi for a deployment fault.
-                    KeyCheck.NoModel(ids)
-                } else {
-                    model = chosen
-                    KeyCheck.Valid(ids, chosen)
+                var refusedOnly = true
+                var working: String? = null
+                val tried = mutableListOf<String>()
+
+                for (candidate in candidates(ids)) {
+                    if (working != null) break
+                    val (code, body) = probe(candidate)
+                    if (code in 200..299) {
+                        working = candidate
+                    } else {
+                        // 401/403 means "not yours"; anything else means something is actually
+                        // wrong, and the two must not be reported as the same thing.
+                        if (code != 401 && code != 403) refusedOnly = false
+                        tried += "$candidate -> HTTP $code ${body.take(140)}"
+                    }
+                }
+
+                val chosen = working
+                when {
+                    chosen != null -> {
+                        model = chosen
+                        KeyCheck.Valid(ids, chosen)
+                    }
+                    tried.isEmpty() || refusedOnly -> KeyCheck.NoModel(ids)
+                    else -> KeyCheck.Unreachable(tried.joinToString("   "))
                 }
             }
         }
@@ -84,6 +109,41 @@ class HydrogenClient(
         // one-word message - UnknownHostException, SSLHandshakeException, SocketTimeoutException
         // - and the type is the part that says which of those it was.
         KeyCheck.Unreachable("${e::class.simpleName}: ${e.message ?: "no detail"}  @ $baseUrl")
+    }
+
+    /** The cheapest real call there is, to find out whether this key may drive this model. */
+    private suspend fun probe(candidate: String): Pair<Int, String> = try {
+        val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/messages") {
+            authHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(
+                buildJsonObject {
+                    put("model", candidate)
+                    // Not 1. These models emit a thinking block before anything else, and a
+                    // budget that cannot fit one fails for a reason that has nothing to do
+                    // with entitlement.
+                    put("max_tokens", 32)
+                    putJsonArray("messages") {
+                        add(
+                            buildJsonObject {
+                                put("role", "user")
+                                putJsonArray("content") {
+                                    add(
+                                        buildJsonObject {
+                                            put("type", "text")
+                                            put("text", "hi")
+                                        },
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }.toString(),
+            )
+        }
+        response.status.value to response.bodyAsText()
+    } catch (e: Exception) {
+        0 to "${e::class.simpleName}: ${e.message ?: "no detail"}"
     }
 
     override suspend fun complete(request: LlmRequest): LlmResult {
@@ -168,6 +228,8 @@ class HydrogenClient(
             put("content", c.content)
             if (c.isError) put("is_error", true)
         }
+
+        is LlmContent.Opaque -> c.raw
     }
 
     // ---- response -----------------------------------------------------------------------
@@ -196,6 +258,10 @@ class HydrogenClient(
                     calls += call
                     raw += call
                 }
+
+                // thinking, redacted_thinking, and whatever comes next. Not read, not shown,
+                // and handed back untouched.
+                else -> raw += LlmContent.Opaque(block)
             }
         }
         return LlmResult.Ok(
@@ -242,13 +308,13 @@ class HydrogenClient(
          * (`fishball-pro-2026-08`) still resolves. Null means neither is on offer — which is a
          * deployment answer, not a fallback to be papered over.
          */
-        internal fun pickModel(ids: List<String>): String? {
-            for (want in PREFERRED) {
-                ids.firstOrNull { it.equals(want, ignoreCase = true) }?.let { return it }
-                ids.firstOrNull { it.startsWith(want, ignoreCase = true) }?.let { return it }
-            }
-            return null
+        internal fun candidates(ids: List<String>): List<String> = PREFERRED.mapNotNull { want ->
+            ids.firstOrNull { it.equals(want, ignoreCase = true) }
+                ?: ids.firstOrNull { it.startsWith(want, ignoreCase = true) }
         }
+
+        /** The one that would be tried first. Entitlement still decides which is used. */
+        internal fun pickModel(ids: List<String>): String? = candidates(ids).firstOrNull()
 
         private fun Iterable<*>?.orEmpty(): List<kotlinx.serialization.json.JsonElement> =
             (this as? JsonArray) ?: emptyList()

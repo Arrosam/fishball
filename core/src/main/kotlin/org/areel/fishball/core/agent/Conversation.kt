@@ -69,6 +69,16 @@ class Conversation(
      */
     private var pending: Pending? = null
 
+    /**
+     * Why the last model call failed, for the turn that is about to report it.
+     *
+     * A field rather than a return type because the failure can happen three call-frames down
+     * inside classification, where the only thing the caller learns is that it got no context
+     * back. The alternative was threading a Result through every step of the machine to carry
+     * a string that is only ever read at the end of a turn that already went wrong.
+     */
+    private var lastFailure: String? = null
+
     private data class Pending(val original: TurnContext, val kind: Kind) {
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
     }
@@ -80,6 +90,7 @@ class Conversation(
             ConversationTurn(store.nextId(), session!!.id, at, Speaker.USER, userText),
         )
 
+        lastFailure = null
         val ctx = context(userText, at) ?: return failure(narrate)
         val reply = run(engine.firstStep(ctx), ctx, narrate)
 
@@ -137,7 +148,14 @@ class Conversation(
                 maxTokens = 256,
             ),
         )
-        val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull() ?: return null
+        if (result is LlmResult.Failed) lastFailure = result.reason
+        val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()
+            ?: run {
+                // Reached the model but got no classification back: a reply with no tool call
+                // at all, which means the tool contract is not being honoured.
+                if (lastFailure == null) lastFailure = "no ${Tools.CLASSIFY} call in the reply"
+                return null
+            }
         val input = call.input
         return TurnContext(
             userText = userText,
@@ -388,17 +406,26 @@ class Conversation(
             ),
         )
 
-        repeat(MAX_COMPOSE_ROUNDS) {
+        repeat(MAX_COMPOSE_ROUNDS) { round ->
+            val lastRound = round == MAX_COMPOSE_ROUNDS - 1
             val result = llm.complete(
                 LlmRequest(
                     system = AgentPrompt.SYSTEM,
                     messages = messages,
                     tools = if (evidence.isEmpty()) listOf(Tools.answer) else listOf(Tools.quote, Tools.answer),
+                    // Free to quote as often as it likes, until the last round - where the
+                    // choice is between a structured answer and no answer at all.
+                    forceTool = if (lastRound) Tools.ANSWER else null,
                     maxTokens = 2048,
                     temperature = 0.4,
                 ),
             )
-            if (result !is LlmResult.Ok) return Reply(UiCopy.SERVICE_UNAVAILABLE)
+            if (result !is LlmResult.Ok) {
+                return Reply(
+                    UiCopy.SERVICE_UNAVAILABLE,
+                    detail = (result as? LlmResult.Failed)?.reason,
+                )
+            }
 
             val answerCall = result.toolCalls.firstOrNull { it.name == Tools.ANSWER }
             if (answerCall != null) {
@@ -407,23 +434,23 @@ class Conversation(
                     text = answerCall.input.str("text").orEmpty().ifBlank { result.text },
                     shape = plan?.shape,
                     conflict = plan?.shape == AnswerShape.CONFLICT,
-                    sources = evidence.map {
-                        SourceRef(
-                            url = it.hit.url,
-                            displayName = it.resolution.displayName,
-                            explanation = it.resolution.explanation,
-                            tier = it.resolution.tier,
-                            quote = verified[it.hit.url],
-                        )
-                    },
+                    sources = cite(evidence, verified),
                 )
             }
 
             val quoteCalls = result.toolCalls.filter { it.name == Tools.QUOTE }
             if (quoteCalls.isEmpty()) {
                 // Prose with no tool call. Take it rather than burning another round — the
-                // model has answered, it just did not use the hatch it was offered.
-                return Reply(result.text, plan?.shape, conflict = plan?.shape == AnswerShape.CONFLICT)
+                // model has answered, it just did not use the hatch it was offered. The
+                // citations come along regardless: they were verified before it wrote a word,
+                // and dropping them here would strip the sources off exactly those answers
+                // that took the trouble to quote.
+                return Reply(
+                    text = result.text,
+                    shape = plan?.shape,
+                    conflict = plan?.shape == AnswerShape.CONFLICT,
+                    sources = cite(evidence, verified),
+                )
             }
 
             messages += result.raw
@@ -442,11 +469,44 @@ class Conversation(
                         is QuoteResult.Rejected ->
                             LlmContent.ToolResult(call.id, outcome.feedback, isError = true)
                     }
-                },
+                } + LlmContent.Text(AgentPrompt.SUBMIT_ANSWER),
             )
         }
-        return Reply(UiCopy.SERVICE_UNAVAILABLE)
+        return Reply(
+            UiCopy.SERVICE_UNAVAILABLE,
+            detail = "gave up after $MAX_COMPOSE_ROUNDS rounds without an ${Tools.ANSWER} call",
+        )
     }
+
+    /**
+     * What goes under the answer. Spec §25 — a source carries its quote only if the verifier
+     * put one there.
+     *
+     * Not everything that was read. A live turn on a health question read 29 results and would
+     * have stacked all 29 under a three-sentence answer, most of them 来源不明 — which buries
+     * the two the answer actually rests on and turns a citation into a search-results page.
+     *
+     * Order is quoted first, then by tier. A quoted source is one the answer leans on by name;
+     * an unquoted authoritative one is context. Everything below the cut was still read, still
+     * tiered, and still shaped the answer — it just is not evidence the reader needs to see.
+     */
+    private fun cite(evidence: List<Evidence>, verified: Map<String, String>): List<SourceRef> =
+        evidence
+            .distinctBy { it.hit.url }
+            .sortedWith(
+                compareByDescending<Evidence> { verified.containsKey(it.hit.url) }
+                    .thenByDescending { it.resolution.tier },
+            )
+            .take(MAX_SOURCES_SHOWN)
+            .map {
+                SourceRef(
+                    url = it.hit.url,
+                    displayName = it.resolution.displayName,
+                    explanation = it.resolution.explanation,
+                    tier = it.resolution.tier,
+                    quote = verified[it.hit.url],
+                )
+            }
 
     // ---- memory -------------------------------------------------------------------------
 
@@ -503,12 +563,15 @@ class Conversation(
 
     private fun failure(narrate: (String) -> Unit): Reply {
         narrate("")
-        return Reply(UiCopy.SERVICE_UNAVAILABLE)
+        return Reply(UiCopy.SERVICE_UNAVAILABLE, detail = lastFailure)
     }
 
     private companion object {
         /** Enough for a few rejected quotes; short enough that a loop cannot bill forever. */
         const val MAX_COMPOSE_ROUNDS = 5
+
+        /** A card the reader will actually look at. Past four it is a list, not a citation. */
+        const val MAX_SOURCES_SHOWN = 4
     }
 }
 
@@ -518,6 +581,12 @@ data class Reply(
     val shape: AnswerShape? = null,
     val sources: List<SourceRef> = emptyList(),
     val conflict: Boolean = false,
+    /**
+     * The underlying failure when [text] is an apology rather than an answer. Never shown
+     * unasked - the user cannot act on it - but kept so it can be read on request instead of
+     * being invented later from a description of the symptom.
+     */
+    val detail: String? = null,
 )
 
 data class SourceRef(

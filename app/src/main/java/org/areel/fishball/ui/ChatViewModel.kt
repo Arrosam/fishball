@@ -1,5 +1,6 @@
 package org.areel.fishball.ui
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,8 @@ data class ChatMessage(
     val confidence: Confidence? = null,
     /** CONFLICT is not a point on the scale, so it renders the fault line instead of cells. */
     val conflict: Boolean = false,
+    /** Why this turn failed, when it did. Not persisted: an error is not part of the record. */
+    val detail: String? = null,
 )
 
 class ChatViewModel(private val backend: Backend) : ViewModel() {
@@ -76,6 +79,9 @@ class ChatViewModel(private val backend: Backend) : ViewModel() {
                 }
             }
             narration.clear()
+            // Also to logcat. The tap-to-expand is for whoever is holding the phone; this is
+            // for whoever is holding a laptop, and it costs one line.
+            reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
             messages += reply.toMessage()
             busy = false
         }
@@ -114,6 +120,7 @@ private fun Reply.toMessage() = ChatMessage(
     sources = sources.map { it.toUi() },
     confidence = shape.toConfidence(),
     conflict = conflict,
+    detail = detail,
 )
 
 private fun ConversationTurn.toMessage() = ChatMessage(

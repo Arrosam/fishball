@@ -175,8 +175,15 @@ fun AssistantBubble(
     confidence: Confidence? = null,
     conflict: Boolean = false,
     sources: List<Source> = emptyList(),
+    /**
+     * Present only when this turn is an apology rather than an answer. Hidden behind a tap for
+     * the same reason the gate's is: unreadable to the person the app is for, and the first
+     * thing anyone helping them will ask for.
+     */
+    detail: String? = null,
 ) {
     val edge = remember { Path() }
+    var showDetail by remember(detail) { mutableStateOf(false) }
     Box(
         modifier
             .fillMaxWidth()
@@ -191,6 +198,27 @@ fun AssistantBubble(
         Column {
             ConfidenceMeter(confidence, conflict, Modifier.align(Alignment.End))
             Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+            if (detail != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(if (showDetail) R.string.detail_hide else R.string.detail_show),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Areel.Magenta,
+                    modifier = Modifier.clickable { showDetail = !showDetail },
+                )
+                if (showDetail) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink60,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Areel.Concrete2)
+                            .padding(10.dp),
+                    )
+                }
+            }
             SourceCard(sources)
         }
     }

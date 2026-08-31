@@ -60,6 +60,17 @@ sealed class LlmContent {
      * again rather than being cut off.
      */
     data class ToolResult(val toolUseId: String, val content: String, val isError: Boolean = false) : LlmContent()
+
+    /**
+     * A block this app has no opinion about, kept exactly as it arrived.
+     *
+     * These models answer with a `thinking` block ahead of everything else, and the quote loop
+     * in §25 hands the assistant turn straight back so tool results can be attached to it. Drop
+     * a block on the way in and the turn that goes back out is not the turn that came in - which
+     * providers are entitled to reject, and which would corrupt the model's own record of what
+     * it just decided. Round-tripping unknown blocks costs nothing and keeps that honest.
+     */
+    data class Opaque(val raw: JsonObject) : LlmContent()
 }
 
 data class LlmTool(
