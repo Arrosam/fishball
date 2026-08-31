@@ -67,10 +67,13 @@ class HydrogenClient(
 
             else -> {
                 val ids = modelIds(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
-                if (ids.isEmpty()) {
-                    KeyCheck.Unreachable("no models listed")
+                val chosen = pickModel(ids)
+                if (chosen == null) {
+                    // The key is fine and the proxy answered; it just is not serving either
+                    // model this app is built for. Reporting that as a network problem would
+                    // send the user off to check their wifi for a deployment fault.
+                    KeyCheck.NoModel(ids)
                 } else {
-                    val chosen = pickModel(ids)
                     model = chosen
                     KeyCheck.Valid(ids, chosen)
                 }
@@ -222,16 +225,26 @@ class HydrogenClient(
             }
 
         /**
-         * Preference order, strongest first. The end user is not going to choose a model, and
-         * this app leans on instruction-following hard enough — eight-part answer shapes, tool
-         * schemas, extractive quoting — that the difference is not academic.
+         * The two models this app is deployed against, strongest first.
+         *
+         * Named rather than pattern-matched. The end user is never going to choose a model, and
+         * this app leans on instruction-following hard enough — eight answer shapes, five tool
+         * schemas, extractive quoting — that quietly running on whatever else the catalogue
+         * happened to list would change the product without anyone deciding to.
          */
-        internal fun pickModel(ids: List<String>): String {
-            val ranked = listOf("opus", "sonnet", "gpt-5", "haiku")
-            for (want in ranked) {
-                ids.firstOrNull { it.contains(want, ignoreCase = true) }?.let { return it }
+        val PREFERRED = listOf("fishball-pro", "fishball-flash")
+
+        /**
+         * Exact id first, then a prefix match, so a dated or suffixed id
+         * (`fishball-pro-2026-08`) still resolves. Null means neither is on offer — which is a
+         * deployment answer, not a fallback to be papered over.
+         */
+        internal fun pickModel(ids: List<String>): String? {
+            for (want in PREFERRED) {
+                ids.firstOrNull { it.equals(want, ignoreCase = true) }?.let { return it }
+                ids.firstOrNull { it.startsWith(want, ignoreCase = true) }?.let { return it }
             }
-            return ids.first()
+            return null
         }
 
         private fun Iterable<*>?.orEmpty(): List<kotlinx.serialization.json.JsonElement> =

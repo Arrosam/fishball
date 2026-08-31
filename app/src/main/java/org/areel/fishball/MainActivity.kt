@@ -53,6 +53,7 @@ private fun FishBallApp() {
 
     val rejected = stringResource(R.string.gate_key_rejected)
     val unreachable = stringResource(R.string.gate_unreachable)
+    val noModel = stringResource(R.string.gate_no_model)
 
     if (!signedIn) {
         KeyGate(
@@ -65,6 +66,7 @@ private fun FishBallApp() {
                     when (backend.signIn(key)) {
                         is KeyCheck.Valid -> signedIn = true
                         KeyCheck.Rejected -> gateError = rejected
+                        is KeyCheck.NoModel -> gateError = noModel
                         is KeyCheck.Unreachable -> gateError = unreachable
                     }
                     checking = false

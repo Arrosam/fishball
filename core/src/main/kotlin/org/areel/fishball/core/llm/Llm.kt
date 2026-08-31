@@ -90,5 +90,12 @@ sealed class KeyCheck {
     /** The key was understood and refused. Wrong key, not a broken network. */
     object Rejected : KeyCheck()
 
+    /**
+     * Key good, proxy up, neither model available. Its own case because it is somebody's
+     * deployment to fix, and collapsing it into [Unreachable] would send them to check a
+     * network that is working.
+     */
+    data class NoModel(val offered: List<String>) : KeyCheck()
+
     data class Unreachable(val reason: String) : KeyCheck()
 }

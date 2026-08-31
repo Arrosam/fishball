@@ -27,6 +27,8 @@
     -->
     <string name="gate_key_rejected">激活码无效</string>
     <string name="gate_unreachable">现在连不上，等一下再试。</string>
+    <!-- Key good, service up, neither model on offer. Nothing the user can do, so it says who to tell. -->
+    <string name="gate_no_model">服务上没有可用的模型，跟给你激活码的人说一声。</string>
 
     <!-- Confidence meter labels (spec §6, approved 2026-08-31). -->
     <string name="confidence_label">置信度</string>
