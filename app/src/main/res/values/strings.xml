@@ -25,12 +25,20 @@
       Two failures, told apart because only one of them is the person's to fix. A status code
       would be honest and useless; neither line mentions keys, servers or networks by name.
     -->
-    <string name="gate_key_rejected">这个码不对，再看一下？</string>
+    <string name="gate_key_rejected">激活码无效</string>
     <string name="gate_unreachable">现在连不上，等一下再试。</string>
 
     <!-- Confidence meter labels (spec §6, approved 2026-08-31). -->
     <string name="confidence_label">置信度</string>
     <string name="conflict_label">各有说辞</string>
+
+    <!--
+      Spec §25. "原话" and not "引用": the promise is that these are the source's own words,
+      and the plainer word is the one that makes that promise legible to someone who has never
+      thought about where an answer came from.
+    -->
+    <string name="quote_show">看原话</string>
+    <string name="quote_hide">收起</string>
 
     <!--
       Memory screen. NOT YET APPROVED - these are the designer's proposals from

@@ -32,6 +32,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -307,22 +309,52 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         sources.forEach { source ->
-            Row(
+            // Spec §25, the half the user sees. Tapping a source shows the passage the answer
+            // rests on - and it is the passage as the *source* wrote it, sliced out of the
+            // retrieved text by the verifier, never the model's rendering of it. A source with
+            // nothing to open says so rather than opening onto a paraphrase.
+            var open by remember(source) { mutableStateOf(false) }
+            Column(
                 Modifier
                     .fillMaxWidth()
                     .glassSurface(small = true)
+                    .clickable(enabled = source.quote != null) { open = !open }
                     .padding(horizontal = 11.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.Top,
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_source),
-                    contentDescription = null,
-                    tint = Areel.Ink,
-                    modifier = Modifier.size(12.dp).offset(y = 2.dp),
-                )
-                Column(Modifier.padding(start = 9.dp)) {
-                    Text(source.name, style = MaterialTheme.typography.labelSmall, color = Areel.Ink)
-                    Text(source.host, style = MaterialTheme.typography.labelMedium, color = Areel.Ink40)
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_source),
+                        contentDescription = null,
+                        tint = Areel.Ink,
+                        modifier = Modifier.size(12.dp).offset(y = 2.dp),
+                    )
+                    Column(Modifier.padding(start = 9.dp).weight(1f)) {
+                        Text(source.name, style = MaterialTheme.typography.labelSmall, color = Areel.Ink)
+                        Text(source.host, style = MaterialTheme.typography.labelMedium, color = Areel.Ink40)
+                    }
+                    if (source.quote != null) {
+                        Text(
+                            stringResource(if (open) R.string.quote_hide else R.string.quote_show),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Areel.Magenta,
+                        )
+                    }
+                }
+                if (open && source.quote != null) {
+                    Spacer(Modifier.height(9.dp))
+                    Hairline(color = Areel.Ink20)
+                    Spacer(Modifier.height(9.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        // The magenta rule again, and on purpose: it is the mark this app uses
+                        // for words that are quoted rather than composed.
+                        Box(Modifier.width(3.dp).height(quoteRuleHeight).background(Areel.Magenta))
+                        Text(
+                            source.quote,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Areel.Ink,
+                            modifier = Modifier.padding(start = 9.dp),
+                        )
+                    }
                 }
             }
         }
@@ -515,3 +547,9 @@ fun EmptyThread(modifier: Modifier = Modifier) {
 
 private val MARK = 104.dp
 private val MARK_NUDGE = MARK * (1.5f / 24f)
+
+/**
+ * The quoted passage's rule. Fixed rather than matched to the text: a rule that grows with a
+ * long quotation starts reading as a container round it, and this is a margin mark.
+ */
+private val quoteRuleHeight = 18.dp
