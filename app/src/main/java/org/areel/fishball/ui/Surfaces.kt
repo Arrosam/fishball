@@ -4,8 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -83,29 +81,13 @@ fun Modifier.glassSurface(
      * the magenta rule be the only edge.
      */
     framed: Boolean = true,
-    /**
-     * Turn off inside an already-raised container. A translucent pane's shadow halo is more
-     * visible than the pane itself, so a lifted pane sitting on a lifted bar reads as two
-     * nested rectangles rather than one field.
-     */
-    lifted: Boolean = true,
 ): Modifier = this
-    // The drop shadow was missing entirely in the first translation, and it turns out to be
-    // the load-bearing part: without something lifting it off the ground, a translucent white
-    // panel over concrete is just a lighter grey rectangle. Glass has to float to read as glass.
-    .then(
-        if (!lifted) Modifier else Modifier.shadow(
-            // Tight. At 5dp the ambient shadow laid a 36px dark ramp all round the pane, and
-            // against that darkened ring the clear interior read as a filled lighter box — the
-            // "white part", after the fill itself was already gone. The lift has to be felt,
-            // not seen.
-            elevation = if (small) 1.dp else 2.dp,
-            shape = RectangleShape,
-            clip = false,
-            ambientColor = Areel.Ink,
-            spotColor = Areel.Ink,
-        ),
-    )
+    // No elevation. Android draws an elevation shadow behind the whole node, and opaque content
+    // is what normally hides it — translucent glass does not, so the shadow showed *through*
+    // the pane as a dark band inside its own edges: 11px down the top, 8px in from the left,
+    // measured on device. The right edge looked fine only because the opaque magenta rule
+    // covered it. That inset grey frame is what kept reading as "the white part is smaller
+    // than the pane". A stronger fill carries the pane on its own now; nothing floats.
     .drawBehind {
         // Mostly clear. The CAD grid underneath must stay legible through the pane — that
         // show-through is the whole point, and it is also the speaker cue in the thread.
@@ -138,20 +120,12 @@ fun Modifier.glassSurface(
                 end = Offset(originX + run, 0f),
             ),
         )
-        // Top light lip, then a restrained bottom shade. The first version's shade was heavy
-        // enough to turn the pane into a dark block — this is a sheet of plastic, not a bevel.
+        // Top light lip only. The bottom inner shade is gone with the drop shadow and for the
+        // same reason: any tone that fades in near an edge stops the sheet short of that edge,
+        // and at this size a few pixels of that is plainly visible.
         if (framed) {
             drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
         }
-        drawRect(
-            Brush.verticalGradient(
-                // Hugging the very bottom edge. Starting at 0.82 it shaded the last fifth
-                // of the pane, which cut the sheet short of its own lower edge — the same
-                // defect as the gradient's dead corners, from the other direction.
-                0.90f to Color.Transparent,
-                1f to Areel.GlassShade.copy(alpha = if (small) 0.06f else 0.08f),
-            ),
-        )
     }
     .then(if (framed) Modifier.border(1.dp, Areel.GlassBorder) else Modifier)
 
@@ -162,8 +136,8 @@ fun Modifier.glassSurface(
  * what they have already said should look like the same object, so the composer reads as the
  * next bubble rather than as a separate control.
  */
-fun Modifier.userPane(lifted: Boolean = true): Modifier = this
-    .glassSurface(framed = false, lifted = lifted)
+fun Modifier.userPane(): Modifier = this
+    .glassSurface(framed = false)
     .drawBehind {
         val w = 3.dp.toPx()
         drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))

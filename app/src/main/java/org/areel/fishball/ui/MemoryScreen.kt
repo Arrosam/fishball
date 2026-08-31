@@ -1,5 +1,7 @@
 package org.areel.fishball.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -22,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,7 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.areel.fishball.R
@@ -49,6 +55,9 @@ import org.areel.fishball.ui.theme.Areel
  *
  * Still a dummy: rows come from [Demo], nothing calls `:core` yet.
  */
+// Same experimental opt-in as the thread, for the same reason: the platform stretch has to be
+// switched off where the rubber band is switched on, or an edge stretches and translates at once.
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MemoryScreen(onBack: () -> Unit) {
     var personal by remember { mutableStateOf(false) }
@@ -84,12 +93,29 @@ fun MemoryScreen(onBack: () -> Unit) {
                 )
             }
         } else {
-            LazyColumn(
-                Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            // The ledger drags and springs back exactly like the thread does. It is the same
+            // gesture on the same kind of surface, and a short list that refused to move while
+            // the thread bounced read as this screen being half-finished.
+            val bounce = rememberBounceState()
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    // As in the thread: unclipped, the pulled list draws over the band above it.
+                    .clipToBounds()
+                    .bounce(bounce),
             ) {
-                items(rows) { row -> MemoryRow(row, personal) }
+                CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+                    LazyColumn(
+                        Modifier
+                            .fillMaxSize()
+                            .offset { IntOffset(0, bounce.translation) },
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(rows) { row -> MemoryRow(row, personal) }
+                    }
+                }
             }
         }
         Spacer(Modifier.navigationBarsPadding())

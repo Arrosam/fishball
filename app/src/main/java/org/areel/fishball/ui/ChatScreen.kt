@@ -231,8 +231,8 @@ private fun Composer(
             Box(
                 Modifier
                     .weight(1f)
-                    // Lifted. The bar under it is flat grey and the pane tints nothing, so
-                    // the drop shadow is the only thing left marking where the field is.
+                    // The same pane as a user bubble: what is being typed and what has
+                    // already been said are the same object.
                     .userPane()
                     .padding(horizontal = 14.dp, vertical = 15.dp),
             ) {
