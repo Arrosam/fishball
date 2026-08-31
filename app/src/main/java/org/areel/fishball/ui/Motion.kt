@@ -37,6 +37,7 @@ private const val ENTER_MS = 260
 fun EnterFrom(
     pivotX: Float,
     pivotY: Float,
+    modifier: Modifier = Modifier,
     animate: Boolean = true,
     content: @Composable () -> Unit,
 ) {
@@ -49,7 +50,7 @@ fun EnterFrom(
     }
 
     androidx.compose.foundation.layout.Box(
-        Modifier.graphicsLayer {
+        modifier.graphicsLayer {
             val remaining = 1f - progress.value
             alpha = progress.value
 

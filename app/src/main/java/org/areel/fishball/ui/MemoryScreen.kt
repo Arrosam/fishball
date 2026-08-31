@@ -71,16 +71,28 @@ fun MemoryScreen(onBack: () -> Unit) {
             .background(Areel.Concrete)
             .cadGrid(),
     ) {
-        // Out of the 记忆 plate in the thread's masthead - top right - on the same curve and
-        // over the same 260ms as a message arriving.
-        EnterFrom(pivotX = 1f, pivotY = 0f) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding(),
-            ) {
-                MemoryBand(onBack = onBack)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
+            // The masthead does not move. It is the thread's band in the thread's place, only
+            // with a different mark and title - animating it would make the app's one fixed
+            // landmark look like it was being swapped out rather than navigated under.
+            MemoryBand(onBack = onBack)
 
+            // Out of the 记忆 plate that opened this - top right - on the same curve and over
+            // the same 260ms as a message arriving. Clipped to the space under the band for the
+            // same reason the thread is: the entrance travels upwards, and unclipped it spent
+            // its first frames drawn across the checker of the masthead it is supposed to be
+            // arriving beneath.
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clipToBounds(),
+            ) {
+            EnterFrom(pivotX = 1f, pivotY = 0f, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth()) {
                     MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
                         personal = false
@@ -128,6 +140,8 @@ fun MemoryScreen(onBack: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.navigationBarsPadding())
+            }
+            }
             }
         }
     }
