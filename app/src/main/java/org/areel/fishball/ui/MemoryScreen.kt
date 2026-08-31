@@ -133,7 +133,15 @@ fun MemoryScreen(onBack: () -> Unit) {
                                 Modifier
                                     .fillMaxSize()
                                     .offset { IntOffset(0, bounce.translation) },
-                                contentPadding = PaddingValues(16.dp),
+                                // 32dp at the top, not 16: the checker overlays this list now
+                            // rather than occupying a row above it, so its height has to be
+                            // left clear or the first row starts half-hidden under it.
+                            contentPadding = PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 32.dp,
+                                bottom = 16.dp,
+                            ),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 items(rows) { row -> MemoryRow(row, personal) }
@@ -144,6 +152,12 @@ fun MemoryScreen(onBack: () -> Unit) {
                 Spacer(Modifier.navigationBarsPadding())
             }
             }
+
+            // As on the thread: painted over the ledger rather than sitting in the Column
+            // above it, so a row scrolled up passes beneath and reads through the gaps. It
+            // lands below the tabs because the tabs are chrome as well - the strip marks the
+            // line where content begins, and on this screen that line is under them.
+            CheckerBand(Modifier.align(Alignment.TopCenter))
             }
         }
     }
@@ -180,7 +194,6 @@ private fun MemoryBand(onBack: () -> Unit) {
                 color = Areel.Paper,
             )
         }
-        CheckerBand()
     }
 }
 
