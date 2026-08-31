@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -463,3 +464,45 @@ private fun DrawScope.drawLap(phase: Float, outline: Path, measure: PathMeasure,
     }
     drawPath(segment, Areel.Magenta, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Butt))
 }
+
+/**
+ * The thread before anything is in it: the mark as a watermark, and one line introducing the
+ * app.
+ *
+ * Ground rather than a message. An opening bubble makes the app look like it spoke before the
+ * user arrived, and it puts something in the thread that nobody asked for; a watermark is
+ * plainly the empty state and disappears the moment there is anything to show.
+ */
+@Composable
+fun EmptyThread(modifier: Modifier = Modifier) {
+    Column(
+        modifier.padding(horizontal = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // The gate's watermark treatment: ink at a tenth, no eye. The magenta eye would be a
+        // muddy pink at this alpha, and the mark reads as a silhouette without it.
+        //
+        // Nudged, because the path is not centred inside its own 24-unit box: it spans 2.6 to
+        // 18.4 across and 5.6 to 21.4 down, putting its middle 1.5 units left of and below the
+        // box's. Beside a wordmark that never shows. Alone on an empty screen, over centred
+        // text, it measured 11px off and looked it.
+        FishMark(
+            Modifier
+                .size(MARK)
+                .offset(x = MARK_NUDGE, y = -MARK_NUDGE)
+                .alpha(0.10f),
+            body = Areel.Ink,
+            eye = null,
+        )
+        Spacer(Modifier.height(20.dp))
+        Text(
+            stringResource(R.string.thread_empty),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Areel.Ink40,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+private val MARK = 104.dp
+private val MARK_NUDGE = MARK * (1.5f / 24f)

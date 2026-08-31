@@ -67,7 +67,10 @@ import org.areel.fishball.ui.theme.Areel
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(onMemoryClick: () -> Unit) {
-    val messages = remember { mutableStateListOf<DemoMessage>().apply { addAll(Demo.opening) } }
+    // Starts empty. The opening bubble said much what the empty state now says, and saying it
+    // twice - once as ground, once as a message - would make the app look like it had already
+    // been talking before the user arrived.
+    val messages = remember { mutableStateListOf<DemoMessage>() }
     val narration = remember { mutableStateListOf<String>() }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -166,6 +169,12 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
                     }
                 }
             }
+            }
+
+            // Nothing said yet. It lives in the thread's box rather than in the list, so it
+            // neither scrolls nor rubber-bands with content that does not exist.
+            if (messages.isEmpty() && narration.isEmpty()) {
+                EmptyThread(Modifier.align(Alignment.Center))
             }
 
             // The masthead's checker, over the thread rather than above it. The squares that

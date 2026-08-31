@@ -32,14 +32,6 @@ data class DemoExchange(
 
 object Demo {
 
-    val opening = listOf(
-        DemoMessage(
-            fromUser = false,
-            text = "有什么想查的直接问我就行。我会去网上找，找到什么就跟你说什么，" +
-                "找不到可靠的来源我也会直说。",
-        ),
-    )
-
 
     /**
      * Memory-screen fixture. TTL words are the designer's proposals from

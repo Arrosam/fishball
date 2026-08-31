@@ -14,6 +14,9 @@
     <!-- Composer: no placeholder by design. The field and the send control carry it. -->
     <string name="send">发送</string>
 
+    <!-- The thread before anything is in it. Author's copy, approved 2026-08-31. -->
+    <string name="thread_empty">我是鱼丸，你的私人AI助理，来问我第一个问题，让我们一起探索这个世界吧！</string>
+
     <!-- Activation: spec §1, one key handed over in person. No instructional paragraph -
          the placeholder names what is being asked for and that is the whole instruction. -->
     <string name="gate_key_hint">请输入激活码</string>
