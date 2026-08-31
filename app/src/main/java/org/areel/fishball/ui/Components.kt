@@ -329,7 +329,16 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
     }
 }
 
-data class Source(val name: String, val host: String)
+data class Source(
+    val name: String,
+    val host: String,
+    /**
+     * Spec §25 — the source's own wording, sliced out of the retrieved text by the verifier.
+     * Null when the model cited a source without quoting it, which is allowed; what is not
+     * allowed, and cannot happen, is a value here that the source does not contain.
+     */
+    val quote: String? = null,
+)
 
 /**
  * Spec §21 — the wait, in the thread rather than pinned above the composer, so the placeholder

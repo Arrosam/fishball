@@ -21,6 +21,12 @@
          the placeholder names what is being asked for and that is the whole instruction. -->
     <string name="gate_key_hint">请输入激活码</string>
     <string name="gate_confirm">确认</string>
+    <!--
+      Two failures, told apart because only one of them is the person's to fix. A status code
+      would be honest and useless; neither line mentions keys, servers or networks by name.
+    -->
+    <string name="gate_key_rejected">这个码不对，再看一下？</string>
+    <string name="gate_unreachable">现在连不上，等一下再试。</string>
 
     <!-- Confidence meter labels (spec §6, approved 2026-08-31). -->
     <string name="confidence_label">置信度</string>

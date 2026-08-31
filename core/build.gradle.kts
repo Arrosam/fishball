@@ -34,11 +34,19 @@ sourceSets {
     }
 }
 
+/*
+ * `api`, not `implementation`, and deliberately.
+ *
+ * :core does not merely use these - it exposes them. A tool schema is a kotlinx JsonObject, and
+ * the gateways take an HttpClient so a test can hand them a fake transport. Both types appear
+ * in signatures :app has to resolve, so hiding them here only produces "cannot access class"
+ * at the call site. If that ever stops being true, tighten it back.
+ */
 dependencies {
-    implementation(libs.kotlinx.serialization.json)
-    implementation(libs.ktor.client.okhttp)
-    implementation(libs.ktor.client.content.negotiation)
-    implementation(libs.ktor.serialization.json)
+    api(libs.kotlinx.serialization.json)
+    api(libs.ktor.client.okhttp)
+    api(libs.ktor.client.content.negotiation)
+    api(libs.ktor.serialization.json)
     testImplementation(kotlin("test"))
 }
 

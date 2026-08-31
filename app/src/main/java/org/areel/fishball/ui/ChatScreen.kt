@@ -57,26 +57,24 @@ import org.areel.fishball.ui.theme.Areel
 /**
  * Spec §2 — one endless conversation. No chat list, no folders, no settings to understand.
  *
- * Still the dummy: replies are scripted in [Demo] and the narration runs on a timer, nothing
- * talks to `:core`. What is real is the surface — the CAD grid ground, the chamfered assistant
- * plate, the user's glass pane, the meter, the source card, and the pending bubble that occupies
- * the slot its answer will land in.
+ * The thread is state the view model owns: it survives rotation and the memory screen, and
+ * the composable stays a drawing of it. Everything below the state block is surface — the CAD
+ * grid ground, the chamfered assistant plate, the user's glass pane, the meter, the source card,
+ * and the pending bubble that occupies the slot its answer will land in.
  */
 // LocalOverscrollConfiguration is still experimental; the alternative is shipping two
 // competing overscroll effects, so the opt-in is the lesser problem.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChatScreen(onMemoryClick: () -> Unit) {
-    // Starts empty. The opening bubble said much what the empty state now says, and saying it
-    // twice - once as ground, once as a message - would make the app look like it had already
-    // been talking before the user arrived.
-    val messages = remember { mutableStateListOf<DemoMessage>() }
-    val narration = remember { mutableStateListOf<String>() }
+fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
+    // Starts empty. An opening bubble would say what the empty state already says, and saying
+    // it twice - once as ground, once as a message - would make the app look like it had been
+    // talking before the user arrived.
+    val messages = vm.messages
+    val narration = vm.narration
+    val busy = vm.busy
     var draft by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var nextExchange by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
 
     // Rows that have already played their entrance. A LazyColumn discards and rebuilds an
     // item when it scrolls out and back, so without this an old message re-animates every
@@ -90,22 +88,7 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
     }
 
     fun send(text: String) {
-        if (busy || text.isBlank()) return
-        val exchange = Demo.exchanges.getOrNull(nextExchange % Demo.exchanges.size) ?: return
-        messages += DemoMessage(fromUser = true, text = text)
-        busy = true
-        narration.clear()
-
-        scope.launch {
-            exchange.narration.forEach { step ->
-                narration += step
-                delay(900)
-            }
-            narration.clear()
-            messages += exchange.reply
-            nextExchange += 1
-            busy = false
-        }
+        vm.send(text)
     }
 
     Column(
@@ -203,7 +186,7 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
             onValueChange = { draft = it },
             enabled = !busy,
             onSend = {
-                send(draft.ifBlank { Demo.exchanges[nextExchange % Demo.exchanges.size].question })
+                send(draft)
                 draft = ""
             },
         )

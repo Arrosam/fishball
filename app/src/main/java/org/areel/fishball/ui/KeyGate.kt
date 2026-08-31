@@ -58,7 +58,11 @@ import org.areel.fishball.ui.theme.Areel
  * and reads as printed on the paper rather than as a second animation.
  */
 @Composable
-fun KeyGate(onKeyEntered: (String) -> Unit) {
+fun KeyGate(
+    checking: Boolean,
+    error: String?,
+    onSubmit: (String) -> Unit,
+) {
     var key by remember { mutableStateOf("") }
 
     Box(
@@ -92,12 +96,23 @@ fun KeyGate(onKeyEntered: (String) -> Unit) {
             ActivationField(
                 value = key,
                 onValueChange = { key = it },
-                onSubmit = { if (key.isNotBlank()) onKeyEntered(key.trim()) },
+                onSubmit = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
             )
 
+            // Whatever went wrong, said in one line without a status code. The person reading
+            // it cannot act on "401", and the only actionable distinction is between a key
+            // that was refused and a network that was not there.
+            if (error != null) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Areel.Magenta,
+                )
+            }
+
             Button(
-                onClick = { if (key.isNotBlank()) onKeyEntered(key.trim()) },
-                enabled = key.isNotBlank(),
+                onClick = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
+                enabled = key.isNotBlank() && !checking,
                 shape = RectangleShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Areel.Magenta,

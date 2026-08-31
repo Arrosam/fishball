@@ -59,9 +59,13 @@ import org.areel.fishball.ui.theme.Areel
 // switched off where the rubber band is switched on, or an edge stretches and translates at once.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MemoryScreen(onBack: () -> Unit) {
-    var personal by remember { mutableStateOf(false) }
-    val rows = remember(personal) { if (personal) Demo.personalMemories else Demo.worldMemories }
+fun MemoryScreen(
+    world: List<MemoryRowData>,
+    personal: List<MemoryRowData>,
+    onBack: () -> Unit,
+) {
+    var showPersonal by remember { mutableStateOf(false) }
+    val rows = if (showPersonal) personal else world
 
     // The ground does not animate. Scaling the grid along with the content would read as the
     // whole app moving rather than as this screen opening over the thread.
@@ -84,11 +88,11 @@ fun MemoryScreen(onBack: () -> Unit) {
             // The tabs are chrome, not content. They name the two ledgers and are the control
             // that swaps between them, so they stay put while either one arrives underneath.
             Row(Modifier.fillMaxWidth()) {
-                MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
-                    personal = false
+                MemoryTab(stringResource(R.string.memory_tab_world), !showPersonal, Modifier.weight(1f)) {
+                    showPersonal = false
                 }
-                MemoryTab(stringResource(R.string.memory_tab_personal), personal, Modifier.weight(1f)) {
-                    personal = true
+                MemoryTab(stringResource(R.string.memory_tab_personal), showPersonal, Modifier.weight(1f)) {
+                    showPersonal = true
                 }
             }
 
@@ -108,7 +112,7 @@ fun MemoryScreen(onBack: () -> Unit) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             stringResource(
-                                if (personal) R.string.memory_empty_personal else R.string.memory_empty_world,
+                                if (showPersonal) R.string.memory_empty_personal else R.string.memory_empty_world,
                             ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Areel.Ink40,
@@ -136,7 +140,7 @@ fun MemoryScreen(onBack: () -> Unit) {
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                items(rows) { row -> MemoryRow(row, personal) }
+                                items(rows) { row -> MemoryRow(row, showPersonal) }
                             }
                         }
                     }

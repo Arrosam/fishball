@@ -80,4 +80,34 @@ class InMemoryStore : MemoryStore {
             .map { it.first }
 
     override fun lastTurnAt(): Long? = turns.maxByOrNull { it.at }?.at
+
+    // ---- snapshot ---------------------------------------------------------------------
+
+    /** Everything the memory screen lists. Invalidated facts included — §19 keeps provenance. */
+    fun worldFacts(): List<WorldFact> = world.toList()
+
+    /**
+     * The whole store, flattened. Exists so [PersistentStore] can write this implementation to
+     * disk instead of there being a second one that has to behave identically.
+     */
+    fun snapshot() = MemorySnapshot(
+        world = world.map { it.toDto() },
+        preferences = preferences.map { it.toDto() },
+        turns = turns.map { it.toDto() },
+        idSeq = idSeq,
+    )
+
+    fun restore(snapshot: MemorySnapshot) {
+        world.clear(); world += snapshot.world.map { it.toDomain() }
+        preferences.clear(); preferences += snapshot.preferences.map { it.toDomain() }
+        turns.clear(); turns += snapshot.turns.map { it.toDomain() }
+        // Never rewind: ids handed out before a crash must not be handed out again, so this
+        // takes the larger of the recorded sequence and anything actually present.
+        idSeq = maxOf(
+            snapshot.idSeq,
+            (world.maxOfOrNull { it.id } ?: 0L),
+            (preferences.maxOfOrNull { it.id } ?: 0L),
+            (turns.maxOfOrNull { it.id } ?: 0L),
+        )
+    }
 }
