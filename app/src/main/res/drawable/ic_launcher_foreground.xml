@@ -3,7 +3,8 @@
   FishMark's path, verbatim from Surfaces.kt, in its own 24-unit space with a group transform
   placing it on the 108-unit icon canvas.
 
-  The scale is set by the circular mask, not by the safe zone. A 72-unit square fits the square
+  Paper on ink, the masthead's pairing. The scale is set by the circular mask, not by the safe
+  zone. A 72-unit square fits the square
   mask but its corners fall outside a circle of the same width, and this mark's extremes are its
   head and tail - diagonally opposite. At this size the bounding box sits 35.4 units from centre
   against a 36-unit radius, so nothing is clipped on a round launcher.
@@ -19,7 +20,7 @@
         android:translateX="20.8"
         android:translateY="11.3">
         <path
-            android:fillColor="#101010"
+            android:fillColor="#F2F2EE"
             android:pathData="M7.4,16.6 L7.4,9.9 L11.3,5.6 L18.4,5.6 L18.4,12.7 L14.1,16.6 Z M7.4,16.6 L2.6,21.4 L7.4,21.4 Z" />
         <!-- The eye. The one place the icon spends its magenta, as the masthead does. -->
         <path
