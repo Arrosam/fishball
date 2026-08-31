@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
@@ -97,31 +101,46 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
     ) {
         TopBand(onMemoryClick = onMemoryClick)
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            itemsIndexed(messages) { _, message ->
-                if (message.fromUser) {
-                    UserBubble(message.text)
-                } else {
-                    AssistantBubble(
-                        text = message.text,
-                        confidence = message.confidence,
-                        conflict = message.conflict,
-                        sources = message.sources,
-                    )
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                itemsIndexed(messages) { _, message ->
+                    if (message.fromUser) {
+                        UserBubble(message.text)
+                    } else {
+                        AssistantBubble(
+                            text = message.text,
+                            confidence = message.confidence,
+                            conflict = message.conflict,
+                            sources = message.sources,
+                        )
+                    }
+                }
+                // §21 inline: the placeholder sits where the answer will, and is replaced in place.
+                if (narration.isNotEmpty()) {
+                    item { PendingBubble(narration.toList()) }
                 }
             }
-            // §21 inline: the placeholder sits where the answer will, and is replaced in place.
-            if (narration.isNotEmpty()) {
-                item { PendingBubble(narration.toList()) }
-            }
+
+            // The shade the composer casts on the thread running under it. Modifier.shadow on
+            // the bar alone is not enough: Android throws elevation shadows downward, so a bar
+            // pinned to the bottom gets almost nothing above it. Drawn over the list rather
+            // than inside the bar, because the shade belongs to what passes beneath.
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(14.dp)
+                    .background(
+                        Brush.verticalGradient(listOf(Color.Transparent, Areel.Ink10)),
+                    ),
+            )
         }
 
-        Hairline()
         Composer(
             value = draft,
             onValueChange = { draft = it },
@@ -137,6 +156,11 @@ fun ChatScreen(onMemoryClick: () -> Unit) {
 /**
  * No placeholder by design — the field and the send plate carry it. A control that presses is
  * never glass, so the composer stays opaque.
+ *
+ * It sits above the thread on a shadow. Flat against the ground it read as the point the
+ * conversation stopped at; lifted, it reads as a bar the thread scrolls underneath — which is
+ * what actually happens. The hairline lives inside the bar rather than above it so the crisp
+ * lip draws on top of the shadow instead of being dimmed by it.
  */
 @Composable
 private fun Composer(
@@ -145,49 +169,61 @@ private fun Composer(
     enabled: Boolean,
     onSend: () -> Unit,
 ) {
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
-            .background(Areel.Concrete2)
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .shadow(
+                elevation = 10.dp,
+                clip = false,
+                ambientColor = Areel.Ink,
+                spotColor = Areel.Ink,
+            )
+            .background(Areel.Concrete2),
     ) {
-        Box(
+        Hairline()
+        Row(
             Modifier
-                .weight(1f)
-                .background(if (enabled) Areel.Paper else Areel.Ink06, RectangleShape)
-                .padding(horizontal = 14.dp, vertical = 15.dp),
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                enabled = enabled,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Areel.Ink),
-                cursorBrush = SolidColor(Areel.Magenta),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        // A square plate rather than an IconButton. M3's IconButton clips its container to
-        // CircleShape, so the send control came out round — the one shape this design does
-        // not contain anywhere.
-        Box(
-            Modifier
-                .padding(start = 10.dp)
-                .size(48.dp)
-                .background(if (enabled) Areel.Magenta else Areel.Ink20, RectangleShape)
-                .clickable(enabled = enabled, onClick = onSend),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_send),
-                contentDescription = stringResource(R.string.send),
-                tint = if (enabled) Areel.Paper else Areel.Ink40,
-                modifier = Modifier.size(24.dp),
-            )
+            Box(
+                Modifier
+                    .weight(1f)
+                    .background(if (enabled) Areel.Paper else Areel.Ink06, RectangleShape)
+                    .padding(horizontal = 14.dp, vertical = 15.dp),
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    enabled = enabled,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Areel.Ink),
+                    cursorBrush = SolidColor(Areel.Magenta),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            // A square plate rather than an IconButton. M3's IconButton clips its container to
+            // CircleShape, so the send control came out round - the one shape this design does
+            // not contain anywhere.
+            Box(
+                Modifier
+                    .padding(start = 10.dp)
+                    .size(48.dp)
+                    .background(if (enabled) Areel.Magenta else Areel.Ink20, RectangleShape)
+                    .clickable(enabled = enabled, onClick = onSend),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_send),
+                    contentDescription = stringResource(R.string.send),
+                    tint = if (enabled) Areel.Paper else Areel.Ink40,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
     }
 }
