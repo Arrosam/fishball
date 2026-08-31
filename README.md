@@ -47,6 +47,27 @@ Point it at a different SearXNG instance:
 ./gradlew installDebug -Pfishball.searxng.baseUrl=https://searx.example.org
 ```
 
+### Releases
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+Signing comes from `keystore.properties` at the repo root, which is not in version control
+along with the `.jks` it names. Without it the build still runs and produces an unsigned APK,
+so a clone compiles without holding the key that ships it.
+
+**Both files have to be backed up somewhere other than this machine.** Android identifies an
+app by its signing key: lose the keystore and no future build can ever update an installed
+FishBall. Everyone running it would have to uninstall — losing their conversation and their
+memory — to move to a new one.
+
+Two things follow from the release being signed differently to the debug build:
+
+- A phone with the debug build has to uninstall it first, and that wipes its data.
+- Release runs R8. It is verified working end to end, but it is a genuinely different binary
+  from the debug one: a turn on the release APK is worth running after any dependency change.
+
 ## How the memory works
 
 Three kinds, per spec §9 — not the tiered/decayed design this README described before the

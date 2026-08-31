@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.compiler)
+}
+
+/*
+ * Release signing.
+ *
+ * Read from keystore.properties, which is not in version control, and absent for anyone who
+ * clones this. That case builds unsigned rather than failing: a contributor should be able to
+ * compile the app without holding the key that ships it.
+ */
+val signing = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -11,12 +25,12 @@ android {
 
     defaultConfig {
         applicationId = "org.areel.fishball"
-        // API 26 is the floor: Android's bundled SQLite gains FTS5 here, and the lexical
-        // leg of the hybrid retriever depends on it (see memory/LexicalIndex.kt).
+        // API 26 is the floor. It was chosen for an FTS5 index that was never built; what
+        // holds it there now is the adaptive launcher icon, which is mipmap-anydpi-v26 only.
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0"
 
         buildConfigField(
             "String",
@@ -25,10 +39,22 @@ android {
         )
     }
 
+    signingConfigs {
+        if (signing.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = rootProject.file(signing.getProperty("storeFile"))
+                storePassword = signing.getProperty("storePassword")
+                keyAlias = signing.getProperty("keyAlias")
+                keyPassword = signing.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

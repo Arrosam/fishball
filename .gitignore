@@ -10,6 +10,8 @@ captures/
 *.apk
 *.aab
 *.keystore
+*.jks
+keystore.properties
 
 # on-device model files are large; provision them out-of-band (see README)
 app/src/main/assets/models/
