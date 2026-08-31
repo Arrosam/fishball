@@ -41,6 +41,15 @@ interface MemoryStore {
     /** Spec §9 - "what did I ask you yesterday". Optional time window, newest first. */
     fun searchTurns(query: String, from: Long? = null, to: Long? = null, limit: Int = 20): List<ConversationTurn>
 
+    /**
+     * The tail of the log in the order it was said, for redrawing the thread on launch.
+     *
+     * Not scoped to a session. Sessions bound the prompt, not the conversation - §8 says the
+     * user's mental model is one endless thread, and a thread that emptied itself every hour
+     * would make the boundary visible, which is the one thing sessions must not be.
+     */
+    fun recentTurns(limit: Int = 100): List<ConversationTurn>
+
     fun lastTurnAt(): Long?
 
     fun nextId(): Long

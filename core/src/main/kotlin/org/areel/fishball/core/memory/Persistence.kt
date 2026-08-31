@@ -2,6 +2,7 @@ package org.areel.fishball.core.memory
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.trust.Tier
 
 /**
@@ -66,6 +67,18 @@ data class TurnDto(
     val at: Long,
     val speaker: String,
     val text: String,
+    // Defaulted, so a file written before answers were recorded still reads.
+    val shape: String? = null,
+    val sources: List<CitedSourceDto> = emptyList(),
+)
+
+@Serializable
+data class CitedSourceDto(
+    val url: String,
+    val displayName: String,
+    val explanation: String? = null,
+    val tier: String,
+    val quote: String? = null,
 )
 
 /**
@@ -126,6 +139,8 @@ class PersistentStore(
     override fun searchTurns(query: String, from: Long?, to: Long?, limit: Int): List<ConversationTurn> =
         inner.searchTurns(query, from, to, limit)
 
+    override fun recentTurns(limit: Int): List<ConversationTurn> = inner.recentTurns(limit)
+
     override fun lastTurnAt(): Long? = inner.lastTurnAt()
 
     /** Everything the memory screen lists. */
@@ -171,7 +186,10 @@ internal fun PreferenceFactDto.toDomain(): PreferenceFact {
     )
 }
 
-internal fun ConversationTurn.toDto() = TurnDto(id, sessionId, at, speaker.name, text)
+internal fun ConversationTurn.toDto() = TurnDto(
+    id, sessionId, at, speaker.name, text, shape?.name,
+    sources.map { CitedSourceDto(it.url, it.displayName, it.explanation, it.tier.name, it.quote) },
+)
 
 internal fun TurnDto.toDomain() = ConversationTurn(
     id = id,
@@ -179,6 +197,16 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     at = at,
     speaker = enumOrNull<Speaker>(speaker) ?: Speaker.USER,
     text = text,
+    shape = shape?.let { enumOrNull<AnswerShape>(it) },
+    sources = sources.map {
+        CitedSource(
+            url = it.url,
+            displayName = it.displayName,
+            explanation = it.explanation,
+            tier = enumOrNull<Tier>(it.tier) ?: Tier.LOW,
+            quote = it.quote,
+        )
+    },
 )
 
 private inline fun <reified E : Enum<E>> enumOrNull(name: String): E? =

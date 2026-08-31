@@ -39,6 +39,10 @@
       and the plainer word is the one that makes that promise legible to someone who has never
       thought about where an answer came from.
     -->
+    <!-- The gate's failure detail, one tap under the message. For whoever gets asked for help. -->
+    <string name="detail_show">详情</string>
+    <string name="detail_hide">收起</string>
+
     <string name="quote_show">看原话</string>
     <string name="quote_hide">收起</string>
 

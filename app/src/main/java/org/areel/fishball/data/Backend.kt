@@ -77,6 +77,7 @@ class Backend private constructor(
 
     companion object {
         const val SEARCH_URL = "https://search.areel.org"
+        const val LLM_URL = HydrogenClient.DEFAULT_BASE_URL
 
         private const val PREFS = "fishball"
         private const val KEY_API = "api_key"

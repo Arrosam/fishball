@@ -79,6 +79,9 @@ class InMemoryStore : MemoryStore {
             .take(limit)
             .map { it.first }
 
+    override fun recentTurns(limit: Int): List<ConversationTurn> =
+        turns.sortedBy { it.at }.takeLast(limit)
+
     override fun lastTurnAt(): Long? = turns.maxByOrNull { it.at }?.at
 
     // ---- snapshot ---------------------------------------------------------------------

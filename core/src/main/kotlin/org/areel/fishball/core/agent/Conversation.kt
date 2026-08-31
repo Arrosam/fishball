@@ -15,6 +15,7 @@ import org.areel.fishball.core.llm.LlmContent
 import org.areel.fishball.core.llm.LlmMessage
 import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
+import org.areel.fishball.core.memory.CitedSource
 import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.MemoryStore
 import org.areel.fishball.core.memory.PreferenceFact
@@ -83,7 +84,17 @@ class Conversation(
         val reply = run(engine.firstStep(ctx), ctx, narrate)
 
         store.appendTurn(
-            ConversationTurn(store.nextId(), session!!.id, now(), Speaker.ASSISTANT, reply.text),
+            ConversationTurn(
+                id = store.nextId(),
+                sessionId = session!!.id,
+                at = now(),
+                speaker = Speaker.ASSISTANT,
+                text = reply.text,
+                shape = reply.shape,
+                sources = reply.sources.map {
+                    CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
+                },
+            ),
         )
         return reply
     }

@@ -2,6 +2,7 @@ package org.areel.fishball.core.memory
 
 import org.areel.fishball.core.copy.Vocabulary
 import org.areel.fishball.core.trust.Tier
+import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.trust.Topic
 
 const val ONE_DAY_MS = 86_400_000L
@@ -109,6 +110,23 @@ data class PreferenceFact(
 
 enum class Speaker { USER, ASSISTANT }
 
+/**
+ * A source as it was cited at the time.
+ *
+ * Kept in the log rather than re-derived on read. Tiers are resolved against a registry that
+ * changes, and a search result's snippet is gone the moment the search is over - so an answer
+ * re-tiered six months later would be shown with a confidence it was never given. What the log
+ * records is what the user was actually told.
+ */
+data class CitedSource(
+    val url: String,
+    val displayName: String,
+    val explanation: String? = null,
+    val tier: Tier,
+    /** Spec §25 — the verified passage, if one was shown. */
+    val quote: String? = null,
+)
+
 /** Spec §9 — every turn is kept and searchable, so "what did I ask you yesterday" is answerable. */
 data class ConversationTurn(
     val id: Long,
@@ -116,6 +134,12 @@ data class ConversationTurn(
     val at: Long,
     val speaker: Speaker,
     val text: String,
+    /**
+     * How the answer was allowed to speak. Null on the user's own turns, and on assistant turns
+     * that were not answering a factual question - a comfort or a clarification has no shape.
+     */
+    val shape: AnswerShape? = null,
+    val sources: List<CitedSource> = emptyList(),
 )
 
 /** A cached answer plus why it is or isn't usable, so the caller never has to re-derive it. */

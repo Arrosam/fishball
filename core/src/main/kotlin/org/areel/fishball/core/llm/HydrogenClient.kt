@@ -80,7 +80,10 @@ class HydrogenClient(
             }
         }
     } catch (e: Exception) {
-        KeyCheck.Unreachable(e.message ?: e::class.simpleName.orEmpty())
+        // Class name as well as message. Half of what goes wrong here throws with a null or
+        // one-word message - UnknownHostException, SSLHandshakeException, SocketTimeoutException
+        // - and the type is the part that says which of those it was.
+        KeyCheck.Unreachable("${e::class.simpleName}: ${e.message ?: "no detail"}  @ $baseUrl")
     }
 
     override suspend fun complete(request: LlmRequest): LlmResult {
@@ -102,7 +105,7 @@ class HydrogenClient(
             }
             parse(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
         } catch (e: Exception) {
-            LlmResult.Failed(e.message ?: e::class.simpleName.orEmpty(), retryable = true)
+            LlmResult.Failed("${e::class.simpleName}: ${e.message ?: "no detail"}", retryable = true)
         }
     }
 

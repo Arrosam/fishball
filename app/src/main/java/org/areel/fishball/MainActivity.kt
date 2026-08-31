@@ -17,6 +17,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.data.Backend
 import org.areel.fishball.ui.ChatScreen
@@ -49,6 +50,7 @@ private fun FishBallApp() {
     var showMemory by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var gateError by remember { mutableStateOf<String?>(null) }
+    var gateDetail by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     val rejected = stringResource(R.string.gate_key_rejected)
@@ -59,15 +61,33 @@ private fun FishBallApp() {
         KeyGate(
             checking = checking,
             error = gateError,
+            detail = gateDetail,
             onSubmit = { key ->
                 checking = true
                 gateError = null
+                gateDetail = null
                 scope.launch {
-                    when (backend.signIn(key)) {
+                    when (val check = backend.signIn(key)) {
                         is KeyCheck.Valid -> signedIn = true
-                        KeyCheck.Rejected -> gateError = rejected
-                        is KeyCheck.NoModel -> gateError = noModel
-                        is KeyCheck.Unreachable -> gateError = unreachable
+
+                        KeyCheck.Rejected -> {
+                            gateError = rejected
+                            gateDetail = "HTTP 401/403 from ${Backend.LLM_URL}/v1/models"
+                        }
+
+                        is KeyCheck.NoModel -> {
+                            gateError = noModel
+                            // The catalogue it did return, so the gap is visible at a glance.
+                            gateDetail = "wanted " +
+                                HydrogenClient.PREFERRED.joinToString(" | ") +
+                                "   offered " +
+                                check.offered.joinToString(", ").ifBlank { "(nothing)" }
+                        }
+
+                        is KeyCheck.Unreachable -> {
+                            gateError = unreachable
+                            gateDetail = check.reason
+                        }
                     }
                     checking = false
                 }

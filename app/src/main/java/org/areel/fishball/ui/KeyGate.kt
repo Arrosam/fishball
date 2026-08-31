@@ -7,6 +7,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,9 +63,15 @@ import org.areel.fishball.ui.theme.Areel
 fun KeyGate(
     checking: Boolean,
     error: String?,
+    /**
+     * The underlying failure, verbatim - exception type, message, endpoint. Not for the person
+     * this app is built for; for whoever they hand the phone to when it does not work.
+     */
+    detail: String?,
     onSubmit: (String) -> Unit,
 ) {
     var key by remember { mutableStateOf("") }
+    var showDetail by remember(error) { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -99,15 +107,46 @@ fun KeyGate(
                 onSubmit = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
             )
 
-            // Whatever went wrong, said in one line without a status code. The person reading
-            // it cannot act on "401", and the only actionable distinction is between a key
-            // that was refused and a network that was not there.
+            // Whatever went wrong, said in one line without a status code - the person reading
+            // it cannot act on "401". The detail is one tap underneath rather than absent,
+            // because the same screen has to serve whoever they ask for help.
             if (error != null) {
-                Text(
-                    error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Areel.Magenta,
-                )
+                Column {
+                    Row(
+                        Modifier.clickable(enabled = detail != null) { showDetail = !showDetail },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Areel.Magenta,
+                        )
+                        if (detail != null) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(
+                                    if (showDetail) R.string.detail_hide else R.string.detail_show,
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Ink40,
+                            )
+                        }
+                    }
+                    if (showDetail && detail != null) {
+                        Spacer(Modifier.height(8.dp))
+                        // Mono, because this is a machine's words - and left unwrapped-looking
+                        // rather than prettied up, so it can be read back over the phone.
+                        Text(
+                            detail,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Areel.Ink60,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .glassSurface(small = true)
+                                .padding(10.dp),
+                        )
+                    }
+                }
             }
 
             Button(

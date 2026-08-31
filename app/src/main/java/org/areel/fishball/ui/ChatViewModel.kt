@@ -13,7 +13,9 @@ import org.areel.fishball.core.agent.Reply
 import org.areel.fishball.core.agent.SourceRef
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.copy.UiCopy
+import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.PreferenceFact
+import org.areel.fishball.core.memory.Speaker
 import org.areel.fishball.core.memory.WorldFact
 import org.areel.fishball.core.trust.normalizeHost
 import org.areel.fishball.data.Backend
@@ -35,6 +37,14 @@ data class ChatMessage(
 class ChatViewModel(private val backend: Backend) : ViewModel() {
 
     val messages = mutableStateListOf<ChatMessage>()
+
+    init {
+        // Redrawn from the log, not held in memory. The thread the user sees and the record
+        // §9 keeps are the same thing, so closing the app cannot lose one without losing the
+        // other - and reopening it lands them back where they were rather than on a blank
+        // screen that implies the app forgot them.
+        messages += backend.store.recentTurns().map { it.toMessage() }
+    }
 
     /** Spec §21 — what the app is doing right now, in plain language. */
     val narration = mutableStateListOf<String>()
@@ -104,6 +114,20 @@ private fun Reply.toMessage() = ChatMessage(
     sources = sources.map { it.toUi() },
     confidence = shape.toConfidence(),
     conflict = conflict,
+)
+
+private fun ConversationTurn.toMessage() = ChatMessage(
+    fromUser = speaker == Speaker.USER,
+    text = text,
+    sources = sources.map {
+        Source(
+            name = it.displayName,
+            host = normalizeHost(it.url) ?: UiCopy.UNPARSEABLE_SOURCE,
+            quote = it.quote,
+        )
+    },
+    confidence = shape.toConfidence(),
+    conflict = shape == AnswerShape.CONFLICT,
 )
 
 private fun SourceRef.toUi() = Source(
