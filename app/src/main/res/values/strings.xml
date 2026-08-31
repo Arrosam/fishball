@@ -26,6 +26,15 @@
     <string name="mode_note">换模式以后，之前聊的会整理成一段摘要再接着聊。</string>
     <string name="mode_unavailable">当前激活码不支持专业模式</string>
     <string name="settings_key">激活码</string>
+
+    <!--
+      Spec §9. The count comes first because it is the part someone can picture; the size is
+      there for the one question the count cannot answer, which is whether it matters.
+    -->
+    <string name="settings_history">对话记录</string>
+    <string name="history_summary">%1$d 条 · %2$s</string>
+    <string name="history_clear">清空</string>
+    <string name="history_confirm">确认清空</string>
     <string name="settings_change">更改</string>
     <string name="settings_save">保存</string>
     <string name="settings_cancel">取消</string>

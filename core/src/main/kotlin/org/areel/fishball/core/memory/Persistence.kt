@@ -161,6 +161,15 @@ class PersistentStore(
 
     override fun loadSession(): Session? = inner.loadSession()
 
+    override fun turnCount(): Int = inner.turnCount()
+
+    override fun turnBytes(): Long = inner.turnBytes()
+
+    override fun clearTurns() {
+        inner.clearTurns()
+        flush()
+    }
+
     override fun lastTurnAt(): Long? = inner.lastTurnAt()
 
     /** Everything the memory screen lists. */

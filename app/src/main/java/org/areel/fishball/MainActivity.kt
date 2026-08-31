@@ -144,6 +144,7 @@ private fun FishBallApp() {
             var settingsBusy by remember { mutableStateOf(false) }
             var settingsError by remember { mutableStateOf<String?>(null) }
             var keyHint by remember { mutableStateOf(backend.keyHint()) }
+            var history by remember { mutableStateOf(vm.historySize()) }
             val modeUnavailable = stringResource(R.string.mode_unavailable)
 
             SettingsScreen(
@@ -151,6 +152,11 @@ private fun FishBallApp() {
                 keyHint = keyHint,
                 busy = settingsBusy,
                 error = settingsError,
+                history = history,
+                onClearHistory = {
+                    vm.clearHistory()
+                    history = vm.historySize()
+                },
                 onModeChange = { wanted ->
                     settingsBusy = true
                     settingsError = null

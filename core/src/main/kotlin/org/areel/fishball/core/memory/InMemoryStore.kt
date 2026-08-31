@@ -122,6 +122,22 @@ class InMemoryStore : MemoryStore {
     override fun recentTurns(limit: Int): List<ConversationTurn> =
         turns.sortedBy { it.at }.takeLast(limit)
 
+    override fun turnCount(): Int = turns.size
+
+    override fun turnBytes(): Long = turns.sumOf { turn ->
+        turn.text.toByteArray(Charsets.UTF_8).size.toLong() +
+            turn.sources.sumOf { source ->
+                (source.displayName.length + source.url.length + (source.quote?.length ?: 0)).toLong()
+            }
+    }
+
+    override fun clearTurns() {
+        turns.clear()
+        // The session goes too. Its bridge summarises a conversation that no longer exists, and
+        // carrying it forward would let the model refer to something the user has just deleted.
+        current = null
+    }
+
     override fun lastTurnAt(): Long? = turns.maxByOrNull { it.at }?.at
 
     // ---- snapshot ---------------------------------------------------------------------

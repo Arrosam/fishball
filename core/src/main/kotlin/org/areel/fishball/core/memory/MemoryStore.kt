@@ -68,6 +68,28 @@ interface MemoryStore {
 
     fun lastTurnAt(): Long?
 
+    /** How much conversation is being kept. Shown to the user before they decide to drop it. */
+    fun turnCount(): Int
+
+    /**
+     * What the conversation itself weighs, in UTF-8 bytes.
+     *
+     * Not the size of the file it lives in. That file also holds the cached answers and their
+     * embeddings - a thousand floats per fact - so quoting it beside "对话记录" would tell
+     * someone their chat history was megabytes and leave them none the wiser when clearing it
+     * barely moved the number.
+     */
+    fun turnBytes(): Long
+
+    /**
+     * Drop the conversation log, and the session with it.
+     *
+     * Only the log. What was learned - the cached answers and the facts about the person - is a
+     * different thing that the memory screen governs, and quietly wiping it because someone
+     * asked to clear their chat history would be the app deciding those meant the same thing.
+     */
+    fun clearTurns()
+
     // ---- session --------------------------------------------------------------------
 
     /**

@@ -138,6 +138,14 @@ class ChatViewModel(
         messages += ChatMessage(fromUser = false, text = compactedNotice)
     }
 
+    /** Spec §9 — how much is being kept, for someone deciding whether to keep it. */
+    fun historySize(): Pair<Int, Long> = backend.historyTurns() to backend.historyBytes()
+
+    fun clearHistory() {
+        backend.clearHistory()
+        messages.clear()
+    }
+
     /** Read at the moment the memory screen opens, so it always shows what is actually stored. */
     fun worldMemories(): List<MemoryRowData> = backend.store.worldFacts()
         .filter { it.invalidatedAt == null }

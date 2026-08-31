@@ -1,5 +1,6 @@
 package org.areel.fishball.ui
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -367,7 +368,12 @@ fun AssistantBubble(
     ) {
         Column {
             ConfidenceMeter(confidence, conflict, Modifier.align(Alignment.End))
-            Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+            // Selectable. An answer people are meant to check is an answer they will want to
+            // paste into a message to somebody - and a wall of text that cannot be copied
+            // quietly tells them it is not really theirs.
+            SelectionContainer {
+                Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+            }
             if (detail != null) {
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -395,12 +401,17 @@ fun AssistantBubble(
             // losing it is worse than never seeing it — the one moment you want to check how
             // something was reached is after you have read what it says.
             if (steps.isNotEmpty() || thinking.isNotBlank()) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    stringResource(if (showWork) R.string.detail_hide else R.string.process_show),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Areel.Ink40,
-                    modifier = Modifier.clickable { showWork = !showWork },
+                Spacer(Modifier.height(10.dp))
+                // The mark, small, instead of a word. It is the only control on an answer and
+                // it is not part of the answer - a line of text there read as something the
+                // app had said, which is exactly what this design spends its effort avoiding.
+                FishMark(
+                    Modifier
+                        .size(26.dp)
+                        .clickable { showWork = !showWork }
+                        .padding(4.dp),
+                    body = if (showWork) Areel.Ink else Areel.Ink40,
+                    eye = if (showWork) Areel.Magenta else null,
                 )
                 if (showWork) {
                     Spacer(Modifier.height(9.dp))
@@ -467,7 +478,9 @@ fun UserBubble(text: String, modifier: Modifier = Modifier) {
                     .userRule()
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
             ) {
-                Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+                SelectionContainer {
+                    Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+                }
             }
         }
     }
@@ -601,12 +614,13 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
                         // The magenta rule again, and on purpose: it is the mark this app uses
                         // for words that are quoted rather than composed.
                         Box(Modifier.width(3.dp).height(quoteRuleHeight).background(Areel.Magenta))
-                        Text(
-                            source.quote,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Areel.Ink,
-                            modifier = Modifier.padding(start = 9.dp),
-                        )
+                        SelectionContainer(Modifier.padding(start = 9.dp)) {
+                            Text(
+                                source.quote,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Areel.Ink,
+                            )
+                        }
                     }
                 }
             }

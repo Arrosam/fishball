@@ -127,6 +127,26 @@ class Backend private constructor(
         prefs().edit().putString(KEY_MODEL, model).apply()
     }
 
+    /**
+     * What the conversation weighs, not what the file does. The snapshot also carries cached
+     * answers and a thousand-float embedding each, so the file barely moves when the log is
+     * cleared - and a number that does not move when you delete something is worse than none.
+     */
+    fun historyBytes(): Long = store.turnBytes()
+
+    fun historyTurns(): Int = store.turnCount()
+
+    /**
+     * Drop the conversation and start a fresh session.
+     *
+     * The conversation object is rebuilt rather than reused: it holds the session it was
+     * talking in, and that session has just been deleted underneath it.
+     */
+    fun clearHistory() {
+        store.clearTurns()
+        restore()
+    }
+
     private fun prefs() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
 
@@ -139,13 +159,14 @@ class Backend private constructor(
 
         const val LLM_URL = HydrogenClient.DEFAULT_BASE_URL
 
+        private const val MEMORY_FILE = "memory.json"
         private const val PREFS = "fishball"
         private const val KEY_API = "api_key"
         private const val KEY_MODEL = "model"
 
         fun create(context: Context): Backend {
             val app = context.applicationContext
-            return Backend(app, PersistentStore(FileSnapshotIo(File(app.filesDir, "memory.json"))))
+            return Backend(app, PersistentStore(FileSnapshotIo(File(app.filesDir, MEMORY_FILE))))
         }
     }
 }

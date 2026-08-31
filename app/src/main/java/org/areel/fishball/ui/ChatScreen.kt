@@ -29,6 +29,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.WindowInsets
@@ -96,11 +98,18 @@ fun ChatScreen(
     val itemCount = messages.size + if (pending) 1 else 0
 
     /*
-     * Following, not dragging.
+     * Following the end of the conversation.
      *
-     * The thread used to jump to the bottom on every change, which meant scrolling back to
-     * re-read something was undone by the next token. It follows only while the user is
-     * already at the tail; scroll up and it leaves you there until you come back down.
+     * Three things had to be true and only one of them was. The thread has to start at the end
+     * rather than the top; it has to keep up while an answer is being written; and it has to
+     * stay at the end when the viewport *shrinks* under it - which is the case the keyboard
+     * broke, and the case an ime-visibility flag cannot express. What matters is not that a
+     * keyboard appeared, it is that the space the conversation had to live in got smaller while
+     * the user was reading the bottom of it.
+     *
+     * `following` is the intent, not the position. It is only revised while the user is
+     * actually dragging, so a viewport change cannot silently answer the question "did they
+     * want to be at the end" with "well, they aren't now".
      */
     val atTail by remember {
         derivedStateOf {
@@ -109,24 +118,36 @@ fun ChatScreen(
             last == null || last.index >= info.totalItemsCount - 1
         }
     }
-
-    LaunchedEffect(itemCount) {
-        if (atTail && itemCount > 0) listState.animateScrollToItem(itemCount - 1)
+    var following by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { dragging -> if (dragging) following = atTail }
     }
+
+    /** The very bottom, not the top of the last message - a plate can be taller than the view. */
+    suspend fun toEnd(smooth: Boolean) {
+        if (itemCount == 0) return
+        if (smooth) listState.animateScrollToItem(itemCount - 1) else listState.scrollToItem(itemCount - 1)
+        listState.scrollBy(FAR_ENOUGH)
+    }
+
+    // Opening the app. The thread is restored from the log, and a restored conversation that
+    // starts at its beginning is showing the user the least useful end of it.
+    LaunchedEffect(Unit) { toEnd(smooth = false) }
+
+    LaunchedEffect(itemCount) { if (following) toEnd(smooth = true) }
 
     // While it writes. Keyed on coarse buckets of length rather than on the text itself, so a
     // hundred tokens cost a handful of scrolls instead of a hundred animations.
     LaunchedEffect(vm.streamed.length / 48, vm.thinking.length / 240) {
-        if (atTail && busy && itemCount > 0) listState.scrollToItem(itemCount - 1)
+        if (following && busy) toEnd(smooth = false)
     }
 
-    // The keyboard takes half the screen. imePadding shrinks the thread, but a shrinking
-    // viewport keeps its scroll offset - so the last thing said slid out of sight exactly when
-    // the user was answering it.
-    val keyboardUp = WindowInsets.isImeVisible
-    LaunchedEffect(keyboardUp) {
-        if (keyboardUp && itemCount > 0) listState.animateScrollToItem(itemCount - 1)
-    }
+    // The viewport changing size, from any cause. The keyboard is the one that prompted this,
+    // but it is not the condition: a shrinking view keeps its scroll offset, so whatever was at
+    // the bottom slides out of sight.
+    val viewport by remember { derivedStateOf { listState.layoutInfo.viewportSize.height } }
+    LaunchedEffect(viewport) { if (following) toEnd(smooth = false) }
 
     fun send(text: String) {
         vm.send(text)
@@ -328,3 +349,11 @@ private fun Composer(
         }
     }
 }
+
+/**
+ * More than any single message can be tall. Handed to scrollBy after landing on the last item,
+ * because landing on an item puts its *top* at the top of the view - and an assistant plate with
+ * sources under it is routinely taller than the view, so its top is not the end of anything.
+ * The list clamps this to whatever scroll is actually left.
+ */
+private const val FAR_ENOUGH = 100_000f

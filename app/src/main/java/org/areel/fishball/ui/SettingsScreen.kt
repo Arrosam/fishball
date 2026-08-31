@@ -69,12 +69,16 @@ fun SettingsScreen(
     keyHint: String,
     busy: Boolean,
     error: String?,
+    /** Turns kept, and what they cost on disk. */
+    history: Pair<Int, Long>,
     onModeChange: (Mode) -> Unit,
     onKeyChange: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onBack: () -> Unit,
 ) {
     var editingKey by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
+    var confirmingClear by remember { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -197,6 +201,43 @@ fun SettingsScreen(
                     }
                 }
 
+                Spacer(Modifier.height(28.dp))
+                SettingLabel(stringResource(R.string.settings_history))
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassSurface(small = true)
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val (turns, bytes) = history
+                    Text(
+                        stringResource(R.string.history_summary, turns, readableSize(bytes)),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Two taps, not one. Deleting a conversation is the only irreversible thing
+                    // on this screen, and the second tap is where the word changes from "清空"
+                    // to something that says it is about to happen.
+                    Text(
+                        stringResource(
+                            if (confirmingClear) R.string.history_confirm else R.string.history_clear,
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Magenta,
+                        modifier = Modifier.clickable(enabled = turns > 0) {
+                            if (confirmingClear) {
+                                onClearHistory()
+                                confirmingClear = false
+                            } else {
+                                confirmingClear = true
+                            }
+                        },
+                    )
+                }
+
                 if (error != null) {
                     Spacer(Modifier.height(10.dp))
                     Text(
@@ -221,6 +262,18 @@ private fun SettingLabel(text: String) {
         color = Areel.Ink40,
         modifier = Modifier.padding(bottom = 9.dp),
     )
+}
+
+/**
+ * Bytes, in the units a person thinks in.
+ *
+ * One decimal past a megabyte and none below it: "1.4 MB" is a size, "1434 KB" is a number, and
+ * nobody deciding whether to delete their conversations needs the second one.
+ */
+private fun readableSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
 }
 
 /** The memory screen's tab, doing a different job with the same shape. */
