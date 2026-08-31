@@ -74,19 +74,22 @@ fun Hairline(modifier: Modifier = Modifier, color: Color = Areel.Ink20) {
  */
 @Composable
 fun CheckerBand(modifier: Modifier = Modifier, cell: Dp = 8.dp, color: Color = Areel.Ink) {
-    Canvas(modifier.fillMaxWidth().height(cell)) {
+    // Two rows, so the strip is a full checker tile tall rather than half of one.
+    //
+    // It used to be declared one cell tall and then draw two rows anyway. drawBehind does not
+    // clip, so the second row was painted outside the band, over the thread, where the first
+    // message covered it. Deleting that row was the wrong repair - the row belongs here, the
+    // band was simply not tall enough to hold it.
+    Canvas(modifier.fillMaxWidth().height(cell * 2)) {
         val c = cell.toPx()
         val cols = (size.width / c).toInt() + 1
-        // One row, and only the ink squares. The CSS is a 16px conic-gradient tile clipped to
-        // an 8px-tall strip, so exactly half of one row of it is ever visible and the gaps are
-        // transparent - the ground reads straight through them.
-        //
-        // This drew a second row before. Nothing was wrong with the arithmetic; drawBehind
-        // simply does not clip, so the row that should have fallen outside the 8dp band was
-        // painted over the thread below it and the first message covered half of it.
-        for (col in 0 until cols) {
-            if (col % 2 == 0) {
-                drawRect(color, Offset(col * c, 0f), Size(c, size.height))
+        for (row in 0 until 2) {
+            for (col in 0 until cols) {
+                // Ink squares only. The other half of the checker is left unpainted rather
+                // than filled grey, so the ground reads straight through it.
+                if ((row + col) % 2 == 0) {
+                    drawRect(color, Offset(col * c, row * c), Size(c, c))
+                }
             }
         }
     }

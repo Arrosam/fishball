@@ -81,6 +81,17 @@ fun MemoryScreen(onBack: () -> Unit) {
             // landmark look like it was being swapped out rather than navigated under.
             MemoryBand(onBack = onBack)
 
+            // The tabs are chrome, not content. They name the two ledgers and are the control
+            // that swaps between them, so they stay put while either one arrives underneath.
+            Row(Modifier.fillMaxWidth()) {
+                MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
+                    personal = false
+                }
+                MemoryTab(stringResource(R.string.memory_tab_personal), personal, Modifier.weight(1f)) {
+                    personal = true
+                }
+            }
+
             // Out of the 记忆 plate that opened this - top right - on the same curve and over
             // the same 260ms as a message arriving. Clipped to the space under the band for the
             // same reason the thread is: the entrance travels upwards, and unclipped it spent
@@ -93,15 +104,6 @@ fun MemoryScreen(onBack: () -> Unit) {
             ) {
             EnterFrom(pivotX = 1f, pivotY = 0f, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth()) {
-                    MemoryTab(stringResource(R.string.memory_tab_world), !personal, Modifier.weight(1f)) {
-                        personal = false
-                    }
-                    MemoryTab(stringResource(R.string.memory_tab_personal), personal, Modifier.weight(1f)) {
-                        personal = true
-                    }
-                }
-
                 if (rows.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
