@@ -30,7 +30,9 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        // Alpha, and named like one. The app works end to end; what it has not had is a second
+        // pair of hands using it for a week, which is the only thing that earns a 1.
+        versionName = "0.1a"
 
         buildConfigField(
             "String",
