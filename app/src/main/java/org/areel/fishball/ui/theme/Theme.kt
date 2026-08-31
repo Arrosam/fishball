@@ -44,13 +44,17 @@ object Areel {
     /**
      * Glass. areel.org builds its "clear plastic panel" from layered translucent white plus a
      * specular streak — there is no backdrop blur anywhere on the site, which is why this is
-     * affordable on a phone. See Modifier.glassSurface().
+     * affordable on a phone.
+     * See Modifier.glassSurface().
      */
+    // The spread between these three is narrow on purpose. Wide, the diagonal gradient fell
+    // to 6% white near two corners, so the sheet visibly stopped short of its own edges and
+    // read as a small white box floating inside a bigger pane. They vary; they never vanish.
+    val GlassHi = Color(0x4DFFFFFF)
+    val GlassMid = Color(0x33FFFFFF)
+    val GlassLo = Color(0x40FFFFFF)
     val GlassBorder = Color(0x99FFFFFF)
     val GlassLip = Color(0xB3FFFFFF)
-    val GlassHi = Color(0x42FFFFFF)
-    val GlassMid = Color(0x0FFFFFFF)
-    val GlassLo = Color(0x2EFFFFFF)
     val GlassStreak = Color(0x38FFFFFF)
     val GlassShade = Color(0x66101010)
 }

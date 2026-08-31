@@ -95,7 +95,11 @@ fun Modifier.glassSurface(
     // panel over concrete is just a lighter grey rectangle. Glass has to float to read as glass.
     .then(
         if (!lifted) Modifier else Modifier.shadow(
-            elevation = if (small) 2.dp else 5.dp,
+            // Tight. At 5dp the ambient shadow laid a 36px dark ramp all round the pane, and
+            // against that darkened ring the clear interior read as a filled lighter box — the
+            // "white part", after the fill itself was already gone. The lift has to be felt,
+            // not seen.
+            elevation = if (small) 1.dp else 2.dp,
             shape = RectangleShape,
             clip = false,
             ambientColor = Areel.Ink,
@@ -105,6 +109,10 @@ fun Modifier.glassSurface(
     .drawBehind {
         // Mostly clear. The CAD grid underneath must stay legible through the pane — that
         // show-through is the whole point, and it is also the speaker cue in the thread.
+        //
+        // This covers the node edge to edge. It has to: drawn any smaller it becomes a pale
+        // rectangle floating inside a larger pane, which is exactly the "white part" that got
+        // reported three times. The fill IS the pane, so its bounds are the pane's bounds.
         drawRect(
             Brush.linearGradient(
                 0f to Areel.GlassHi,
@@ -137,8 +145,11 @@ fun Modifier.glassSurface(
         }
         drawRect(
             Brush.verticalGradient(
-                0.82f to Color.Transparent,
-                1f to Areel.GlassShade.copy(alpha = if (small) 0.10f else 0.14f),
+                // Hugging the very bottom edge. Starting at 0.82 it shaded the last fifth
+                // of the pane, which cut the sheet short of its own lower edge — the same
+                // defect as the gradient's dead corners, from the other direction.
+                0.90f to Color.Transparent,
+                1f to Areel.GlassShade.copy(alpha = if (small) 0.06f else 0.08f),
             ),
         )
     }

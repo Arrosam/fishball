@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -176,7 +177,10 @@ private fun ActivationField(
     Box(
         Modifier
             .fillMaxWidth()
-            .glassSurface()
+            // A bold black border, not glass's soft white one. This is the single control a
+            // first-time user has to find on a screen with nothing else on it.
+            .glassSurface(framed = false)
+            .border(2.dp, Areel.Ink)
             .padding(horizontal = 14.dp, vertical = 16.dp),
     ) {
         if (value.isEmpty()) {

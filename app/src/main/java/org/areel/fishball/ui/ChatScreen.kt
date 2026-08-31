@@ -215,11 +215,10 @@ private fun Composer(
                 ambientColor = Areel.Ink,
                 spotColor = Areel.Ink,
             )
-            // Same ground as the thread, grid and all. The field is glass, and glass only
-            // reads as glass when something shows through it — over a flat bar the identical
-            // pane came out as a plain white box.
-            .background(Areel.Concrete)
-            .cadGrid(),
+            // Plain light grey, deliberately. Carrying the CAD grid through here made the
+            // field's glass behave, but it also put a mesh behind the one strip of the app
+            // that exists to be read and typed into. Legibility wins over material purity.
+            .background(Areel.Concrete2),
     ) {
         Hairline()
         Row(
@@ -232,8 +231,9 @@ private fun Composer(
             Box(
                 Modifier
                     .weight(1f)
-                    // No lift: the bar it sits in is already raised.
-                    .userPane(lifted = false)
+                    // Lifted. The bar under it is flat grey and the pane tints nothing, so
+                    // the drop shadow is the only thing left marking where the field is.
+                    .userPane()
                     .padding(horizontal = 14.dp, vertical = 15.dp),
             ) {
                 BasicTextField(
