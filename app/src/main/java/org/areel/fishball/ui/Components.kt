@@ -14,6 +14,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -195,23 +197,16 @@ fun AssistantBubble(
  */
 @Composable
 fun UserBubble(text: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Box(
             Modifier
-                .fillMaxWidth(0.86f)
-                .glassSurface()
-                .padding(start = 14.dp, top = 12.dp, bottom = 12.dp),
+                // Hugs its content, capped at 86%. Fixed at 86% a three-word question sat in
+                // a mostly empty pane with its rule stranded far from the words.
+                .widthIn(max = maxWidth * 0.86f)
+                .userPane()
+                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            Box(
-                Modifier
-                    .drawBehind {
-                        val w = 3.dp.toPx()
-                        drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))
-                    }
-                    .padding(end = 13.dp),
-            ) {
-                Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
-            }
+            Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
         }
     }
 }

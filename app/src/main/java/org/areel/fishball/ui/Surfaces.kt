@@ -76,16 +76,31 @@ fun Modifier.cadGrid(
  */
 fun Modifier.glassSurface(
     small: Boolean = false,
+    /**
+     * The white outline and the bright top lip. They make a card read as a mounted slip, which
+     * suits the source card and the memory ledger. On a large surface they read as a white
+     * frame drawn around the pane instead — so the user's own surfaces turn them off and let
+     * the magenta rule be the only edge.
+     */
+    framed: Boolean = true,
+    /**
+     * Turn off inside an already-raised container. A translucent pane's shadow halo is more
+     * visible than the pane itself, so a lifted pane sitting on a lifted bar reads as two
+     * nested rectangles rather than one field.
+     */
+    lifted: Boolean = true,
 ): Modifier = this
     // The drop shadow was missing entirely in the first translation, and it turns out to be
     // the load-bearing part: without something lifting it off the ground, a translucent white
     // panel over concrete is just a lighter grey rectangle. Glass has to float to read as glass.
-    .shadow(
-        elevation = if (small) 2.dp else 5.dp,
-        shape = RectangleShape,
-        clip = false,
-        ambientColor = Areel.Ink,
-        spotColor = Areel.Ink,
+    .then(
+        if (!lifted) Modifier else Modifier.shadow(
+            elevation = if (small) 2.dp else 5.dp,
+            shape = RectangleShape,
+            clip = false,
+            ambientColor = Areel.Ink,
+            spotColor = Areel.Ink,
+        ),
     )
     .drawBehind {
         // Mostly clear. The CAD grid underneath must stay legible through the pane — that
@@ -117,7 +132,9 @@ fun Modifier.glassSurface(
         )
         // Top light lip, then a restrained bottom shade. The first version's shade was heavy
         // enough to turn the pane into a dark block — this is a sheet of plastic, not a bevel.
-        drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
+        if (framed) {
+            drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
+        }
         drawRect(
             Brush.verticalGradient(
                 0.82f to Color.Transparent,
@@ -125,7 +142,21 @@ fun Modifier.glassSurface(
             ),
         )
     }
-    .border(1.dp, Areel.GlassBorder)
+    .then(if (framed) Modifier.border(1.dp, Areel.GlassBorder) else Modifier)
+
+/**
+ * The user's surface: bare glass with the magenta rule as its only hard edge.
+ *
+ * Shared by their message bubbles and the composer field on purpose — what they are typing and
+ * what they have already said should look like the same object, so the composer reads as the
+ * next bubble rather than as a separate control.
+ */
+fun Modifier.userPane(lifted: Boolean = true): Modifier = this
+    .glassSurface(framed = false, lifted = lifted)
+    .drawBehind {
+        val w = 3.dp.toPx()
+        drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))
+    }
 
 /**
  * The mark. Every edge lands on 0/45/90 with the head into the upper-right, so it reads as a
