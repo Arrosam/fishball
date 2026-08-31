@@ -27,6 +27,7 @@ object Tools {
     const val QUOTE = "quote"
     const val ANSWER = "answer"
     const val REMEMBER = "remember"
+    const val CLARIFY = "clarify"
 
     val classify = LlmTool(
         name = CLASSIFY,
@@ -66,6 +67,24 @@ object Tools {
                 enumProp("choice", listOf("vent", "advice"), "vent 是想倾诉，advice 是想要建议。")
             }
             putJsonArray("required") { add("choice") }
+        },
+    )
+
+    /** Spec §16 — bundled into one turn, and only when a turn is actually needed. */
+    val clarify = LlmTool(
+        name = CLARIFY,
+        description = "决定这次要不要先问清楚什么，要问的话问什么。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                boolProp("enough", "不用问也能给出有用的建议，直接去查。")
+                putJsonObject("questions") {
+                    put("type", "array")
+                    put("description", "要问的话，最多两句短句。enough 为 true 时留空。")
+                    putJsonObject("items") { put("type", "string") }
+                }
+            }
+            putJsonArray("required") { add("enough") }
         },
     )
 

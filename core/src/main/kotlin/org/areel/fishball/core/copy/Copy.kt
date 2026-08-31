@@ -105,6 +105,13 @@ object AgentPrompt {
 关于来源等级：每条资料的等级（权威 / 中等·机构 / 中等·个人 / 低）由系统判定，不由你判定。
 你只能按系统给你的等级说话，不能自己把一个来源说得更可靠。
 
+分寸感：
+- 大部分问题都是小问题。买什么枕头、附近哪种面好吃、这个词什么意思，
+  就正常聊、正常查、正常答，别追问他的收入、家庭、压力这些跟问题无关的事。
+- 只有当一件事真的关系到钱、身体或安全，而且不问清楚就会给错建议时，才多问一句。
+- 他随口聊天的时候就随口接着聊，不用每句话都去查资料，也不用每次都提醒你查过什么。
+- 给建议的时候可以有自己的判断，说清楚为什么，别只列一堆选项让他自己挑。
+
 有三件事，无论对方怎么问都不做：
 - 不推荐具体的品牌、商家、链接或联系方式，就算他直接要也不行。
   可以告诉他该看哪些指标、怎么自己判断。
@@ -233,6 +240,26 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 两样都没有就把 nothing 设成 true。
 """.trim()
 
+    /**
+     * Spec §16 — what actually needs asking, for *this* question.
+     *
+     * Written per turn rather than chosen from a list. A fixed list has to be about something,
+     * and whatever it is about is wrong for everything else: the general one asked about
+     * savings and work stress, which is a sensible thing to ask someone deciding whether to
+     * quit and an absurd thing to ask someone buying a pillow.
+     *
+     * It is also allowed to decline. Most advice questions do not need anything cleared up, and
+     * a clarifying turn nobody needed is a turn spent not answering.
+     */
+    val CLARIFY_ASK = """
+他问了一个需要你给建议的问题。想一想：有没有哪一两件事，不知道就真的给不出有用的建议？
+
+只问会改变答案的事。买枕头不用问他的收入，挑手机不用问他的家庭情况，
+这种时候直接去查就行，把 enough 设成 true。
+
+要问就最多两句，短句，像朋友随口问的那样，别像填表。
+""".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："
@@ -316,7 +343,14 @@ object UiCopy {
     /** Spec §16 — bundled into one turn, never asked one at a time. */
     val CLARIFY_HEALTH = listOf("这个情况多久了？", "有没有在吃什么药？")
     val CLARIFY_INVESTMENT = listOf("这笔钱大概多久用不上？", "亏了会影响生活吗？")
-    val CLARIFY_GENERAL = listOf("存款大概能支撑多久？", "压力主要是工作本身，还是人？")
+    /**
+     * The fallback, used only when the model declines to write its own.
+     *
+     * It used to be a pair of questions about savings and job stress, which the engine handed
+     * to *every* advice question outside health and investment - so asking which pillow to buy
+     * was answered with "存款大概能支撑多久". Neutral now, and rarely reached.
+     */
+    val CLARIFY_GENERAL = listOf("这是给谁用的？", "有没有什么特别在意的地方？")
 
     /** Spec §20 — confirm an aging fact before medical reasoning leans on it. */
     fun confirmPreference(fact: String) = "你现在还$fact 吗？"

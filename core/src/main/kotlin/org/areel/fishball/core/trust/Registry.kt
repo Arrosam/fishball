@@ -133,8 +133,20 @@ private fun registrableLabels(host: String): Pair<String, String>? {
     val labels = host.split('.').filter { it.isNotEmpty() }
     if (labels.size < 2) return null
     val lastTwo = labels.takeLast(2).joinToString(".")
-    val dropped = if (lastTwo in MULTIPART_SUFFIXES) 3 else 2
+    var dropped = if (lastTwo in MULTIPART_SUFFIXES) 3 else 2
     if (labels.size < dropped) return null
+
+    // A suffix list is never finished, and the failure is loud now that unlisted domains are
+    // named after this rather than shown as 来源不明: anything ending in a two-part suffix the
+    // list has not heard of came out called "org", or "com", or "gov". If what is left reads
+    // like a suffix rather than a name, take one more label.
+    if (labels[labels.size - dropped] in SUFFIXY && labels.size > dropped) dropped += 1
+
     val name = labels[labels.size - dropped]
     return name to labels.takeLast(dropped).joinToString(".")
 }
+
+/** Never a publisher's name, always part of an address. */
+private val SUFFIXY = setOf(
+    "com", "org", "net", "gov", "edu", "co", "ac", "mil", "int", "info", "biz",
+)

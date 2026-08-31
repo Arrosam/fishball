@@ -1,5 +1,6 @@
 package org.areel.fishball.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.text.selection.SelectionContainer
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
@@ -571,38 +572,67 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
             // nothing to open says so rather than opening onto a paraphrase.
             var open by remember(source) { mutableStateOf(false) }
             val uriHandler = LocalUriHandler.current
+            val favicon = rememberFavicon(source.host)
+            val openSite = {
+                if (source.url.isNotBlank()) runCatching { uriHandler.openUri(source.url) }
+                Unit
+            }
             Column(
                 Modifier
                     .fillMaxWidth()
                     .glassSurface(small = true)
-                    .clickable(enabled = source.quote != null) { open = !open }
                     .padding(horizontal = 11.dp, vertical = 9.dp),
             ) {
-                Row(verticalAlignment = Alignment.Top) {
-                    // The mark opens the page; the rest of the row opens the quotation. Two
-                    // targets on one row, and the smaller one is the one that leaves the app,
-                    // which is the right way round for a control nobody meant to press.
-                    Icon(
-                        painter = painterResource(R.drawable.ic_source),
-                        contentDescription = stringResource(R.string.open_source),
-                        tint = if (source.url.isBlank()) Areel.Ink40 else Areel.Magenta,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .offset(x = (-6).dp, y = (-4).dp)
-                            .clickable(enabled = source.url.isNotBlank()) {
-                                runCatching { uriHandler.openUri(source.url) }
-                            }
-                            .padding(9.dp),
-                    )
-                    Column(Modifier.padding(start = 3.dp).weight(1f)) {
-                        Text(source.name, style = MaterialTheme.typography.labelSmall, color = Areel.Ink)
-                        Text(source.host, style = MaterialTheme.typography.labelMedium, color = Areel.Ink40)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The site's own icon, and the site's own name, both going to the site. The
+                    // card used to open the quotation when tapped anywhere and the page only
+                    // from a 12dp glyph, which had the two the wrong way round: the quotation
+                    // is what this app is for, so it gets a word, and the page gets the whole
+                    // identity that names it.
+                    Row(
+                        Modifier
+                            .weight(1f)
+                            .clickable(enabled = source.url.isNotBlank(), onClick = openSite),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (favicon != null) {
+                            Image(
+                                bitmap = favicon,
+                                contentDescription = stringResource(R.string.open_source),
+                                modifier = Modifier.size(16.dp),
+                            )
+                        } else {
+                            // Until it loads, and forever for a site with nothing this device
+                            // can draw. The card must not reflow when an icon arrives late, so
+                            // the placeholder is the same size as the thing it stands in for.
+                            Icon(
+                                painter = painterResource(R.drawable.ic_source),
+                                contentDescription = stringResource(R.string.open_source),
+                                tint = Areel.Ink40,
+                                modifier = Modifier.size(16.dp).padding(2.dp),
+                            )
+                        }
+                        Column(Modifier.padding(start = 9.dp)) {
+                            Text(
+                                source.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Areel.Ink,
+                            )
+                            Text(
+                                source.host,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Ink40,
+                            )
+                        }
                     }
                     if (source.quote != null) {
                         Text(
                             stringResource(if (open) R.string.quote_hide else R.string.quote_show),
                             style = MaterialTheme.typography.labelMedium,
                             color = Areel.Magenta,
+                            modifier = Modifier
+                                .clickable { open = !open }
+                                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
                         )
                     }
                 }

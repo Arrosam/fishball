@@ -139,6 +139,33 @@ class LiveSmokeTest {
         assertTrue(store.recentTurns().size >= 4, "turns went missing")
     }
 
+    /**
+     * The pillow test. Asking which pillow to buy used to be met with "存款大概能支撑多久" and
+     * "压力主要是工作本身，还是人" - the general clarifying list, which had to be about
+     * something and was about deciding whether to quit your job.
+     */
+    @Test
+    fun `small advice does not get an interrogation`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = InMemoryStore(),
+        )
+
+        val reply = runBlocking { conversation.ask("选枕头有什么建议吗？") }
+        println("pillow -> ${reply.text.take(200)}")
+        assertTrue(!reply.text.contains("存款"), "asked about savings: ${reply.text.take(120)}")
+        assertTrue(!reply.text.contains("压力主要是"), "asked about work stress: ${reply.text.take(120)}")
+    }
+
     @Test
     fun `a whole turn works against the live services`() {
         val key = key ?: run {

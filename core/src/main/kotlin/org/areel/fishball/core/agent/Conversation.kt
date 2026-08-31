@@ -315,8 +315,17 @@ class Conversation(
             }
 
             is Step.Clarify -> {
-                pending = Pending(ctx, Pending.Kind.CLARIFY)
-                Reply(step.questions.joinToString("\n"))
+                val asked = clarifyingQuestions(ctx, step.questions, progress)
+                if (asked.isEmpty()) {
+                    // Nothing worth asking. Carrying on as though it had already been asked is
+                    // the honest reading of §16: the rule is one bundled turn, not a compulsory
+                    // one, and a clarifying question nobody needed is a turn spent not
+                    // answering.
+                    run(engine.firstStep(ctx.copy(clarified = true)), ctx.copy(clarified = true), progress)
+                } else {
+                    pending = Pending(ctx, Pending.Kind.CLARIFY)
+                    Reply(asked.joinToString("\n"))
+                }
             }
 
             is Step.ConfirmPreferences -> {
@@ -607,6 +616,39 @@ class Conversation(
             UiCopy.SERVICE_UNAVAILABLE,
             detail = "gave up after $MAX_COMPOSE_ROUNDS rounds without an ${Tools.ANSWER} call",
         )
+    }
+
+    /**
+     * Spec §16 — what to ask before advising, written for this question.
+     *
+     * The engine still decides *whether* a turn like this happens; the list it carries is a
+     * fallback for when the model declines to write one. Empty means it saw nothing worth
+     * asking, and the turn proceeds.
+     */
+    private suspend fun clarifyingQuestions(
+        ctx: TurnContext,
+        fallback: List<String>,
+        progress: TurnProgress,
+    ): List<String> {
+        val result = llm.complete(
+            LlmRequest(
+                system = AgentPrompt.SYSTEM,
+                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
+                    LlmMessage.user(AgentPrompt.CLARIFY_ASK + "\n\n" + ctx.userText),
+                tools = listOf(Tools.clarify),
+                forceTool = Tools.CLARIFY,
+                maxTokens = 400,
+                stream = true,
+            ),
+            progress.forward(),
+        )
+        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input ?: return fallback
+        if (input.bool("enough") == true) return emptyList()
+        val written = input["questions"]?.jsonArrayOrNull()
+            ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        return written.ifEmpty { fallback }
     }
 
     /** Spec §8's bridge, when there is one: the previous session folded into a paragraph. */
