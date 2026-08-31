@@ -1,5 +1,16 @@
 package org.areel.fishball.ui
 
+import android.os.SystemClock
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.heightIn
+import kotlinx.coroutines.delay
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -150,6 +161,10 @@ fun TopBand(
 @Composable
 private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     var open by remember { mutableStateOf(false) }
+    // When the menu is open, the tap that dismisses it also lands on the button underneath, so
+    // a naive toggle closed and immediately reopened. The popup reports the dismissal first;
+    // this ignores a press that arrives on its heels.
+    var dismissedAt by remember { mutableLongStateOf(0L) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
 
@@ -159,7 +174,11 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                 .size(44.dp)
                 .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
                 .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape)
-                .clickable(interactionSource = interaction, indication = null) { open = true },
+                .clickable(interactionSource = interaction, indication = null) {
+                    if (!open && SystemClock.uptimeMillis() - dismissedAt > MENU_REOPEN_GUARD_MS) {
+                        open = true
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -171,29 +190,29 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
         }
 
         if (open) {
-            val drop = with(LocalDensity.current) { 46.dp.roundToPx() }
+            val drop = with(LocalDensity.current) { 48.dp.roundToPx() }
             Popup(
                 alignment = Alignment.TopEnd,
                 offset = IntOffset(0, drop),
-                onDismissRequest = { open = false },
+                onDismissRequest = {
+                    open = false
+                    dismissedAt = SystemClock.uptimeMillis()
+                },
             ) {
-                Column(
-                    Modifier
-                        // The width lives here, not on the rows. A Popup gives its content the
-                        // whole screen to measure against, and the divider inside fills what it
-                        // is given - so an unconstrained menu came out full-bleed.
-                        .width(190.dp)
-                        .shadow(8.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
-                        .background(Areel.Paper, RectangleShape)
-                        .border(1.dp, Areel.Ink),
-                ) {
-                    MenuRow(R.drawable.ic_brain, stringResource(R.string.memory)) {
+                // The plates themselves drop out of the button. 记忆 keeps the design it always
+                // had - 44dp plate, magenta glyph, ink label - because it was not a list item
+                // before and turning it into one to fit a menu would have been the menu
+                // deciding what the app looks like.
+                Column(horizontalAlignment = Alignment.End) {
+                    MenuPlate(R.drawable.ic_brain, stringResource(R.string.memory), order = 0) {
                         open = false
+                        dismissedAt = SystemClock.uptimeMillis()
                         onMemory()
                     }
-                    Hairline(color = Areel.Ink20)
-                    MenuRow(R.drawable.ic_gear, stringResource(R.string.settings)) {
+                    Spacer(Modifier.height(8.dp))
+                    MenuPlate(R.drawable.ic_gear, stringResource(R.string.settings), order = 1) {
                         open = false
+                        dismissedAt = SystemClock.uptimeMillis()
                         onSettings()
                     }
                 }
@@ -202,29 +221,63 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     }
 }
 
+/**
+ * One dropped plate.
+ *
+ * Springs rather than eases, and the second waits on the first: two plates arriving together
+ * read as one object splitting, where staggered they read as a stack being dealt. The overshoot
+ * is small - these are 44dp plates on a hard-edged grid, and a plate that visibly wobbles would
+ * be the softest thing in the app.
+ */
 @Composable
-private fun MenuRow(icon: Int, label: String, onClick: () -> Unit) {
-    Row(
+private fun MenuPlate(icon: Int, label: String, order: Int, onClick: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        delay(order * 55L)
+        progress.animateTo(
+            1f,
+            spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow),
+        )
+    }
+
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+
+    Column(
         Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .graphicsLayer {
+                alpha = progress.value.coerceIn(0f, 1f)
+                // Out of the button, which sits above and to the right of where they land.
+                translationY = (progress.value - 1f) * 30.dp.toPx()
+                scaleX = 0.86f + 0.14f * progress.value
+                scaleY = 0.86f + 0.14f * progress.value
+                transformOrigin = TransformOrigin(1f, 0f)
+            }
+            .shadow(6.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
+            .size(44.dp)
+            .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
+            .background(if (pressed) Areel.Concrete2 else Areel.Paper, RectangleShape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             painter = painterResource(icon),
             contentDescription = null,
             tint = Areel.Magenta,
-            modifier = Modifier.size(17.dp),
+            modifier = Modifier.size(18.dp),
         )
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 13.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
             color = Areel.Ink,
-            modifier = Modifier.padding(start = 12.dp),
         )
     }
 }
+
+/** Long enough to swallow the dismissing tap, short enough not to eat a deliberate reopen. */
+private const val MENU_REOPEN_GUARD_MS = 250L
 
 
 // ---------------------------------------------------------------- the thread
@@ -614,6 +667,11 @@ fun PendingBubble(
             // Reasoning is shown as a tail, not in full: a live turn produced 4,400 characters
             // of it, and a placeholder that grows without limit walks the composer off the
             // bottom of the screen. The answer is not clipped — that one is the point.
+            // Only ever taller. The reasoning tail changes length constantly, and a pane that
+            // shrank between thoughts moved the words the user was in the middle of reading.
+            var floor by remember { mutableStateOf(0.dp) }
+            val density = LocalDensity.current
+
             val trailing = streamed.ifBlank { thinking.takeLast(THINKING_TAIL) }
             if (trailing.isNotBlank()) {
                 Spacer(Modifier.height(11.dp))
@@ -627,6 +685,12 @@ fun PendingBubble(
                         MaterialTheme.typography.bodyLarge
                     },
                     color = if (streamed.isBlank()) Areel.Ink40 else Areel.Ink,
+                    modifier = Modifier
+                        .heightIn(min = floor)
+                        .onSizeChanged {
+                            val h = with(density) { it.height.toDp() }
+                            if (h > floor) floor = h
+                        },
                 )
             }
         }

@@ -29,6 +29,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,7 +68,7 @@ import org.areel.fishball.ui.theme.Areel
  */
 // LocalOverscrollConfiguration is still experimental; the alternative is shipping two
 // competing overscroll effects, so the opt-in is the lesser problem.
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
     vm: ChatViewModel,
@@ -89,9 +93,39 @@ fun ChatScreen(
     val entered = remember { mutableSetOf<Int>() }
 
     // The pending bubble is a list item, so it counts toward the scroll target.
-    val itemCount = messages.size + if (narration.isEmpty()) 0 else 1
+    val itemCount = messages.size + if (pending) 1 else 0
+
+    /*
+     * Following, not dragging.
+     *
+     * The thread used to jump to the bottom on every change, which meant scrolling back to
+     * re-read something was undone by the next token. It follows only while the user is
+     * already at the tail; scroll up and it leaves you there until you come back down.
+     */
+    val atTail by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= info.totalItemsCount - 1
+        }
+    }
+
     LaunchedEffect(itemCount) {
-        if (itemCount > 0) listState.animateScrollToItem(itemCount - 1)
+        if (atTail && itemCount > 0) listState.animateScrollToItem(itemCount - 1)
+    }
+
+    // While it writes. Keyed on coarse buckets of length rather than on the text itself, so a
+    // hundred tokens cost a handful of scrolls instead of a hundred animations.
+    LaunchedEffect(vm.streamed.length / 48, vm.thinking.length / 240) {
+        if (atTail && busy && itemCount > 0) listState.scrollToItem(itemCount - 1)
+    }
+
+    // The keyboard takes half the screen. imePadding shrinks the thread, but a shrinking
+    // viewport keeps its scroll offset - so the last thing said slid out of sight exactly when
+    // the user was answering it.
+    val keyboardUp = WindowInsets.isImeVisible
+    LaunchedEffect(keyboardUp) {
+        if (keyboardUp && itemCount > 0) listState.animateScrollToItem(itemCount - 1)
     }
 
     fun send(text: String) {

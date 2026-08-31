@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
@@ -74,6 +75,15 @@ fun SettingsScreen(
         Column(Modifier.fillMaxSize()) {
             SettingsBand(onBack = onBack)
 
+            // Enters the way the ledger does, from the plate that opened it. The band stays
+            // put: it is the same masthead in the same place, and animating it would make the
+            // app's one fixed landmark look like it was being replaced.
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clipToBounds(),
+            ) {
+            EnterFrom(pivotX = 1f, pivotY = 0f, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.padding(16.dp)) {
                 SettingLabel(stringResource(R.string.settings_mode))
                 Row(Modifier.fillMaxWidth()) {
@@ -166,6 +176,8 @@ fun SettingsScreen(
                         color = Areel.Magenta,
                     )
                 }
+            }
+            }
             }
             Spacer(Modifier.navigationBarsPadding())
         }
