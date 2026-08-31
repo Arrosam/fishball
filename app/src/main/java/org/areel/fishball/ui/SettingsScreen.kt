@@ -1,5 +1,16 @@
 package org.areel.fishball.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -112,25 +123,64 @@ fun SettingsScreen(
                 Spacer(Modifier.height(28.dp))
                 SettingLabel(stringResource(R.string.settings_key))
 
-                if (editingKey) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .glassSurface(framed = false)
-                            .border(2.dp, Areel.Ink)
-                            .padding(horizontal = 14.dp, vertical = 16.dp),
-                    ) {
+                /*
+                 * One box in both states.
+                 *
+                 * It used to be two: a glass card when idle and a differently-padded box with a
+                 * 2dp ink frame when editing. Same declared width, but the frame and the extra
+                 * padding moved the text inwards, so tapping it made the field visibly jump -
+                 * which reads as the field resizing under your finger. Only the contents swap
+                 * now; the surface, the padding and the edges hold still.
+                 */
+                val focus = remember { FocusRequester() }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassSurface(small = true)
+                        .clickable(enabled = !editingKey) { editingKey = true; draft = "" }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                ) {
+                    if (editingKey) {
                         BasicTextField(
                             value = draft,
                             onValueChange = { draft = it },
                             singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = Areel.Ink),
+                            textStyle = MaterialTheme.typography.labelMedium.copy(color = Areel.Ink),
                             cursorBrush = SolidColor(Areel.Magenta),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focus),
                         )
+                        LaunchedEffect(Unit) { focus.requestFocus() }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                keyHint,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Ink,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                stringResource(R.string.settings_change),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Magenta,
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Row {
+                }
+
+                // Out from under the field, and back into it. Expanding and sliding together so
+                // they look extruded rather than revealed - a pair of buttons that merely faded
+                // in would read as a second thing appearing beside the field rather than as the
+                // field opening up.
+                AnimatedVisibility(
+                    visible = editingKey,
+                    enter = expandVertically(tween(190, easing = EaseMech), Alignment.Top) +
+                        slideInVertically(tween(190, easing = EaseMech)) { -it } +
+                        fadeIn(tween(140)),
+                    exit = shrinkVertically(tween(150, easing = EaseMech), Alignment.Top) +
+                        slideOutVertically(tween(150, easing = EaseMech)) { -it } +
+                        fadeOut(tween(110)),
+                ) {
+                    Row(Modifier.padding(top = 10.dp)) {
                         Plate(
                             stringResource(R.string.settings_save),
                             enabled = draft.isNotBlank() && !busy,
@@ -144,27 +194,6 @@ fun SettingsScreen(
                             filled = false,
                             modifier = Modifier.weight(1f),
                         ) { editingKey = false; draft = "" }
-                    }
-                } else {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .glassSurface(small = true)
-                            .clickable { editingKey = true; draft = "" }
-                            .padding(horizontal = 12.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            keyHint,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Areel.Ink,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            stringResource(R.string.settings_change),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Areel.Magenta,
-                        )
                     }
                 }
 
