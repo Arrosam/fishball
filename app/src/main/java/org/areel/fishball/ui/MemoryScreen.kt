@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -132,7 +131,13 @@ private fun MemoryBand(onBack: () -> Unit) {
     }
 }
 
-/** Two plates. The selected one is paper with a heavy top rule; the other sits back. */
+/**
+ * Two plates. The selected one comes forward as paper with ink text; the other sits back in
+ * concrete with the text dropped to ink-40.
+ *
+ * No indicator rule. It sat directly under the checkerboard and read as a second, competing
+ * band — the material change carries the selection on its own.
+ */
 @Composable
 private fun MemoryTab(
     label: String,
@@ -147,15 +152,6 @@ private fun MemoryTab(
             .padding(vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) {
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(Areel.Ink),
-            )
-        }
         Text(
             label,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
