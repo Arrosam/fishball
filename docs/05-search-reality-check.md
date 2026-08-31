@@ -86,3 +86,52 @@ settled.
 
 This is exactly the failure the Phase 1 done-when was written to catch, and it caught it
 before a line of code, which is the cheapest place to catch it.
+
+---
+
+# Addendum — 2026-08-31
+
+Re-ran the probes while wiring the app up. Two things below correct the findings above.
+
+## 0. A warning about how these were measured
+
+The first re-run appeared to show the instance corrupting every Chinese query: `甲亢` came
+back echoed as `%BC..%BA`, which are its GBK bytes. It was not the instance. Git Bash on this
+machine was transcoding the argument before curl ever saw it, and a query sent as a
+pre-encoded literal (`q=%E6%97%A5%E6%9C%AC`) round-tripped perfectly.
+
+**The instance handles UTF-8 correctly.** `query` echoes back byte-identical on every probe
+below. Anyone re-testing this should drive it from a script that owns its own encoding, not
+from a Windows shell — otherwise you will measure your terminal.
+
+## 1. The engine situation has changed, and §1 above is now too pessimistic
+
+Same query (`甲亢 确诊 靠什么检查`), engines forced individually:
+
+| engine | results | reaches |
+|---|---|---|
+| google cse | 20 | Hong Kong only — hkah.org.hk, trinitymedical.com.hk |
+| **brave** | **20** | **mainland — haodf.com, rmhospital.com, med66.com** |
+| **360search** | **5** | **mainland — 39健康网, 复禾健康, 120ask.com** |
+| bing | 10 | irrelevant (returned Instagram for a thyroid query) |
+| duckduckgo | 0 | CAPTCHA |
+| startpage | 0 | Suspended: CAPTCHA |
+| wikipedia | 0 | Suspended: access denied |
+
+**brave and 360search work, and they reach the mainland Chinese web that google cse cannot.**
+Brave was reported dead above and was still intermittently reporting "too many requests"
+during this session, so it recovers rather than staying suspended.
+
+This does not overturn §2 — google cse really is Hong Kong-skewed, and every result it
+returned here was `.hk`. What it overturns is the conclusion drawn from that: the corpus is
+not unreachable, it was unreached because one engine was doing all the work.
+
+The DuckDuckGo/Startpage CAPTCHAs are the ordinary condition of a SearXNG instance on a
+datacenter IP and are not worth chasing. Enabling brave and 360search, and dropping bing,
+is worth more than fixing either of them.
+
+## 2. What this means for the tier list
+
+§2 above concluded the v3 list was "calibrated for a web this instance cannot reach". With
+brave and 360search enabled that stops being true, and the mainland/Hong Kong calibration
+question becomes a real decision again rather than a moot one.
