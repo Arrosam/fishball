@@ -8,13 +8,16 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -151,7 +154,8 @@ class HydrogenClient(
         0 to "${e::class.simpleName}: ${e.message ?: "no detail"}"
     }
 
-    override suspend fun complete(request: LlmRequest): LlmResult = complete(request, recover = true)
+    override suspend fun complete(request: LlmRequest, onDelta: (LlmDelta) -> Unit): LlmResult =
+        complete(request, onDelta, recover = true)
 
     /**
      * [recover] guards the one retry. A model id is remembered between launches, and an
@@ -161,10 +165,15 @@ class HydrogenClient(
      * So a permission refusal re-runs discovery, tells the caller what to store, and tries once
      * more; anything else is reported as it stands.
      */
-    private suspend fun complete(request: LlmRequest, recover: Boolean): LlmResult {
+    private suspend fun complete(
+        request: LlmRequest,
+        onDelta: (LlmDelta) -> Unit,
+        recover: Boolean,
+    ): LlmResult {
         if (model.isBlank()) {
             return LlmResult.Failed("no model selected; validate() first", retryable = false)
         }
+        if (request.stream) return streamed(request, onDelta, recover)
         return try {
             val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/messages") {
                 authHeaders()
@@ -172,18 +181,12 @@ class HydrogenClient(
                 setBody(body(request).toString())
             }
             if (!response.status.isSuccess()) {
-                val body = response.bodyAsText()
-                val refused = response.status.value == 403 && body.contains("permission")
-                if (recover && refused) {
-                    val stale = model
-                    val recheck = validate()
-                    if (recheck is KeyCheck.Valid && recheck.chosen != stale) {
-                        onModelChanged(recheck.chosen)
-                        return complete(request, recover = false)
-                    }
+                val text = response.bodyAsText()
+                if (recover && refused(response.status.value, text) && repick()) {
+                    return complete(request, onDelta, recover = false)
                 }
                 return LlmResult.Failed(
-                    "HTTP ${response.status.value}: ${body.take(200)}",
+                    "HTTP ${response.status.value}: ${text.take(200)}",
                     // 429 and 5xx are worth another go; a 400 will fail identically forever.
                     retryable = response.status.value == 429 || response.status.value >= 500,
                 )
@@ -194,10 +197,231 @@ class HydrogenClient(
         }
     }
 
+    private fun refused(status: Int, body: String) = status == 403 && body.contains("permission")
+
+    /** Re-runs discovery after a refusal. True when it landed somewhere new worth trying. */
+    private suspend fun repick(): Boolean {
+        val stale = model
+        val recheck = validate()
+        if (recheck !is KeyCheck.Valid || recheck.chosen == stale) return false
+        onModelChanged(recheck.chosen)
+        return true
+    }
+
+    /**
+     * The same call, read as Server-Sent Events.
+     *
+     * Blocks are rebuilt from their deltas rather than merely forwarded, because the assistant
+     * turn has to go back intact for the quote loop in §25 - thinking block included, which
+     * this proxy streams as `thinking_delta` and, usefully, with no signature to carry. Tool
+     * arguments arrive as `input_json_delta` fragments and are only valid JSON once the block
+     * closes, so they are parsed there and nowhere earlier.
+     */
+    private suspend fun streamed(
+        request: LlmRequest,
+        onDelta: (LlmDelta) -> Unit,
+        recover: Boolean,
+    ): LlmResult {
+        val blocks = sortedMapOf<Int, Block>()
+        var failure: LlmResult.Failed? = null
+        var refusedModel = false
+
+        try {
+            http.preparePost("${baseUrl.trimEnd('/')}/v1/messages") {
+                authHeaders()
+                header("Accept", "text/event-stream")
+                contentType(ContentType.Application.Json)
+                setBody(body(request, stream = true).toString())
+            }.execute { response ->
+                if (!response.status.isSuccess()) {
+                    val text = response.bodyAsText()
+                    refusedModel = refused(response.status.value, text)
+                    failure = LlmResult.Failed(
+                        "HTTP ${response.status.value}: ${text.take(200)}",
+                        retryable = response.status.value == 429 || response.status.value >= 500,
+                    )
+                } else {
+                    val channel = response.bodyAsChannel()
+                    while (true) {
+                        val line = channel.readUTF8Line() ?: break
+                        if (!line.startsWith("data:")) continue
+                        val payload = line.removePrefix("data:").trim()
+                        if (payload.isEmpty() || payload == "[DONE]") continue
+                        val event = runCatching {
+                            Json.parseToJsonElement(payload).jsonObject
+                        }.getOrNull() ?: continue
+                        consume(event, blocks, onDelta)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            return LlmResult.Failed(
+                "${e::class.simpleName}: ${e.message ?: "no detail"}",
+                retryable = true,
+            )
+        }
+
+        if (recover && refusedModel && repick()) {
+            return complete(request, onDelta, recover = false)
+        }
+        failure?.let { return it }
+        return assemble(blocks)
+    }
+
+    private fun consume(
+        event: JsonObject,
+        blocks: MutableMap<Int, Block>,
+        onDelta: (LlmDelta) -> Unit,
+    ) {
+        val index = event["index"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        when (event["type"]?.jsonPrimitive?.content) {
+            "content_block_start" -> {
+                val start = event["content_block"]?.jsonObject ?: return
+                blocks[index] = Block(
+                    type = start["type"]?.jsonPrimitive?.content.orEmpty(),
+                    id = start["id"]?.jsonPrimitive?.content.orEmpty(),
+                    name = start["name"]?.jsonPrimitive?.content.orEmpty(),
+                )
+            }
+
+            "content_block_delta" -> {
+                val delta = event["delta"]?.jsonObject ?: return
+                val block = blocks.getOrPut(index) { Block("") }
+                when (delta["type"]?.jsonPrimitive?.content) {
+                    "thinking_delta" -> delta["thinking"]?.jsonPrimitive?.content?.let {
+                        block.text.append(it)
+                        onDelta(LlmDelta.Thinking(it))
+                    }
+
+                    "text_delta" -> delta["text"]?.jsonPrimitive?.content?.let {
+                        block.text.append(it)
+                        onDelta(LlmDelta.Text(it))
+                    }
+
+                    "input_json_delta" -> delta["partial_json"]?.jsonPrimitive?.content?.let {
+                        block.json.append(it)
+                        // The reply usually arrives as an `answer` tool call rather than as
+                        // text, so without this the whole answer lands in one piece at the end
+                        // and "streaming" would mean watching the model think and nothing else.
+                        // Only the growing tail of the `text` argument is forwarded; the rest
+                        // of the object is structure the user has no business seeing.
+                        val grown = block.streamedText()
+                        if (grown.isNotEmpty()) onDelta(LlmDelta.Text(grown))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun assemble(blocks: Map<Int, Block>): LlmResult {
+        val text = StringBuilder()
+        val calls = mutableListOf<LlmContent.ToolUse>()
+        val raw = mutableListOf<LlmContent>()
+
+        for (block in blocks.values) {
+            when (block.type) {
+                "text" -> {
+                    text.append(block.text)
+                    raw += LlmContent.Text(block.text.toString())
+                }
+
+                "tool_use" -> {
+                    val input = runCatching {
+                        Json.parseToJsonElement(block.json.toString()).jsonObject
+                    }.getOrDefault(JsonObject(emptyMap()))
+                    val call = LlmContent.ToolUse(block.id, block.name, input)
+                    calls += call
+                    raw += call
+                }
+
+                // Rebuilt, not dropped, so the turn handed back is the turn that came out.
+                else -> raw += LlmContent.Opaque(
+                    buildJsonObject {
+                        put("type", block.type)
+                        put(block.type, block.text.toString())
+                    },
+                )
+            }
+        }
+        return LlmResult.Ok(
+            text = text.toString().trim(),
+            toolCalls = calls,
+            raw = LlmMessage(LlmMessage.Role.ASSISTANT, raw),
+        )
+    }
+
+    private class Block(
+        val type: String,
+        val id: String = "",
+        val name: String = "",
+        val text: StringBuilder = StringBuilder(),
+        val json: StringBuilder = StringBuilder(),
+    ) {
+        /** How much of the `text` argument has already been handed out. */
+        private var emitted = 0
+
+        /**
+         * The part of `"text": "..."` that has arrived since last asked.
+         *
+         * Reads the half-written object directly instead of waiting for it to parse, because
+         * the point is to show words while they are still being written. Only the one field is
+         * read, and only up to the last character known to be complete — a trailing backslash
+         * may be the front half of an escape, and emitting it would put a stray mark on screen
+         * that the finished value does not contain.
+         */
+        fun streamedText(): String {
+            val buffer = json
+            val key = buffer.indexOf(TEXT_KEY)
+            if (key < 0) return ""
+            // Tolerant of whitespace around the colon: this is somebody else's serialiser and
+            // `"text": "` is as legal as `"text":"`.
+            var i = key + TEXT_KEY.length
+            while (i < buffer.length && (buffer[i] == ' ' || buffer[i] == ':')) i++
+            if (i >= buffer.length || buffer[i] != '"') return ""
+            i++
+            val out = StringBuilder()
+            var safe = 0
+            while (i < buffer.length) {
+                val c = buffer[i]
+                if (c == '\\') {
+                    if (i + 1 >= buffer.length) break
+                    when (val esc = buffer[i + 1]) {
+                        'n' -> out.append('\n')
+                        't' -> out.append('\t')
+                        'r' -> Unit
+                        'u' -> {
+                            if (i + 5 >= buffer.length) break
+                            val code = buffer.substring(i + 2, i + 6).toIntOrNull(16) ?: break
+                            out.append(code.toChar())
+                            i += 4
+                        }
+                        else -> out.append(esc)
+                    }
+                    i += 2
+                } else if (c == '"') {
+                    break
+                } else {
+                    out.append(c)
+                    i++
+                }
+                safe = out.length
+            }
+            if (safe <= emitted) return ""
+            val grown = out.substring(emitted, safe)
+            emitted = safe
+            return grown
+        }
+
+        private companion object {
+            const val TEXT_KEY = "\"text\""
+        }
+    }
+
     // ---- request ------------------------------------------------------------------------
 
-    private fun body(request: LlmRequest): JsonObject = buildJsonObject {
+    private fun body(request: LlmRequest, stream: Boolean = false): JsonObject = buildJsonObject {
         put("model", model)
+        if (stream) put("stream", true)
         put("max_tokens", request.maxTokens)
         put("temperature", request.temperature)
         put("system", request.system)

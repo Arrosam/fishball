@@ -75,11 +75,7 @@ fun MemoryScreen(
             .background(Areel.Concrete)
             .cadGrid(),
     ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
-        ) {
+        Column(Modifier.fillMaxSize()) {
             // The masthead does not move. It is the thread's band in the thread's place, only
             // with a different mark and title - animating it would make the app's one fixed
             // landmark look like it was being swapped out rather than navigated under.
@@ -161,6 +157,8 @@ private fun MemoryBand(onBack: () -> Unit) {
             Modifier
                 .fillMaxWidth()
                 .background(Areel.Ink)
+                // As on the thread: ink up to the top of the glass, camera included.
+                .statusBarsPadding()
                 .padding(start = 8.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

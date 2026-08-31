@@ -12,6 +12,7 @@ import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.copy.UiCopy
 import org.areel.fishball.core.llm.LlmClient
 import org.areel.fishball.core.llm.LlmContent
+import org.areel.fishball.core.llm.LlmDelta
 import org.areel.fishball.core.llm.LlmMessage
 import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
@@ -83,7 +84,7 @@ class Conversation(
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
     }
 
-    suspend fun ask(userText: String, narrate: (String) -> Unit = {}): Reply {
+    suspend fun ask(userText: String, progress: TurnProgress = TurnProgress.Silent): Reply {
         val at = now()
         rollSession(at)
         store.appendTurn(
@@ -91,8 +92,8 @@ class Conversation(
         )
 
         lastFailure = null
-        val ctx = context(userText, at) ?: return failure(narrate)
-        val reply = run(engine.firstStep(ctx), ctx, narrate)
+        val ctx = context(userText, at, progress) ?: return failure()
+        val reply = run(engine.firstStep(ctx), ctx, progress)
 
         store.appendTurn(
             ConversationTurn(
@@ -113,7 +114,7 @@ class Conversation(
     // ---- routing ------------------------------------------------------------------------
 
     /** Builds the turn's context, resuming a held question if one is outstanding. */
-    private suspend fun context(userText: String, at: Long): TurnContext? {
+    private suspend fun context(userText: String, at: Long, progress: TurnProgress): TurnContext? {
         val held = pending
         if (held != null) {
             pending = null
@@ -135,10 +136,10 @@ class Conversation(
                 Pending.Kind.CONFIRM_PREFERENCES -> held.original.copy(now = at)
             }
         }
-        return classify(userText, at)
+        return classify(userText, at, progress)
     }
 
-    private suspend fun classify(userText: String, at: Long): TurnContext? {
+    private suspend fun classify(userText: String, at: Long, progress: TurnProgress): TurnContext? {
         val result = llm.complete(
             LlmRequest(
                 system = AgentPrompt.SYSTEM,
@@ -146,7 +147,9 @@ class Conversation(
                 tools = listOf(Tools.classify),
                 forceTool = Tools.CLASSIFY,
                 maxTokens = 256,
+                stream = true,
             ),
+            progress.forward(),
         )
         if (result is LlmResult.Failed) lastFailure = result.reason
         val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()
@@ -185,14 +188,14 @@ class Conversation(
 
     // ---- the step machine ---------------------------------------------------------------
 
-    private suspend fun run(step: Step, ctx: TurnContext, narrate: (String) -> Unit): Reply =
+    private suspend fun run(step: Step, ctx: TurnContext, progress: TurnProgress): Reply =
         when (step) {
             // §18 — the floor. Nothing below it runs: no search, no tiers, no citations.
-            is Step.Crisis -> compose(AgentPrompt.CRISIS, ctx, plan = null, evidence = emptyList())
+            is Step.Crisis -> compose(AgentPrompt.CRISIS, ctx, null, emptyList(), progress)
 
-            Step.Chat -> compose(AgentPrompt.CHAT, ctx, plan = null, evidence = emptyList())
+            Step.Chat -> compose(AgentPrompt.CHAT, ctx, null, emptyList(), progress)
 
-            Step.Listen -> compose(AgentPrompt.LISTEN, ctx, plan = null, evidence = emptyList())
+            Step.Listen -> compose(AgentPrompt.LISTEN, ctx, null, emptyList(), progress)
 
             is Step.ComfortAndFork -> {
                 pending = Pending(ctx, Pending.Kind.FORK)
@@ -212,8 +215,9 @@ class Conversation(
             is Step.ServeFromMemory -> compose(
                 "${AgentPrompt.Label.FROM_MEMORY}\n${step.fact.answer}",
                 ctx,
-                plan = null,
-                evidence = emptyList(),
+                null,
+                emptyList(),
+                progress,
             )
 
             is Step.SearchLog -> {
@@ -222,24 +226,25 @@ class Conversation(
                 compose(
                     "${AgentPrompt.Label.FROM_LOG}\n${digest.ifBlank { AgentPrompt.Label.NOTHING_LOGGED }}",
                     ctx,
-                    plan = null,
-                    evidence = emptyList(),
+                    null,
+                    emptyList(),
+                    progress,
                 )
             }
 
             is Step.Search -> {
-                narrate(step.narration)
-                val support = gather(step.queries, ctx, narrate)
+                progress.step(step.narration)
+                val support = gather(step.queries, ctx, progress)
                 val next = engine.afterSupportSearch(
                     ctx = ctx,
                     support = support.evidence,
                     searchFailed = support.allFailed,
                     conflictInSupport = support.conflict,
                 )
-                runAfterSearch(next, ctx, support.evidence, narrate)
+                runAfterSearch(next, ctx, support.evidence, progress)
             }
 
-            is Step.Answer -> answer(step.plan, ctx, emptyList())
+            is Step.Answer -> answer(step.plan, ctx, emptyList(), progress)
 
             else -> Reply(AgentPrompt.Label.NOTHING_LOGGED)
         }
@@ -248,26 +253,28 @@ class Conversation(
         step: Step,
         ctx: TurnContext,
         support: List<Evidence>,
-        narrate: (String) -> Unit,
+        progress: TurnProgress,
     ): Reply = when (step) {
         is Step.Disconfirm -> {
             // R6. Narrated out loud because a user watching a spinner deserves to know the app
             // is now trying to prove itself wrong, which is the least obvious thing it does.
-            narrate(step.narration)
-            val counter = gather(step.queries, ctx, narrate)
+            progress.step(step.narration)
+            val counter = gather(step.queries, ctx, progress)
             answer(
                 (engine.afterDisconfirmation(ctx, support, counter.evidence) as Step.Answer).plan,
                 ctx,
                 support + counter.evidence,
+                progress,
             )
         }
 
-        is Step.Answer -> answer(step.plan, ctx, support)
+        is Step.Answer -> answer(step.plan, ctx, support, progress)
 
         else -> answer(
             (engine.afterSupportSearch(ctx, support, false) as Step.Answer).plan,
             ctx,
             support,
+            progress,
         )
     }
 
@@ -282,7 +289,7 @@ class Conversation(
     private suspend fun gather(
         queries: List<SearchQuery>,
         ctx: TurnContext,
-        narrate: (String) -> Unit,
+        progress: TurnProgress,
     ): Gathered {
         val responses = queries.map { search.search(it) }
         // §23 turns on this distinction: every request failing is not the same as finding
@@ -298,9 +305,9 @@ class Conversation(
 
         if (candidates.isEmpty()) return Gathered(emptyList(), allFailed = false)
 
-        candidates.take(3).forEach { narrate(UiCopy.Narration.looked(it.resolution.displayName)) }
+        candidates.take(3).forEach { progress.step(UiCopy.Narration.looked(it.resolution.displayName)) }
 
-        val chosen = selectRelevant(ctx, candidates)
+        val chosen = selectRelevant(ctx, candidates, progress)
         return Gathered(chosen.first, allFailed = false, conflict = chosen.second)
     }
 
@@ -311,6 +318,7 @@ class Conversation(
     private suspend fun selectRelevant(
         ctx: TurnContext,
         candidates: List<Evidence>,
+        progress: TurnProgress,
     ): Pair<List<Evidence>, Boolean> {
         val listing = candidates.mapIndexed { i, e ->
             AgentPrompt.evidenceLine(
@@ -335,7 +343,9 @@ class Conversation(
                 tools = listOf(Tools.select),
                 forceTool = Tools.SELECT,
                 maxTokens = 512,
+                stream = true,
             ),
+            progress.forward(),
         )
         val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()
             // A failed selection must not silently drop the evidence — falling back to
@@ -352,7 +362,12 @@ class Conversation(
 
     // ---- writing ------------------------------------------------------------------------
 
-    private suspend fun answer(plan: AnswerPlan, ctx: TurnContext, evidence: List<Evidence>): Reply {
+    private suspend fun answer(
+        plan: AnswerPlan,
+        ctx: TurnContext,
+        evidence: List<Evidence>,
+        progress: TurnProgress,
+    ): Reply {
         val brief = buildString {
             appendLine(AgentPrompt.Label.REQUIREMENT)
             appendLine(AgentPrompt.guidanceFor(plan.shape))
@@ -381,7 +396,7 @@ class Conversation(
                 }
             }
         }
-        return compose(brief, ctx, plan, evidence)
+        return compose(brief, ctx, plan, evidence, progress)
     }
 
     /**
@@ -397,6 +412,7 @@ class Conversation(
         ctx: TurnContext,
         plan: AnswerPlan?,
         evidence: List<Evidence>,
+        progress: TurnProgress,
     ): Reply {
         val sources = evidence.map { SourceText(it.hit.url, it.text) }
         val verified = mutableMapOf<String, String>()
@@ -418,7 +434,9 @@ class Conversation(
                     forceTool = if (lastRound) Tools.ANSWER else null,
                     maxTokens = 2048,
                     temperature = 0.4,
+                    stream = true,
                 ),
+                progress.forward(answer = true),
             )
             if (result !is LlmResult.Ok) {
                 return Reply(
@@ -561,10 +579,7 @@ class Conversation(
         }
     }
 
-    private fun failure(narrate: (String) -> Unit): Reply {
-        narrate("")
-        return Reply(UiCopy.SERVICE_UNAVAILABLE, detail = lastFailure)
-    }
+    private fun failure(): Reply = Reply(UiCopy.SERVICE_UNAVAILABLE, detail = lastFailure)
 
     private companion object {
         /** Enough for a few rejected quotes; short enough that a loop cannot bill forever. */
@@ -573,6 +588,23 @@ class Conversation(
         /** A card the reader will actually look at. Past four it is a list, not a citation. */
         const val MAX_SOURCES_SHOWN = 4
     }
+}
+
+/**
+ * Everything a turn has to say while it is still running.
+ *
+ * Three separate channels because they are three different promises. [step] is §21's narration
+ * and is written for the user. [thinking] is the model's reasoning, shown to fill a wait that
+ * is otherwise a minute of nothing, and thrown away afterwards. [answer] is the reply itself,
+ * arriving in pieces.
+ */
+interface TurnProgress {
+    fun step(text: String) {}
+    fun thinking(delta: String) {}
+    fun answer(delta: String) {}
+
+    /** For callers that only want the result — tests, and the log-replay path. */
+    object Silent : TurnProgress
 }
 
 /** What one turn produced, in the terms the UI draws. */
@@ -597,6 +629,20 @@ data class SourceRef(
     /** Spec §25 — the source's own wording, sliced from the retrieved text. Never the model's. */
     val quote: String? = null,
 )
+
+/**
+ * Bridges the model's deltas onto the turn's progress channels.
+ *
+ * Thinking is always forwarded; the reply text only where there is a reply being written. The
+ * classifier and the evidence filter also produce text, and streaming a half-formed decision
+ * into the answer slot would show the user working notes as though they were the answer.
+ */
+private fun TurnProgress.forward(answer: Boolean = false): (LlmDelta) -> Unit = { delta ->
+    when (delta) {
+        is LlmDelta.Thinking -> thinking(delta.text)
+        is LlmDelta.Text -> if (answer) answer(delta.text)
+    }
+}
 
 // ---- small JSON readers ------------------------------------------------------------------
 

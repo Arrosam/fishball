@@ -86,9 +86,21 @@ class LiveSmokeTest {
             store = store,
         )
 
+        val thinking = StringBuilder()
+        val streamed = StringBuilder()
         val reply = runBlocking {
-            conversation.ask("布洛芬常见的副作用是什么？") { println("  narration: $it") }
+            conversation.ask(
+                "布洛芬常见的副作用是什么？",
+                object : org.areel.fishball.core.agent.TurnProgress {
+                    override fun step(text: String) = println("  narration: $text")
+                    override fun thinking(delta: String) { thinking.append(delta) }
+                    override fun answer(delta: String) { streamed.append(delta) }
+                },
+            )
         }
+        println("thinking -> ${thinking.length} chars: ${thinking.take(120)}")
+        println("streamed -> ${streamed.length} chars")
+        assertTrue(thinking.isNotEmpty(), "no thinking streamed; the wait would show nothing")
 
         println("shape    -> ${reply.shape}")
         println("detail   -> ${reply.detail}")

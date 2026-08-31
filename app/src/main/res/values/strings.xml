@@ -40,6 +40,9 @@
       thought about where an answer came from.
     -->
     <!-- The gate's failure detail, one tap under the message. For whoever gets asked for help. -->
+    <!-- Spec §21 — the wait, named. -->
+    <string name="thinking">思考中…</string>
+
     <string name="detail_show">详情</string>
     <string name="detail_hide">收起</string>
 

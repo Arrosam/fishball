@@ -73,6 +73,9 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
     val messages = vm.messages
     val narration = vm.narration
     val busy = vm.busy
+    // The placeholder has to stay on screen while the reply streams into it, so it is shown
+    // for the whole turn rather than only while there is narration to list.
+    val pending = busy
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -96,7 +99,8 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
             .fillMaxSize()
             .background(Areel.Concrete)
             .cadGrid()
-            .statusBarsPadding()
+            // No statusBarsPadding here — the masthead takes it, so the ink reaches the top
+            // of the glass instead of stopping under the clock.
             .imePadding(),
     ) {
         // The ink row only. Its checker is not part of this Column - it is painted over the
@@ -145,10 +149,14 @@ fun ChatScreen(vm: ChatViewModel, onMemoryClick: () -> Unit) {
                     }
                 }
                 // §21 inline: the placeholder sits where the answer will, and is replaced in place.
-                if (narration.isNotEmpty()) {
+                if (pending) {
                     item {
                         EnterFromCorner(fromUser = false, animate = true) {
-                            PendingBubble(narration.toList())
+                            PendingBubble(
+                                steps = narration.toList(),
+                                thinking = vm.thinking,
+                                streamed = vm.streamed,
+                            )
                         }
                     }
                 }

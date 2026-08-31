@@ -16,7 +16,12 @@ import kotlinx.serialization.json.JsonObject
  */
 interface LlmClient {
 
-    suspend fun complete(request: LlmRequest): LlmResult
+    /**
+     * [onDelta] receives the reply as it is produced, when [LlmRequest.stream] asks for it.
+     * The returned [LlmResult] is the same either way, so callers that do not care about the
+     * middle of the answer can ignore it entirely.
+     */
+    suspend fun complete(request: LlmRequest, onDelta: (LlmDelta) -> Unit = {}): LlmResult
 
     /**
      * Spec §1 — the gate. Checks the key is real and reports what it can drive.
@@ -37,7 +42,25 @@ data class LlmRequest(
     val maxTokens: Int = 1024,
     /** Zero for decisions, warmer for prose. A classifier that improvises is a bug. */
     val temperature: Double = 0.0,
+    /**
+     * Ask for the reply in pieces.
+     *
+     * Worth it for more than the impatience it treats. These models think before they answer,
+     * and a turn here makes several calls in a row — so without streaming the app has nothing
+     * true to show for most of a minute, and the choice is between a spinner that says nothing
+     * and a spinner that lies about progress.
+     */
+    val stream: Boolean = false,
 )
+
+/** A piece of a reply, as it arrives. */
+sealed class LlmDelta {
+    /** The model's reasoning. Shown while waiting, never kept as part of the answer. */
+    data class Thinking(val text: String) : LlmDelta()
+
+    /** The reply proper. */
+    data class Text(val text: String) : LlmDelta()
+}
 
 data class LlmMessage(val role: Role, val content: List<LlmContent>) {
     enum class Role { USER, ASSISTANT }

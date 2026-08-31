@@ -1,5 +1,6 @@
 package org.areel.fishball
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -8,11 +9,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,6 +56,17 @@ private fun FishBallApp() {
     var gateError by remember { mutableStateOf<String?>(null) }
     var gateDetail by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // The status bar sits on two different grounds. On the gate that is concrete, and the
+    // icons have to be dark to be seen; everywhere else the masthead runs up behind them and
+    // they have to be light. Nothing else in the app changes what is underneath them.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        val window = (view.context as Activity).window
+        SideEffect {
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !signedIn
+        }
+    }
 
     val rejected = stringResource(R.string.gate_key_rejected)
     val unreachable = stringResource(R.string.gate_unreachable)

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -106,6 +107,9 @@ fun TopBand(onMemoryClick: () -> Unit, modifier: Modifier = Modifier) {
             Modifier
                 .fillMaxWidth()
                 .background(Areel.Ink)
+                // Painted first, inset second: the ink runs up behind the status bar and the
+                // camera sits in the masthead rather than on a strip of grid above it.
+                .statusBarsPadding()
                 .padding(start = 18.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -409,7 +413,14 @@ data class Source(
  * a long path never resolves into a percentage.
  */
 @Composable
-fun PendingBubble(steps: List<String>, modifier: Modifier = Modifier) {
+fun PendingBubble(
+    steps: List<String>,
+    modifier: Modifier = Modifier,
+    /** The model's reasoning as it arrives. Shown to fill the wait, never kept. */
+    thinking: String = "",
+    /** The reply itself, once it starts arriving. Replaces the reasoning when it does. */
+    streamed: String = "",
+) {
     val transition = rememberInfiniteTransition(label = "pending")
     val phase by transition.animateFloat(
         initialValue = 0f,
@@ -443,10 +454,20 @@ fun PendingBubble(steps: List<String>, modifier: Modifier = Modifier) {
             .padding(16.dp),
     ) {
         Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Bubbling()
+                Text(
+                    stringResource(R.string.thinking),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Areel.Ink,
+                    modifier = Modifier.padding(start = 11.dp),
+                )
+            }
+
             steps.forEachIndexed { index, step ->
                 val live = index == steps.lastIndex
                 Row(
-                    Modifier.padding(vertical = 3.dp),
+                    Modifier.padding(top = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
@@ -463,9 +484,84 @@ fun PendingBubble(steps: List<String>, modifier: Modifier = Modifier) {
                     )
                 }
             }
+
+            // Once the reply starts arriving it takes over: reasoning is what fills a wait,
+            // and there is no wait left to fill once there are real words to read.
+            // Reasoning is shown as a tail, not in full: a live turn produced 4,400 characters
+            // of it, and a placeholder that grows without limit walks the composer off the
+            // bottom of the screen. The answer is not clipped — that one is the point.
+            val trailing = streamed.ifBlank { thinking.takeLast(THINKING_TAIL) }
+            if (trailing.isNotBlank()) {
+                Spacer(Modifier.height(11.dp))
+                Hairline(color = Areel.Ink20)
+                Spacer(Modifier.height(9.dp))
+                Text(
+                    trailing,
+                    style = if (streamed.isBlank()) {
+                        MaterialTheme.typography.labelMedium
+                    } else {
+                        MaterialTheme.typography.bodyLarge
+                    },
+                    color = if (streamed.isBlank()) Areel.Ink40 else Areel.Ink,
+                )
+            }
         }
     }
 }
+
+/**
+ * The mark, blowing bubbles.
+ *
+ * Three magenta squares rising on staggered loops. Squares because this design has no circles
+ * in it anywhere, and a round bubble here would be the only one - so they are bubbles by
+ * behaviour rather than by shape, which is the same trick the checker and the hatch play.
+ */
+@Composable
+private fun Bubbling() {
+    val transition = rememberInfiniteTransition(label = "bubbles")
+    val rise = List(BUBBLE_COUNT) { i ->
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(1500, delayMillis = i * 380, easing = LinearEasing),
+            ),
+            label = "bubble$i",
+        )
+    }
+
+    Box(Modifier.size(width = 46.dp, height = 34.dp)) {
+        FishMark(
+            Modifier
+                .size(26.dp)
+                .align(Alignment.BottomStart),
+            body = Areel.Ink,
+        )
+        rise.forEachIndexed { i, phase ->
+            val p = phase.value
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(
+                        // Drifting right as they climb, so three identical squares do not read
+                        // as one square stuttering.
+                        x = (-10 + i * 5).dp + (p * 8).dp,
+                        y = (26 - p * 26).dp,
+                    )
+                    .size((5 - i).dp.coerceAtLeast(3.dp))
+                    // Fade in fast, out slow: a bubble that pops at full strength reads as a
+                    // dropped frame.
+                    .alpha(((1f - p) * (p * 4f).coerceAtMost(1f)).coerceIn(0f, 1f))
+                    .background(Areel.Magenta),
+            )
+        }
+    }
+}
+
+private const val BUBBLE_COUNT = 3
+
+/** About four lines. Enough to watch a thought form, not enough to become the screen. */
+private const val THINKING_TAIL = 180
 
 /**
  * The chamfered outline, built into a caller-owned Path so nothing allocates per frame.

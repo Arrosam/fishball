@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.areel.fishball.core.agent.Reply
+import org.areel.fishball.core.agent.TurnProgress
 import org.areel.fishball.core.agent.SourceRef
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.copy.UiCopy
@@ -55,6 +56,14 @@ class ChatViewModel(private val backend: Backend) : ViewModel() {
     var busy by mutableStateOf(false)
         private set
 
+    /** The model's reasoning for the turn in flight. Cleared when it lands; never persisted. */
+    var thinking by mutableStateOf("")
+        private set
+
+    /** The reply as it streams in, before it becomes a message. */
+    var streamed by mutableStateOf("")
+        private set
+
     fun send(text: String) {
         val question = text.trim()
         if (question.isEmpty() || busy) return
@@ -62,6 +71,25 @@ class ChatViewModel(private val backend: Backend) : ViewModel() {
         messages += ChatMessage(fromUser = true, text = question)
         busy = true
         narration.clear()
+        thinking = ""
+        streamed = ""
+
+        // Written straight from the IO thread. Compose snapshot state is safe to write from
+        // anywhere - it is recomposition that is confined to the main thread - so hopping per
+        // delta would cost a coroutine launch per token for nothing.
+        val progress = object : TurnProgress {
+            override fun step(text: String) {
+                narration += text
+            }
+
+            override fun thinking(delta: String) {
+                thinking += delta
+            }
+
+            override fun answer(delta: String) {
+                streamed += delta
+            }
+        }
 
         viewModelScope.launch {
             val conversation = backend.conversation
@@ -70,15 +98,11 @@ class ChatViewModel(private val backend: Backend) : ViewModel() {
             } else {
                 // The driver blocks on network and writes the memory file; neither belongs on
                 // the frame thread. Narration hops back to the main thread to be shown.
-                withContext(Dispatchers.IO) {
-                    conversation.ask(question) { line ->
-                        if (line.isNotBlank()) {
-                            viewModelScope.launch { narration += line }
-                        }
-                    }
-                }
+                withContext(Dispatchers.IO) { conversation.ask(question, progress) }
             }
             narration.clear()
+            thinking = ""
+            streamed = ""
             // Also to logcat. The tap-to-expand is for whoever is holding the phone; this is
             // for whoever is holding a laptop, and it costs one line.
             reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
