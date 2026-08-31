@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  All user-facing text. The codebase is English; the product speaks Chinese, because it
+  answers a Chinese-speaking user (spec §12). Keeping the copy here rather than inline means
+  the Kotlin stays readable and the wording stays reviewable in one place.
+-->
+<resources>
+    <string name="app_name">FishBall</string>
+
+    <!-- Masthead -->
+    <string name="wordmark">FISHBALL</string>
+    <string name="memory">记忆</string>
+
+    <!-- Composer: no placeholder by design. The field and the send control carry it. -->
+    <string name="send">发送</string>
+
+    <!-- Activation: spec §1, one key handed over in person. No instructional paragraph -
+         the placeholder names what is being asked for and that is the whole instruction. -->
+    <string name="gate_key_hint">请输入激活码</string>
+    <string name="gate_confirm">确认</string>
+
+    <!-- Confidence meter labels (spec §6, approved 2026-08-31). -->
+    <string name="confidence_label">置信度</string>
+    <string name="conflict_label">各有说辞</string>
+
+    <!--
+      No privacy_disclosure string. Spec §22 was reversed: the operator says it in person,
+      the app says nothing. Deliberate absence, not an oversight - do not re-add it.
+    -->
+</resources>

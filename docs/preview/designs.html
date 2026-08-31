@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FishBall — design board · round 3 (converged)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --concrete:#c9c9c5; --concrete-2:#d3d3cf; --paper:#f2f2ee;
+  --ink:#101010; --ink-60:rgba(16,16,16,.60); --ink-40:rgba(16,16,16,.40);
+  --ink-20:rgba(16,16,16,.20); --ink-10:rgba(16,16,16,.10); --ink-06:rgba(16,16,16,.06);
+  --magenta:#ec0a6e; --magenta-lo:rgba(236,10,110,.14);
+  --display:"Archivo","Helvetica Neue",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  --ease-mech:cubic-bezier(.2,0,0,1);
+  --cut:14px;
+  --grid:linear-gradient(rgba(16,16,16,.06) 1px,transparent 1px),
+         linear-gradient(90deg,rgba(16,16,16,.06) 1px,transparent 1px),
+         linear-gradient(rgba(16,16,16,.06) 1px,transparent 1px),
+         linear-gradient(90deg,rgba(16,16,16,.06) 1px,transparent 1px);
+  --gridsize:96px 96px,96px 96px,16px 16px,16px 16px;
+  /* C — the 置信度 ramp: ink at full confidence, magenta at the bottom */
+  --conf4:#101010; --conf3:#560e2f; --conf2:#ac0c4e; --conf1:#ec0a6e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--display);background-color:var(--concrete);color:var(--ink);
+  padding:34px 26px 90px;background-image:var(--grid);background-size:var(--gridsize)}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-weight:900;font-size:32px;letter-spacing:-.6px}
+.sub{font-family:var(--mono);font-size:11px;color:var(--ink-60);letter-spacing:.6px;margin-top:6px}
+h2{font-family:var(--mono);font-size:12px;letter-spacing:1.4px;text-transform:uppercase;
+   margin:48px 0 4px;padding-bottom:8px;border-bottom:1px solid var(--ink-20)}
+.note{font-size:14px;color:var(--ink-60);line-height:1.6;margin:10px 0 18px;max-width:72ch}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px}
+.cell{background:var(--paper);border:1px solid var(--ink-20);padding:18px}
+.cap{font-family:var(--mono);font-size:10px;letter-spacing:.8px;color:var(--ink-40);
+     text-transform:uppercase;margin-bottom:12px}
+.ship{color:var(--magenta)}
+.verdict{font-family:var(--mono);font-size:10px;letter-spacing:.8px;margin-top:10px;
+  color:var(--ink-40);line-height:1.6;max-width:44ch}
+.checker{height:8px;background-image:conic-gradient(var(--ink) 25%,transparent 0 50%,var(--ink) 0 75%,transparent 0);background-size:16px 16px}
+
+/* ---------------- glass shell — verbatim from areel.org ---------------- */
+.shell{position:relative;isolation:isolate;
+  background:linear-gradient(148deg,rgba(255,255,255,.26) 0%,rgba(255,255,255,.06) 46%,rgba(255,255,255,.18) 100%);
+  border:1px solid rgba(255,255,255,.6);
+  box-shadow:rgba(255,255,255,.7) 0 1px 0 inset,
+             rgba(16,16,16,.10) 0 0 0 1px inset,
+             rgba(16,16,16,.40) 0 -16px 30px -28px inset,
+             rgba(16,16,16,.45) 0 22px 40px -32px}
+.shell::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(112deg,transparent 40%,rgba(255,255,255,.22) 46%,rgba(255,255,255,0) 52%)}
+/* small-format shell: the drop is retuned, a 22px spread under a 40px card reads as a bug */
+.shell.sm{box-shadow:rgba(255,255,255,.7) 0 1px 0 inset,
+             rgba(16,16,16,.10) 0 0 0 1px inset,
+             rgba(16,16,16,.30) 0 -8px 14px -14px inset,
+             rgba(16,16,16,.35) 0 8px 16px -14px}
+
+/* ---------------- the thread ---------------- */
+.tsim{background-color:var(--concrete);background-image:var(--grid);background-size:var(--gridsize);
+  border:1px solid var(--ink-10);padding:16px;width:360px;display:flex;flex-direction:column;gap:14px}
+
+/* B1 — assistant: chamfer + weight, flat paper */
+.asst{position:relative;width:100%;padding:16px;font-size:15px;line-height:1.55;
+  background:var(--paper);
+  clip-path:polygon(var(--cut) 0,100% 0,100% 100%,0 100%,0 var(--cut));
+  box-shadow:0 0 0 1px var(--ink-20) inset}
+.asst::after{content:"";position:absolute;height:3px;width:20px;transform:rotate(-45deg);
+  background:var(--ink);left:-3px;top:5.5px}
+
+/* B6 + glass — user: open text block over a floating glass pane, magenta rule kept */
+.userwrap{margin-left:auto;width:86%;position:relative;padding:12px 0 12px 14px}
+.user{padding:2px 13px 2px 0;border-right:3px solid var(--magenta);
+  font-size:15px;line-height:1.55;text-align:left}
+
+/* ---------------- C meter ---------------- */
+.meter{display:flex;gap:3px;align-items:center}
+.meter i{width:9px;height:5px;display:block}
+.meter i.off{box-shadow:0 0 0 1px var(--ink-20) inset}
+.mlabel{font-family:var(--display);font-size:9px;letter-spacing:1px;margin-right:6px}
+.mrow{display:flex;align-items:center;gap:14px;padding:7px 0}
+.mname{font-family:var(--mono);font-size:11px;width:168px;color:var(--ink-60)}
+.mchip{display:flex;align-items:center;justify-content:flex-end}
+
+/* ---------------- D pending ---------------- */
+.pending{position:relative;width:100%;padding:16px;background:var(--paper);
+  clip-path:polygon(var(--cut) 0,100% 0,100% 100%,0 100%,0 var(--cut));
+  box-shadow:0 0 0 1px var(--ink-20) inset;
+  background-image:repeating-linear-gradient(45deg,rgba(16,16,16,.06) 0 1px,transparent 1px 8px)}
+.pending svg.lap{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.pending svg.lap path{fill:none;stroke:var(--magenta);stroke-width:2;
+  stroke-dasharray:24 700;animation:lap 5.6s linear infinite}
+@keyframes lap{to{stroke-dashoffset:-724}}
+.step{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;padding:3px 0}
+.step .sq{width:4px;height:4px;background:var(--ink-40);flex:none}
+.step.done{color:var(--ink-40)}
+.step.live{color:var(--ink)}
+.step.live .sq{background:var(--magenta);animation:pulse .9s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.35}to{opacity:1}}
+
+/* source card — now glass, floating inside the paper bubble */
+.srccard{margin-top:12px;padding:9px 11px;display:flex;gap:9px;align-items:flex-start}
+.srcname{font-family:var(--mono);font-size:11px}
+.srchost{font-family:var(--mono);font-size:12px;color:var(--ink-40)}
+
+/* ---------------- E gate ---------------- */
+.phone{width:300px;height:540px;border:8px solid var(--ink);position:relative;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:center;gap:16px;padding:24px;
+  background-color:var(--concrete);background-image:var(--grid);background-size:var(--gridsize)}
+.cross-v{position:absolute;top:0;bottom:0;width:1px;background:var(--ink-10);left:15%;
+  animation:cv 14s linear infinite alternate}
+.cross-h{position:absolute;left:0;right:0;height:1px;background:var(--ink-10);top:20%;
+  animation:ch 18s linear infinite alternate}
+@keyframes cv{to{transform:translateX(196px)}}
+@keyframes ch{to{transform:translateY(324px)}}
+.tick{position:absolute;width:5px;height:5px;background:var(--ink-20);left:15%;top:20%;
+  animation:cv 14s linear infinite alternate,ch 18s linear infinite alternate}
+.watermark{position:absolute;right:-70px;bottom:-56px;opacity:.10;pointer-events:none}
+.phone h3{font-weight:900;font-size:26px;letter-spacing:-.5px;position:relative;
+  display:flex;align-items:center;gap:8px}
+.gfield{padding:15px 14px;font-size:14px;color:var(--ink-40);position:relative}
+.gbtn{background:var(--magenta);color:var(--paper);padding:14px;text-align:center;
+  font-weight:600;font-size:15px;position:relative}
+
+/* ---------------- F band ---------------- */
+.band{background:var(--ink);padding:12px 16px;display:flex;justify-content:space-between;
+  align-items:center;width:360px}
+.brand{display:flex;align-items:center;gap:9px}
+.brand .wm{color:var(--paper);font-weight:900;font-size:24px;letter-spacing:-.5px}
+.memplate{width:44px;height:44px;background:var(--paper);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:1px;cursor:pointer}
+.memplate:active{background:var(--concrete-2);transform:translate(1px,1px)}
+.memplate span{font-family:var(--display);font-size:9px;color:var(--ink);letter-spacing:.5px}
+
+/* ---------------- G scrollbar — round-1 treatment, 4px ---------------- */
+.scrolldemo{width:280px;height:140px;overflow-y:scroll;background:var(--paper);
+  border:1px solid var(--ink-20);padding:12px;font-size:13px;line-height:1.6}
+.scrolldemo::-webkit-scrollbar{width:4px}
+.scrolldemo::-webkit-scrollbar-track{background:transparent}
+.scrolldemo::-webkit-scrollbar-thumb{background:var(--ink-40);border-radius:0}
+.scrolldemo::-webkit-scrollbar-thumb:hover{background:var(--ink)}
+.onink{background:var(--ink);padding:16px;display:flex;gap:26px;align-items:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>FishBall — design board</h1>
+<div class="sub">ROUND 3 &middot; CONVERGED &mdash; ONE DESIGN PER ITEM, ALTERNATIVES REMOVED &nbsp;·&nbsp; <span class="ship">ALL SELECTIONS APPLIED</span></div>
+
+<!-- ============ A ============ -->
+<h2>A · Logo — the mark as a letterform</h2>
+<p class="note">The fish is redrawn to sit in the word rather than beside it: solid fill at the wordmark's
+cap height, all edges on 0/45/90, head into the upper-right. The site's own precedent is the outlined
+<strong>E</strong> in AREEL — a letterform doing exactly this trick — so the outlined cut is shown too.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap ship">Solid cut &nbsp;← recommended</div>
+    <div class="onink">
+      <svg viewBox="0 0 24 24" width="40" height="40">
+        <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="#f2f2ee"/>
+        <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="#f2f2ee"/>
+        <rect x="14.6" y="7.4" width="2" height="2" fill="#ec0a6e"/>
+      </svg>
+    </div>
+    <div class="verdict">MATCHES ARCHIVO BLACK'S MASS · EYE STAYS ORTHOGONAL · MAGENTA IS THE ONLY COLOUR IN THE MARK</div>
+  </div>
+  <div class="cell">
+    <div class="cap">Outlined cut — the AREEL "E" move</div>
+    <div class="onink">
+      <svg viewBox="0 0 24 24" width="40" height="40">
+        <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="none" stroke="#f2f2ee" stroke-width="1.6" stroke-linejoin="miter"/>
+        <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="none" stroke="#f2f2ee" stroke-width="1.6" stroke-linejoin="miter"/>
+        <rect x="14.6" y="7.4" width="2" height="2" fill="#ec0a6e"/>
+      </svg>
+    </div>
+    <div class="verdict">LIGHTER THAN THE WORDMARK — READS AS A CUTOUT, NOT A GLYPH, AT 20px</div>
+  </div>
+  <div class="cell">
+    <div class="cap">Lockup at real size</div>
+    <div class="band" style="width:auto">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" width="22" height="22">
+          <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="#f2f2ee"/>
+          <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="#f2f2ee"/>
+          <rect x="14.6" y="7.4" width="2" height="2" fill="#ec0a6e"/>
+        </svg>
+        <span class="wm">FISHBALL</span>
+      </div>
+    </div>
+    <div class="verdict">22px MARK · 24px CAP HEIGHT · 9px GAP</div>
+  </div>
+</div>
+
+<!-- ============ B ============ -->
+<h2>B · The thread — B1 assistant, B6-on-glass user</h2>
+<p class="note">Your split. The assistant is a flat paper plate with the 14px chamfer and its one heavy
+edge; the user is an open text block with the magenta rule, floating on a glass pane. The speaker cue is
+now <strong>material</strong>: the grid reads through the user's turn and stops at the assistant's.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap ship">The thread, on the real ground</div>
+    <div class="tsim">
+      <div class="asst">苹果官网写的是 3582mAh，这个可以放心。官网还说视频播放最长 33 小时。</div>
+      <div class="userwrap shell">
+        <div class="user">每天喝咖啡对心脏好吗？</div>
+      </div>
+      <div class="asst">
+        <div class="mchip" style="margin-bottom:10px">
+          <span class="mlabel" style="color:var(--conf4)">置信度</span>
+          <span class="meter"><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i></span>
+        </div>
+        甲亢确实常见心悸、手抖、容易出汗这些表现，国家卫健委的资料里是这么写的。
+        <div class="srccard shell sm">
+          <svg viewBox="0 0 24 24" width="12" height="12" style="margin-top:2px;flex:none">
+            <path d="M10 5 H5 V10 M14 19 H19 V14" fill="none" stroke="#101010" stroke-width="1.5" stroke-linecap="butt" stroke-linejoin="miter"/>
+          </svg>
+          <div><div class="srcname">国家卫生健康委员会</div><div class="srchost">nhc.gov.cn</div></div>
+        </div>
+      </div>
+      <div class="userwrap shell">
+        <div class="user">奇亚籽能减肥吗？</div>
+      </div>
+    </div>
+    <div class="verdict">ASSISTANT = PAPER, GRID STOPS · USER = GLASS, GRID READS THROUGH · SOURCE CARD = GLASS ON PAPER</div>
+  </div>
+  <div class="cell">
+    <div class="cap">Why it still reads as two speakers</div>
+    <div class="note" style="margin:0;max-width:36ch;font-size:13px">
+      Round 2 had this the other way round — assistant on glass, user flat. Inverting it costs
+      nothing because the distinction was never <em>which</em> material, only that the two differ.<br><br>
+      What it gains: the assistant's turn is the one carrying sources, a meter and a quote card, and
+      a flat opaque plate is a better ground for dense content than a translucent one.<br><br>
+      The magenta rule still lands as the user's mark — it is now the only hard edge on that side.
+    </div>
+  </div>
+</div>
+
+<!-- ============ C ============ -->
+<h2>C · Confidence — labelled, and the label carries the colour</h2>
+<p class="note">置信度 ramps ink → magenta as confidence falls; 各有说辞 is magenta outright. The cells stay
+take the label's colour, so count and hue encode the same value twice - the meter stays readable
+squinting, or in greyscale, or by someone who cannot separate the two hues. <strong>Magenta now means one thing — “be careful here” —</strong> whether the cause is weak
+evidence or a split between authorities.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap">All states</div>
+    <div class="mrow"><span class="mname">CONFIDENT</span><span class="mchip"><span class="mlabel" style="color:var(--conf4)">置信度</span><span class="meter"><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i></span></span></div>
+    <div class="mrow"><span class="mname">REFUTED</span><span class="mchip"><span class="mlabel" style="color:var(--conf4)">置信度</span><span class="meter"><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i><i style="background:var(--ink)"></i></span></span></div>
+    <div class="mrow"><span class="mname">ATTRIBUTED</span><span class="mchip"><span class="mlabel" style="color:var(--conf3)">置信度</span><span class="meter"><i style="background:var(--conf3)"></i><i style="background:var(--conf3)"></i><i style="background:var(--conf3)"></i><i class="off"></i></span></span></div>
+    <div class="mrow"><span class="mname">PERSONAL_PATTERN</span><span class="mchip"><span class="mlabel" style="color:var(--conf2)">置信度</span><span class="meter"><i style="background:var(--conf2)"></i><i style="background:var(--conf2)"></i><i class="off"></i><i class="off"></i></span></span></div>
+    <div class="mrow"><span class="mname">WEAK_LEAD</span><span class="mchip"><span class="mlabel" style="color:var(--conf1)">置信度</span><span class="meter"><i style="background:var(--conf1)"></i><i class="off"></i><i class="off"></i><i class="off"></i></span></span></div>
+    <div class="mrow"><span class="mname">CONFLICT</span><span class="mchip"><span class="mlabel" style="color:var(--magenta)">各有说辞</span>
+      <svg viewBox="0 0 45 8" width="45" height="8"><rect x="0" y="2" width="20" height="5" fill="#101010"/><rect x="25" y="1" width="20" height="5" fill="#101010"/><rect x="22" y="0" width="1" height="8" fill="#ec0a6e"/></svg></span></div>
+    <div class="mrow"><span class="mname">NOTHING_FOUND</span><span style="font-family:var(--mono);font-size:11px;color:var(--ink-40)">— nothing rendered —</span></div>
+    <div class="mrow"><span class="mname">SEARCH_UNAVAILABLE</span><span style="font-family:var(--mono);font-size:11px;color:var(--ink-40)">— nothing rendered —</span></div>
+  </div>
+  <div class="cell">
+    <div class="cap">The ramp — label and cells share it</div>
+    <div class="mrow"><span class="mname">4/4 — ink</span><span class="mlabel" style="color:var(--conf4);font-size:13px">置信度 #101010</span></div>
+    <div class="mrow"><span class="mname">3/4</span><span class="mlabel" style="color:var(--conf3);font-size:13px">置信度 #560E2F</span></div>
+    <div class="mrow"><span class="mname">2/4</span><span class="mlabel" style="color:var(--conf2);font-size:13px">置信度 #AC0C4E</span></div>
+    <div class="mrow"><span class="mname">1/4 — magenta</span><span class="mlabel" style="color:var(--conf1);font-size:13px">置信度 #EC0A6E</span></div>
+    <div class="mrow"><span class="mname">conflict</span><span class="mlabel" style="color:var(--magenta);font-size:13px">各有说辞 #EC0A6E</span></div>
+    <div class="verdict">LINEAR MIX INK→MAGENTA AT 0 / 33 / 66 / 100% · LABEL 9px, LS 1px, 6px LEFT OF THE BAR</div>
+  </div>
+</div>
+
+<!-- ============ D ============ -->
+<h2>D · Pending — approved, with the lap running the whole outline</h2>
+<p class="note">Unchanged from your approval, except the magenta segment now travels the full chamfered
+border rather than the top edge alone. Indeterminate by construction — a 24px segment on a 700px dash gap
+never resolves into a percentage.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap">Pending — live</div>
+    <div class="tsim" style="width:340px">
+      <div class="pending">
+        <svg class="lap" viewBox="0 0 308 104" preserveAspectRatio="none">
+          <path d="M14 0 H308 V104 H0 V14 Z"/>
+        </svg>
+        <div class="step done"><span class="sq"></span><span>正在查……</span></div>
+        <div class="step done"><span class="sq"></span><span>看了国家卫健委的资料</span></div>
+        <div class="step live"><span class="sq"></span><span>在查有没有相反的说法……</span></div>
+      </div>
+    </div>
+    <div class="verdict">SEGMENT 24px · STROKE 2px · CLOCKWISE · 5.6s LINEAR · FOLLOWS THE CHAMFER</div>
+  </div>
+  <div class="cell">
+    <div class="cap">Source card — glass on paper</div>
+    <div class="asst" style="width:300px">
+      苹果官网写的是 3582mAh，这个可以放心。
+      <div class="srccard shell sm">
+        <svg viewBox="0 0 24 24" width="12" height="12" style="margin-top:2px;flex:none">
+          <path d="M10 5 H5 V10 M14 19 H19 V14" fill="none" stroke="#101010" stroke-width="1.5" stroke-linecap="butt" stroke-linejoin="miter"/>
+        </svg>
+        <div><div class="srcname">苹果官网</div><div class="srchost">apple.com</div></div>
+      </div>
+    </div>
+    <div class="verdict">SHELL DROP RETUNED FOR SMALL FORMAT: 22px SPREAD → 8px. THE BRACKET MARK IS THE §25 QUOTE AFFORDANCE.</div>
+  </div>
+</div>
+
+<!-- ============ E ============ -->
+<h2>E · Gate — A1 drafting table + watermark fish + glass input</h2>
+<p class="note">Your pick. Two hairlines drift on different periods with a 5px tick riding the
+intersection; the fish sits cropped at the lower-right as an architectural watermark; the input is a glass
+pane. Sped up here (14s/18s) — production is 56s/74s, slow enough that you notice the drawing has moved
+rather than watching it move.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap ship">A1 + A-bg1 + glass input &nbsp;← ship</div>
+    <div class="phone">
+      <div class="cross-v"></div><div class="cross-h"></div><div class="tick"></div>
+      <svg class="watermark" viewBox="0 0 24 24" width="230" height="230">
+        <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="#101010"/>
+        <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="#101010"/>
+      </svg>
+      <h3>
+        <svg viewBox="0 0 24 24" width="22" height="22" style="flex:none">
+          <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="#101010"/>
+          <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="#101010"/>
+          <rect x="14.6" y="7.4" width="2" height="2" fill="#ec0a6e"/>
+        </svg>
+        FISHBALL
+      </h3>
+      <div class="checker" style="position:relative"></div>
+      <div class="gfield shell">请输入激活码</div>
+      <div class="gbtn">确认</div>
+    </div>
+    <div class="verdict">CROSSHAIR ink-10 · TICK 5px ink-20 · WATERMARK 10% · A3 AND bg2/bg3 DELETED</div>
+  </div>
+  <div class="cell">
+    <div class="cap">The risk you should judge</div>
+    <div class="note" style="margin:0;max-width:34ch;font-size:13px">
+      Two ambient systems on a three-element screen was the exact thing flagged as “fidgety” in round 1 —
+      and this now has a moving crosshair <em>and</em> a watermark.<br><br>
+      They coexist because only one of them moves: the fish is static and sits under everything at 10%,
+      so it reads as printed on the paper rather than as a second animation.<br><br>
+      If it still feels busy, the cheap fix is dropping the tick and keeping the two lines.
+    </div>
+  </div>
+</div>
+
+<!-- ============ F ============ -->
+<h2>F · Memory — plate, no tilt, magenta brain</h2>
+<div class="row">
+  <div class="cell">
+    <div class="cap">Band — mark left, memory right</div>
+    <div class="band">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" width="22" height="22">
+          <path d="M7.4 16.6 V9.9 L11.3 5.6 H18.4 V12.7 L14.1 16.6 Z" fill="#f2f2ee"/>
+          <path d="M7.4 16.6 L2.6 21.4 H7.4 Z" fill="#f2f2ee"/>
+          <rect x="14.6" y="7.4" width="2" height="2" fill="#ec0a6e"/>
+        </svg>
+        <span class="wm">FISHBALL</span>
+      </div>
+      <div class="memplate">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path d="M4 4 H20 V20 H8 V8 H16 V16 H12" fill="none" stroke="#ec0a6e" stroke-width="1.5" stroke-linecap="butt" stroke-linejoin="miter"/>
+        </svg>
+        <span>记忆</span>
+      </div>
+    </div>
+    <div class="checker" style="width:360px"></div>
+    <div class="verdict">44×44 PAPER PLATE · BRAIN 18px MAGENTA (3.86:1, PASSES 3:1 FOR NON-TEXT) · LABEL 9px INK (MAGENTA WOULD FAIL 4.5:1) · PRESS IT</div>
+  </div>
+</div>
+
+<!-- ============ G ============ -->
+<h2>G · Scrollbar — round-1 treatment at 4px</h2>
+<p class="note">Back to the plain square ink-40 thumb on a transparent track, no <code>scrollbar-width</code>
+override, narrowed from 7px to 4px. Compose gets 2dp × 32dp, transient, fixed length.</p>
+<div class="row">
+  <div class="cell">
+    <div class="cap">Scroll me</div>
+    <div class="scrolldemo">
+      苹果官网写的是 3582mAh，这个可以放心。官网还说视频播放最长 33 小时。<br><br>
+      这个我没找到权威研究，只有一些个人分享和卖家的说法，仅供参考。<br><br>
+      甲亢确实常见心悸、手抖、容易出汗这些表现，国家卫健委的资料里是这么写的。<br><br>
+      大家都认可的是：适量喝咖啡对多数健康成年人没有明显害处。
+    </div>
+    <div class="verdict">4px THUMB · ONE RESERVATION: 4px IS BELOW A COMFORTABLE DRAG TARGET — IT IS AN INDICATOR NOW, NOT A CONTROL</div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

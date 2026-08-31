@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FishBall — frontend dummy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens lifted verbatim from areel.org/index.html */
+  :root{
+    --concrete:#c9c9c5; --concrete-2:#d3d3cf; --paper:#f2f2ee;
+    --ink:#101010; --ink-60:rgba(16,16,16,.60); --ink-40:rgba(16,16,16,.40);
+    --ink-20:rgba(16,16,16,.20); --ink-10:rgba(16,16,16,.10); --ink-06:rgba(16,16,16,.06);
+    --magenta:#ec0a6e; --magenta-lo:rgba(236,10,110,.14);
+    --display:"Archivo","Helvetica Neue",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+    --rule:1px solid var(--ink-20);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--display); background:#8f8f8b; color:var(--ink);
+    min-height:100vh; display:flex; flex-direction:column; align-items:center;
+    gap:18px; padding:22px 14px 40px;
+    background-image:linear-gradient(0deg,rgba(16,16,16,.06) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(16,16,16,.06) 1px,transparent 1px);
+    background-size:28px 28px;
+  }
+
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+  .bar button{
+    font-family:var(--mono); font-size:11px; letter-spacing:.6px; text-transform:uppercase;
+    padding:8px 14px; border:var(--rule); background:var(--paper); color:var(--ink);
+    cursor:pointer; border-radius:0;
+  }
+  .bar button:hover{background:var(--magenta);color:var(--paper);border-color:var(--magenta)}
+  .bar button[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+  /* phone frame */
+  .device{
+    width:390px; height:844px; max-width:100%; background:var(--concrete);
+    border:10px solid var(--ink); position:relative; overflow:hidden;
+    display:flex; flex-direction:column; box-shadow:0 30px 60px rgba(16,16,16,.35);
+  }
+  @media(max-height:940px){ .device{height:min(844px,82vh)} }
+
+  /* masthead */
+  .band{
+    background:var(--ink); color:var(--paper);
+    padding:16px 20px; display:flex; justify-content:space-between; align-items:center;
+  }
+  .wordmark{font-weight:900;font-size:26px;letter-spacing:-.5px;font-stretch:110%}
+  .memcount{font-family:var(--mono);font-size:11px;letter-spacing:.6px;color:var(--magenta);cursor:pointer;padding:6px}
+  .checker{height:8px;width:100%;
+    background-image:conic-gradient(var(--ink) 25%,transparent 0 50%,var(--ink) 0 75%,transparent 0);
+    background-size:16px 16px;}
+
+  /* thread */
+  .thread{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .msg{border:var(--rule);background:var(--paper);padding:16px;font-size:16px;line-height:1.56}
+  .msg.user{background:var(--magenta-lo);border-color:var(--magenta)}
+  .shape{
+    font-family:var(--mono);font-size:10px;letter-spacing:.7px;color:var(--magenta);
+    text-transform:uppercase;margin-bottom:8px;display:none;
+  }
+  body.annotate .shape{display:block}
+
+  .sources{margin-top:12px;border-top:var(--rule);padding-top:9px;display:grid;gap:7px}
+  .src{display:flex;gap:8px;align-items:flex-start;font-family:var(--mono)}
+  .src .nm{font-size:11px;letter-spacing:.5px}
+  .src .hs{font-size:12px;color:var(--ink-40)}
+
+  /* narration */
+  .narr{padding:10px 20px;display:grid;gap:5px}
+  .step{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--ink-40)}
+  .step .dot{width:6px;height:6px;background:var(--ink-40);flex:none;opacity:.35}
+  .step.live{color:var(--ink)}
+  .step.live .dot{background:var(--magenta);animation:pulse .9s ease-in-out infinite alternate}
+  @keyframes pulse{from{opacity:.35}to{opacity:1}}
+
+  /* composer */
+  .hair{height:1px;background:var(--ink-20)}
+  .composer{background:var(--concrete-2);padding:10px 12px;display:flex;gap:10px;align-items:center}
+  .composer input{
+    flex:1;font-family:var(--display);font-size:14px;padding:14px;
+    background:var(--paper);border:var(--rule);color:var(--ink);border-radius:0;
+  }
+  .composer input:focus{outline:none;border-color:var(--magenta)}
+  .send{
+    width:48px;height:48px;flex:none;background:var(--magenta);color:var(--paper);
+    border:none;cursor:pointer;font-size:18px;display:grid;place-items:center;border-radius:0;
+  }
+  .send:disabled{background:var(--ink-20);cursor:default}
+
+  /* key gate */
+  .gate{position:absolute;inset:0;background:var(--concrete);display:flex;flex-direction:column;
+        justify-content:center;gap:20px;padding:28px;z-index:5}
+  .gate h1{font-weight:900;font-size:28px;letter-spacing:-.5px}
+  .gate p{font-size:16px;line-height:1.55}
+  .gate input{font-family:var(--display);font-size:15px;padding:16px 14px;background:var(--paper);
+              border:2px solid var(--ink);border-radius:0}
+  .gate input:focus{outline:none;border-color:var(--magenta)}
+  .gate .disclose{display:none}
+  .gate .go{background:var(--magenta);color:var(--paper);border:none;padding:15px;
+            font-family:var(--display);font-weight:600;font-size:16px;cursor:pointer;border-radius:0}
+  .gate .go:disabled{background:var(--ink-20);cursor:default}
+  .disclose{font-size:14px;line-height:1.5;color:var(--ink-60)}
+  .caption{font-family:var(--mono);font-size:11px;color:rgba(16,16,16,.55);letter-spacing:.5px;text-align:center;max-width:390px}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <button id="reset">Reset</button>
+  <button id="ann" aria-pressed="false">Show AnswerShape labels</button>
+  <button id="skip">Skip login</button>
+</div>
+
+<div class="device">
+  <div class="gate" id="gate">
+    <h1>FISHBALL</h1>
+    <div class="checker"></div>
+    <input id="key" placeholder="请输入激活码" autocomplete="off">
+    <button class="go" id="go" disabled>确认</button>
+  </div>
+
+  <div class="band">
+    <div class="wordmark">FISHBALL</div>
+    <div class="memcount" id="mem" role="button" tabindex="0">记忆</div>
+  </div>
+  <div class="checker"></div>
+
+  <div class="thread" id="thread"></div>
+  <div class="narr" id="narr"></div>
+  <div class="hair"></div>
+  <div class="composer">
+    <input id="draft" autocomplete="off">
+    <button class="send" id="send">↑</button>
+  </div>
+</div>
+
+<p class="caption">Send to step through all five answer shapes. An empty box auto-fills the next scripted question. Device copy is Chinese by design (spec &sect;12); the controls are not part of the product.</p>
+
+<script>
+// Content mirrors app/src/main/java/org/areel/fishball/ui/DummyData.kt exactly.
+const OPENING = "有什么想查的直接问我就行。我会去网上找，找到什么就跟你说什么，找不到可靠的来源我也会直说。";
+
+const EXCHANGES = [
+  { q:"iPhone 17 Pro 电池容量多少？",
+    narration:["正在查……","看了苹果官网","整理中"],
+    shape:"CONFIDENT",
+    text:"苹果官网写的是 3582mAh，这个可以放心。官网还说视频播放最长 33 小时。",
+    sources:[["苹果官网","apple.com"]] },
+
+  { q:"奇亚籽能减肥吗？",
+    narration:["正在查……","只找到一些个人分享和卖家的说法","在查有没有相反的说法……","整理中"],
+    shape:"WEAK_LEAD / BOTH_EMPTY",
+    text:"这个我没找到权威研究，只有一些个人分享和卖家的说法，仅供参考。我也反过来查了有没有说它没用的资料，同样没有权威结论 —— 所以正反两边我都查了，都说不准。",
+    sources:[] },
+
+  { q:"我最近总是心悸、手抖、容易出汗，是不是甲亢？",
+    narration:["正在查……","看了国家卫健委的资料","在查有没有相反的说法……","整理中"],
+    shape:"CONFIDENT + medicalSplit",
+    text:"甲亢确实常见心悸、手抖、容易出汗这些表现，国家卫健委的资料里是这么写的。不过你是不是甲亢，我不能替你判断 —— 这个得抽血查甲状腺功能五项才能确定。建议挂内分泌科看一下。",
+    sources:[["国家卫生健康委员会","nhc.gov.cn"]] },
+
+  { q:"每天喝咖啡对心脏好吗？",
+    narration:["正在查……","看了两份权威资料","在查有没有相反的说法……","整理中"],
+    shape:"CONFLICT",
+    text:"大家都认可的是：适量喝咖啡对多数健康成年人没有明显害处。但在「是不是有好处」上，权威来源本身就有分歧：世界卫生组织（联合国下属的全球卫生机构）的说法比较保守，《英国医学杂志》上的大型研究则认为有轻微益处。这种情况建议问医生，特别是你本来就有心律方面的问题的话。",
+    sources:[["世界卫生组织","who.int"],["《英国医学杂志》","bmj.com"]] },
+
+  { q:"现在美元汇率多少？",
+    narration:["正在查……"],
+    shape:"SEARCH_UNAVAILABLE",
+    text:"我现在查不了资料，等一下再问我吧。",
+    sources:[] },
+];
+
+const thread = document.getElementById('thread');
+const narr   = document.getElementById('narr');
+const mem    = document.getElementById('mem');
+const draft  = document.getElementById('draft');
+const send   = document.getElementById('send');
+let idx = 0, busy = false;
+
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function bubble(text, fromUser, shape, sources){
+  const el = document.createElement('div');
+  el.className = 'msg' + (fromUser ? ' user' : '');
+  let html = '';
+  if (shape) html += `<div class="shape">${esc(shape)}</div>`;
+  html += esc(text);
+  if (sources && sources.length){
+    html += '<div class="sources">' + sources.map(
+      ([n,h]) => `<div class="src"><span>📎</span><span><span class="nm">${esc(n)}</span><br><span class="hs">${esc(h)}</span></span></div>`
+    ).join('') + '</div>';
+  }
+  el.innerHTML = html;
+  thread.appendChild(el);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function reset(){
+  thread.innerHTML = ''; narr.innerHTML = '';
+  idx = 0; busy = false; send.disabled = false;
+  bubble(OPENING, false);
+}
+
+async function play(question){
+  if (busy) return;
+  const ex = EXCHANGES[idx % EXCHANGES.length];
+  busy = true; send.disabled = true;
+  bubble(question || ex.q, true);
+
+  narr.innerHTML = '';
+  for (const step of ex.narration){
+    [...narr.children].forEach(c => c.classList.remove('live'));
+    const row = document.createElement('div');
+    row.className = 'step live';
+    row.innerHTML = `<span class="dot"></span><span>${esc(step)}</span>`;
+    narr.appendChild(row);
+    await new Promise(r => setTimeout(r, 900));   // matches the Compose delay(900)
+  }
+  narr.innerHTML = '';
+
+  bubble(ex.text, false, ex.shape, ex.sources);
+  idx++;
+  busy = false; send.disabled = false;
+}
+
+send.onclick = () => { play(draft.value.trim()); draft.value = ''; };
+draft.onkeydown = e => { if (e.key === 'Enter') send.click(); };
+
+const gate = document.getElementById('gate');
+const key  = document.getElementById('key');
+const go   = document.getElementById('go');
+key.oninput = () => { go.disabled = key.value.trim().length === 0; };
+go.onclick  = () => { gate.style.display = 'none'; };
+document.getElementById('skip').onclick  = () => { gate.style.display = 'none'; };
+document.getElementById('reset').onclick = () => { reset(); gate.style.display = 'flex'; key.value=''; go.disabled = true; };
+const ann = document.getElementById('ann');
+ann.onclick = () => {
+  const on = document.body.classList.toggle('annotate');
+  ann.setAttribute('aria-pressed', String(on));
+};
+
+reset();
+</script>
+</body>
+</html>

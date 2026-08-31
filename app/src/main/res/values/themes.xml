@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Platform theme only. All app colour and typography comes from Compose MaterialTheme;
+  this exists so the window has no action bar and does not flash the wrong background
+  before Compose draws. Parented on the framework theme rather than a Material Components
+  one so we do not need the Views material library as a dependency.
+-->
+<resources>
+    <style name="Theme.FishBall" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

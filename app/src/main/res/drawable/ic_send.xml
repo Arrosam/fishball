@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Send. Up arrow, mitred 45 degree head, square-cut shaft.
+  Replaces Material's Icons.AutoMirrored.Filled.Send, which is a rounded generic.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins, runs orthogonal or 45 degrees, coordinates on integers.
+  The pathData is byte-identical to the SVG "d" on the design board, so the two
+  surfaces cannot drift. Colour is set by the Icon() tint at the call site, not here.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M12 20 V5 M5 12 L12 5 L19 12"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+</vector>

@@ -1,0 +1,81 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.compose.compiler)
+}
+
+android {
+    namespace = "org.areel.fishball"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "org.areel.fishball"
+        // API 26 is the floor: Android's bundled SQLite gains FTS5 here, and the lexical
+        // leg of the hybrid retriever depends on it (see memory/LexicalIndex.kt).
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+
+        buildConfigField(
+            "String",
+            "SEARXNG_BASE_URL",
+            "\"${project.findProperty("fishball.searxng.baseUrl") ?: "https://search.areel.org"}\"",
+        )
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    packaging {
+        resources.excludes += setOf(
+            "/META-INF/{AL2.0,LGPL2.1}",
+            "/META-INF/INDEX.LIST",
+            "/META-INF/io.netty.versions.properties",
+        )
+    }
+}
+
+dependencies {
+    // Trust engine, memory, sessions, the turn state machine. Android-free by design.
+    implementation(project(":core"))
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // No material-icons dependency: every icon is a hand-drawn VectorDrawable in
+    // res/drawable, matching the 24-grid in docs/06-design-directions.md section E.
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Not yet needed by the frontend dummy, and added back when the UI is wired to :core:
+    //   libs.androidx.datastore.preferences  — persisting the login key (§1)
+    //   libs.koog.agents                     — the LLM driver around TurnEngine
+    // Ktor and kotlinx-serialization live in :core with the SearXNG gateway.
+}
