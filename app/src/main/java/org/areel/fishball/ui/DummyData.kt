@@ -40,6 +40,25 @@ object Demo {
         ),
     )
 
+
+    /**
+     * Memory-screen fixture. TTL words are the designer's proposals from
+     * docs/06-design-directions.md Appendix 2 and are not yet approved copy.
+     */
+    val worldMemories = listOf(
+        MemoryRowData("iPhone 17 Pro 电池容量 3582mAh", "长期"),
+        MemoryRowData("甲亢确诊要靠甲状腺功能五项", "长期"),
+        MemoryRowData("布洛芬常见副作用是胃部不适", "一年"),
+        MemoryRowData("某只 ETF 今年的表现", "每次重查"),
+        MemoryRowData("适量咖啡对多数健康成年人无明显害处", "一年"),
+    )
+
+    val personalMemories = listOf(
+        MemoryRowData("最近在吃布洛芬", "一个月前记下"),
+        MemoryRowData("对青霉素过敏", "长期"),
+        MemoryRowData("看东西喜欢先问有没有权威来源", "长期"),
+    )
+
     val exchanges = listOf(
         // AnswerShape.CONFIDENT - authoritative source, stated plainly, attributed in-sentence.
         DemoExchange(

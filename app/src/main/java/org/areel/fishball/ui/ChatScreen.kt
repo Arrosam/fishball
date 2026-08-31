@@ -53,7 +53,7 @@ import org.areel.fishball.ui.theme.Areel
  * the slot its answer will land in.
  */
 @Composable
-fun ChatScreen() {
+fun ChatScreen(onMemoryClick: () -> Unit) {
     val messages = remember { mutableStateListOf<DemoMessage>().apply { addAll(Demo.opening) } }
     val narration = remember { mutableStateListOf<String>() }
     var draft by remember { mutableStateOf("") }
@@ -95,7 +95,7 @@ fun ChatScreen() {
             .statusBarsPadding()
             .imePadding(),
     ) {
-        TopBand(onMemoryClick = { /* TODO: memory screen, item 13 */ })
+        TopBand(onMemoryClick = onMemoryClick)
 
         LazyColumn(
             state = listState,

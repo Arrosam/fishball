@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -75,36 +77,53 @@ fun Modifier.cadGrid(
 fun Modifier.glassSurface(
     small: Boolean = false,
 ): Modifier = this
+    // The drop shadow was missing entirely in the first translation, and it turns out to be
+    // the load-bearing part: without something lifting it off the ground, a translucent white
+    // panel over concrete is just a lighter grey rectangle. Glass has to float to read as glass.
+    .shadow(
+        elevation = if (small) 2.dp else 5.dp,
+        shape = RectangleShape,
+        clip = false,
+        ambientColor = Areel.Ink,
+        spotColor = Areel.Ink,
+    )
     .drawBehind {
-        // 148deg fill: bright at the top-left, thinning through the middle, lifting again.
+        // Mostly clear. The CAD grid underneath must stay legible through the pane — that
+        // show-through is the whole point, and it is also the speaker cue in the thread.
         drawRect(
             Brush.linearGradient(
                 0f to Areel.GlassHi,
-                0.46f to Areel.GlassMid,
+                0.5f to Areel.GlassMid,
                 1f to Areel.GlassLo,
                 start = Offset(0f, 0f),
-                end = Offset(size.width * 0.53f, size.height),
+                end = Offset(size.width, size.height),
             ),
         )
-        // 112deg specular streak — the single highlight that makes it read as plastic.
+        // Specular streak on a fixed slope rather than one normalised to the box. Normalising
+        // it made the glint a near-vertical bar on wide, short panes like a chat bubble, which
+        // read as a rendering artefact rather than a highlight.
+        val run = size.height * 2.5f
+        val originX = size.width * 0.22f
         drawRect(
             Brush.linearGradient(
-                0.40f to Color.Transparent,
-                0.46f to Areel.GlassStreak,
-                0.52f to Color.Transparent,
-                start = Offset(0f, size.height),
-                end = Offset(size.width, 0f),
+                0.00f to Color.Transparent,
+                0.46f to Color.Transparent,
+                0.50f to Areel.GlassStreak,
+                0.54f to Color.Transparent,
+                1.00f to Color.Transparent,
+                start = Offset(originX - run, size.height),
+                end = Offset(originX + run, 0f),
             ),
         )
-        // Bottom inner shade, standing in for the inset box-shadow.
+        // Top light lip, then a restrained bottom shade. The first version's shade was heavy
+        // enough to turn the pane into a dark block — this is a sheet of plastic, not a bevel.
+        drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
         drawRect(
             Brush.verticalGradient(
-                0.72f to Color.Transparent,
-                1f to Areel.GlassShade.copy(alpha = if (small) 0.18f else 0.25f),
+                0.82f to Color.Transparent,
+                1f to Areel.GlassShade.copy(alpha = if (small) 0.10f else 0.14f),
             ),
         )
-        // Top light lip.
-        drawLine(Areel.GlassLip, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
     }
     .border(1.dp, Areel.GlassBorder)
 

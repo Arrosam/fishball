@@ -165,6 +165,7 @@ fun AssistantBubble(
     conflict: Boolean = false,
     sources: List<Source> = emptyList(),
 ) {
+    val edge = remember { Path() }
     Box(
         modifier
             .fillMaxWidth()
@@ -172,8 +173,7 @@ fun AssistantBubble(
             .border(1.dp, Areel.Ink20, BubbleShape)
             .drawWithContent {
                 drawContent()
-                val c = CUT.toPx()
-                drawLine(Areel.Ink, Offset(0f, c), Offset(c, 0f), 3.dp.toPx(), StrokeCap.Butt)
+                drawCutEdge(edge)
             }
             .padding(16.dp),
     ) {
@@ -400,6 +400,20 @@ private fun DrawScope.bubbleOutline(path: Path): Path {
     path.lineTo(0f, cut)
     path.close()
     return path
+}
+
+/**
+ * The heavy edge on the chamfer, clipped to the plate.
+ *
+ * Drawn unclipped, a 3dp stroke centred on the chamfer put half its width outside the shape,
+ * so on a device it read as a small flag floating off the bubble's corner rather than as a
+ * weighted edge of it. Clipping and drawing at double width leaves exactly 3dp inside.
+ */
+private fun DrawScope.drawCutEdge(path: Path) {
+    clipPath(bubbleOutline(path)) {
+        val c = CUT.toPx()
+        drawLine(Areel.Ink, Offset(0f, c), Offset(c, 0f), 6.dp.toPx(), StrokeCap.Butt)
+    }
 }
 
 /**

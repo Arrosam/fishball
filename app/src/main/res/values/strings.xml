@@ -24,6 +24,18 @@
     <string name="conflict_label">各有说辞</string>
 
     <!--
+      Memory screen. NOT YET APPROVED - these are the designer's proposals from
+      docs/06-design-directions.md Appendix 2, used so the screen exists and can be judged.
+      The two tab names in particular are the author's call.
+    -->
+    <string name="back">返回</string>
+    <string name="memory_tab_world">网上学到的</string>
+    <string name="memory_tab_personal">关于你的</string>
+    <string name="memory_empty_world">还没有从网上记下什么。</string>
+    <string name="memory_empty_personal">还没有记下关于你的事。</string>
+    <string name="memory_forget">忘掉</string>
+
+    <!--
       No privacy_disclosure string. Spec §22 was reversed: the operator says it in person,
       the app says nothing. Deliberate absence, not an oversight - do not re-add it.
     -->
