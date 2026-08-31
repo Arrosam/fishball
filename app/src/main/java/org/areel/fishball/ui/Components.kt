@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.heightIn
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -160,11 +162,25 @@ fun TopBand(
  */
 @Composable
 private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
+    // Two flags, not one. `mounted` is whether the popup exists; `open` is what the plates are
+    // animating towards. They differ for the length of the retraction — a popup torn down the
+    // instant it is dismissed cannot animate its way out.
+    var mounted by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf(false) }
-    // When the menu is open, the tap that dismisses it also lands on the button underneath, so
-    // a naive toggle closed and immediately reopened. The popup reports the dismissal first;
-    // this ignores a press that arrives on its heels.
+    // The tap that dismisses also lands on the button underneath, so a naive toggle closed and
+    // immediately reopened. The popup reports the dismissal first; this ignores a press that
+    // arrives on its heels.
     var dismissedAt by remember { mutableLongStateOf(0L) }
+    val scope = rememberCoroutineScope()
+
+    fun retract() {
+        open = false
+        dismissedAt = SystemClock.uptimeMillis()
+        scope.launch {
+            delay(MENU_EXIT_MS)
+            mounted = false
+        }
+    }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
 
@@ -175,8 +191,12 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                 .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
                 .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape)
                 .clickable(interactionSource = interaction, indication = null) {
-                    if (!open && SystemClock.uptimeMillis() - dismissedAt > MENU_REOPEN_GUARD_MS) {
-                        open = true
+                    when {
+                        open -> retract()
+                        SystemClock.uptimeMillis() - dismissedAt > MENU_REOPEN_GUARD_MS -> {
+                            mounted = true
+                            open = true
+                        }
                     }
                 },
             contentAlignment = Alignment.Center,
@@ -189,30 +209,38 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
             )
         }
 
-        if (open) {
-            val drop = with(LocalDensity.current) { 48.dp.roundToPx() }
+        if (mounted) {
+            // The button is 44dp tall and the plates are spaced MENU_GAP apart, so the drop has
+            // to clear both — otherwise the first gap is smaller than the second and the stack
+            // reads as slightly broken rather than deliberately spaced.
+            val drop = with(LocalDensity.current) { (44.dp + MENU_GAP).roundToPx() }
             Popup(
                 alignment = Alignment.TopEnd,
                 offset = IntOffset(0, drop),
-                onDismissRequest = {
-                    open = false
-                    dismissedAt = SystemClock.uptimeMillis()
-                },
+                onDismissRequest = { retract() },
             ) {
                 // The plates themselves drop out of the button. 记忆 keeps the design it always
                 // had - 44dp plate, magenta glyph, ink label - because it was not a list item
                 // before and turning it into one to fit a menu would have been the menu
                 // deciding what the app looks like.
                 Column(horizontalAlignment = Alignment.End) {
-                    MenuPlate(R.drawable.ic_brain, stringResource(R.string.memory), order = 0) {
-                        open = false
-                        dismissedAt = SystemClock.uptimeMillis()
+                    MenuPlate(
+                        R.drawable.ic_brain,
+                        stringResource(R.string.memory),
+                        order = 0,
+                        open = open,
+                    ) {
+                        retract()
                         onMemory()
                     }
-                    Spacer(Modifier.height(8.dp))
-                    MenuPlate(R.drawable.ic_gear, stringResource(R.string.settings), order = 1) {
-                        open = false
-                        dismissedAt = SystemClock.uptimeMillis()
+                    Spacer(Modifier.height(MENU_GAP))
+                    MenuPlate(
+                        R.drawable.ic_gear,
+                        stringResource(R.string.settings),
+                        order = 1,
+                        open = open,
+                    ) {
+                        retract()
                         onSettings()
                     }
                 }
@@ -230,14 +258,24 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
  * be the softest thing in the app.
  */
 @Composable
-private fun MenuPlate(icon: Int, label: String, order: Int, onClick: () -> Unit) {
+private fun MenuPlate(icon: Int, label: String, order: Int, open: Boolean, onClick: () -> Unit) {
     val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        delay(order * 55L)
-        progress.animateTo(
-            1f,
-            spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow),
-        )
+    LaunchedEffect(open) {
+        if (open) {
+            delay(order * MENU_STAGGER_MS)
+            progress.animateTo(
+                1f,
+                spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow),
+            )
+        } else {
+            // Reverse order going back, so the stack retracts into the button rather than
+            // collapsing from the top down, which reads as the far plate falling through the
+            // near one.
+            delay((1 - order).coerceAtLeast(0) * MENU_STAGGER_MS)
+            // Eased, not sprung. An overshoot on the way out would bounce the plates back
+            // *away* from the button they are supposed to be disappearing into.
+            progress.animateTo(0f, tween(durationMillis = 140, easing = EaseMech))
+        }
     }
 
     val interaction = remember { MutableInteractionSource() }
@@ -278,6 +316,14 @@ private fun MenuPlate(icon: Int, label: String, order: Int, onClick: () -> Unit)
 
 /** Long enough to swallow the dismissing tap, short enough not to eat a deliberate reopen. */
 private const val MENU_REOPEN_GUARD_MS = 250L
+
+/** One spacing, used between the button and the first plate and between the plates. */
+private val MENU_GAP = 8.dp
+
+private const val MENU_STAGGER_MS = 55L
+
+/** The retraction, plus the stagger behind it. The popup outlives the dismissal by this much. */
+private const val MENU_EXIT_MS = 210L
 
 
 // ---------------------------------------------------------------- the thread

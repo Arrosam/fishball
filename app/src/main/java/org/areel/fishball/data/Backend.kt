@@ -78,7 +78,11 @@ class Backend private constructor(
         val client = HydrogenClient(apiKey = key, onModelChanged = ::rememberModel)
         val check = client.validate()
         if (check is KeyCheck.Valid) {
-            prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).apply()
+            // commit, not apply. This is the one write the app cannot afford to lose: apply()
+            // returns before the file is written, and the activation screen is precisely where
+            // a user finishes and immediately backs out of the app - taking the process, and
+            // the unflushed key, with them. They then reopen it and are asked to activate again.
+            prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).commit()
             conversation = Conversation(
                 llm = client,
                 retrieval = client,
@@ -99,7 +103,11 @@ class Backend private constructor(
      */
     fun restore(): Boolean {
         val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
-        val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: return false
+        // A missing model is not a reason to ask for the code again. The key is what the user
+        // was asked for and what they have; the model is a cache, and the client re-picks one
+        // the moment a turn is refused. Sending them back to the gate over it would be the app
+        // forgetting something it was told, to fix something it can work out for itself.
+        val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: FAST
         val client = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel)
         conversation = Conversation(
             llm = client,
