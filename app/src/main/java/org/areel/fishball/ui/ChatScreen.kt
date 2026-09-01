@@ -194,6 +194,9 @@ fun ChatScreen(
         TopBand(onMemoryClick = onMemoryClick, onSettingsClick = onSettingsClick)
 
         val bounce = rememberBounceState()
+        // In dp, so the overrun is the same distance on every screen rather than the same
+        // number of pixels.
+        val arrivalPeak = with(LocalDensity.current) { 22.dp.toPx() }
         // clipToBounds is load-bearing, not tidiness: the bounce translates the whole list
         // past its own edges, and unclipped that content drew straight over the masthead. The
         // band and the composer own their strips of the screen; the thread stays inside its.
@@ -285,7 +288,13 @@ fun ChatScreen(
                     // Following again, not just scrolled: landing at the end and then being
                     // left behind by the next answer would undo the trip.
                     following = true
-                    scope.launch { toEnd(smooth = true) }
+                    scope.launch {
+                        toEnd(smooth = true)
+                        // After the list has actually stopped, not alongside it: run the two
+                        // together and the overshoot is spent while the thread is still moving,
+                        // so nothing arrives anywhere.
+                        bounce.arrive(arrivalPeak)
+                    }
                 },
             )
 

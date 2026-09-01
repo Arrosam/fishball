@@ -1,7 +1,9 @@
 package org.areel.fishball.ui
 
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,6 +77,27 @@ class BounceState internal constructor(
         return closing
     }
 
+    /**
+     * Land at the end with momentum: run past it by [peak], then spring home.
+     *
+     * The same band a finger stretches, moved by the app instead. Jumping to the bottom is
+     * otherwise a cut - the thread is simply somewhere else the next frame - and a cut gives no
+     * sense of which way it travelled. Overrunning and coming back says "down", and says it
+     * with the motion the thread already has when a hand does the same thing.
+     *
+     * Negative because that is the direction a drag takes at the bottom: content carried
+     * upward, empty ground opening beneath it. The return leg is [settle], so the rebound past
+     * zero is the same under-damped spring as every other release in this list.
+     */
+    internal suspend fun arrive(peak: Float) {
+        animate(
+            initialValue = 0f,
+            targetValue = -peak.coerceAtMost(limit()),
+            animationSpec = tween(durationMillis = ARRIVAL_MS, easing = LinearOutSlowInEasing),
+        ) { value, _ -> current = value }
+        settle(0f)
+    }
+
     internal suspend fun settle(velocity: Float) {
         // A spring rather than a tween: a tween returns at the same speed from any distance,
         // which feels mechanical.
@@ -91,6 +114,9 @@ class BounceState internal constructor(
 
 @Composable
 fun rememberBounceState(): BounceState = remember { BounceState(limitPx = 120f) }
+
+/** Out fast, back slow. Short enough that it reads as momentum rather than as a second scroll. */
+private const val ARRIVAL_MS = 130
 
 /**
  * Attach to a container **wrapping** the scrollable. The scrollable itself should carry
