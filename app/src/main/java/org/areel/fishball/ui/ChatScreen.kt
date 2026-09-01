@@ -73,6 +73,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlinx.coroutines.isActive
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -563,34 +564,47 @@ private fun Composer(
             // out - the taps that went unfelt were landing on the button all along, and it was
             // the tick that was being dropped, not the touch.
             Box(
-                Modifier
-                    .padding(end = 10.dp)
-                    .size(48.dp)
-                    .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
-                    .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
-                    .then(
-                        if (edge > 0.01f) {
-                            Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
-                        } else {
-                            Modifier
-                        },
-                    )
-                    .clickable(
-                        interactionSource = plusPress,
-                        indication = null,
-                        enabled = enabled,
-                        onClick = attach::toggle,
-                    ),
+                Modifier.padding(end = 10.dp).size(48.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_plus),
-                    contentDescription = stringResource(R.string.attach),
-                    tint = Areel.Ink,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .rotate(turn),
-                )
+                Box(
+                    Modifier
+                        .requiredSize(48.dp + TOUCH_SLOP * 2)
+                        .clickable(
+                            interactionSource = plusPress,
+                            indication = null,
+                            enabled = enabled,
+                            onClick = attach::toggle,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .offset(
+                                x = if (plusDown) 1.dp else 0.dp,
+                                y = if (plusDown) 1.dp else 0.dp,
+                            )
+                            .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                            .then(
+                                if (edge > 0.01f) {
+                                    Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_plus),
+                            contentDescription = stringResource(R.string.attach),
+                            tint = Areel.Ink,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .rotate(turn),
+                        )
+                    }
+                }
             }
             // The same two parts as a user bubble - shell outside, ruled text block inside -
             // so what is being typed and what has already been said are the same object.
@@ -677,19 +691,12 @@ private fun Composer(
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
             Box(
+                Modifier.padding(start = 10.dp).size(48.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+            Box(
                 Modifier
-                    .padding(start = 10.dp)
-                    .size(48.dp)
-                    .background(
-                        when {
-                            !enabled -> Areel.Ink20
-                            // Held: inverted, so the control that is doing something looks
-                            // pressed rather than merely coloured.
-                            held -> Areel.Ink
-                            else -> Areel.Magenta
-                        },
-                        RectangleShape,
-                    )
+                    .requiredSize(48.dp + TOUCH_SLOP * 2)
                     .then(
                         if (speaking) {
                             // Held, not tapped - the second line of the indicator promises
@@ -723,16 +730,35 @@ private fun Composer(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    painter = painterResource(
-                        if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
-                    ),
-                    contentDescription = stringResource(
-                        if (speaking) R.string.voice_hold else R.string.send,
-                    ),
-                    tint = if (enabled) Areel.Paper else Areel.Ink40,
-                    modifier = Modifier.size(24.dp),
-                )
+                // The plate is drawn at 48; the box around it listens wider. Colour stays here
+                // so the enlarged press area is invisible.
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .background(
+                            when {
+                                !enabled -> Areel.Ink20
+                                // Held: inverted, so the control that is doing something looks
+                                // pressed rather than merely coloured.
+                                held -> Areel.Ink
+                                else -> Areel.Magenta
+                            },
+                            RectangleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
+                        ),
+                        contentDescription = stringResource(
+                            if (speaking) R.string.voice_hold else R.string.send,
+                        ),
+                        tint = if (enabled) Areel.Paper else Areel.Ink40,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
             }
         }
     }

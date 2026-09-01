@@ -127,6 +127,11 @@ class Voice(private val context: Context) {
     fun level(): Float {
         val rec = recorder ?: return 0f
         val peak = runCatching { rec.maxAmplitude }.getOrDefault(0)
+        // TEMPORARY, for one diagnosis: the meter draws correctly when fed a synthetic level
+        // - verified on the emulator, bars sweeping 20px to 96px in a 96px field - and the
+        // emulator's own microphone answers this call with 0. What is not yet known is what a
+        // real one answers, and this is the only way to find out.
+        android.util.Log.d("FishBallLevel", "peak=" + peak)
         return kotlin.math.sqrt((peak / MAX_AMPLITUDE).coerceIn(0f, 1f))
     }
 

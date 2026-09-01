@@ -58,6 +58,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -200,11 +201,10 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     tapFeedback(interaction)
 
     Box {
+        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(44.dp)
-                .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
-                .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                .requiredSize(44.dp + TOUCH_SLOP * 2)
                 .clickable(interactionSource = interaction, indication = null) {
                     when {
                         open -> retract()
@@ -216,12 +216,21 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                 },
             contentAlignment = Alignment.Center,
         ) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
+                .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape),
+            contentAlignment = Alignment.Center,
+        ) {
             MoreMark(
                 open = open,
                 modifier = Modifier
                     .size(20.dp)
                     .semantics { contentDescription = moreLabel },
             )
+        }
+        }
         }
 
         if (mounted) {
@@ -263,6 +272,22 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
         }
     }
 }
+
+/**
+ * A press area larger than the thing it is drawn as.
+ *
+ * Measured on the emulator, the bar's buttons registered from x=33 to x=156 - 123px, which is
+ * the drawn plate exactly, edge to edge with nothing to spare. A 48dp square meets the
+ * guideline and still misses, because a fingertip is about nine millimetres across and the
+ * point Android reports is its centre: aim at the edge of the plate and half the finger, and
+ * often that centre, lands outside it.
+ *
+ * [requiredSize] rather than a bigger box, so the extra area is pure overflow: the parent still
+ * measures 48 and nothing in the bar moves. The press offset stays on the plate inside this,
+ * not on this - a hit area that shifts a pixel under a finger already at its edge is a press
+ * that cancels itself.
+ */
+internal val TOUCH_SLOP = 6.dp
 
 /**
  * The tick a button gives when a finger lands on it.
