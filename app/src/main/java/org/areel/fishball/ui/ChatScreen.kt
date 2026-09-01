@@ -120,8 +120,17 @@ fun ChatScreen(
     }
     var following by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
+        // Revised when a scroll *finishes*, not when it starts.
+        //
+        // Reading it at the start asked the question a moment too early: someone at the end of
+        // the thread who flings upwards is still at the end when the fling begins, so the latch
+        // was set true and never revised - the flow only emits on the transition. They would
+        // land far up the conversation with the app still believing they wanted the bottom, and
+        // the next thing to touch the viewport or the message count hauled them back down. That
+        // is the "scroll hard, get thrown back" this is meant to prevent, caused by the very
+        // thing meant to prevent it.
         snapshotFlow { listState.isScrollInProgress }
-            .collect { dragging -> if (dragging) following = atTail }
+            .collect { scrolling -> if (!scrolling) following = atTail }
     }
 
     /** The very bottom, not the top of the last message - a plate can be taller than the view. */

@@ -1,11 +1,13 @@
 package org.areel.fishball.ui
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -13,7 +15,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.Velocity
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -27,32 +28,69 @@ import kotlin.math.sign
  * drag is taken from the nested-scroll chain instead of from the list's scroll position, so it
  * works identically whether the list is full, partly full, or empty.
  *
- * Resistance grows with distance, so the pull runs out rather than stopping dead, and release
- * is a spring rather than a tween — a tween returns at the same speed from any distance, which
- * feels mechanical.
+ * The offset is plain state, moved synchronously inside the scroll callback. It used to be an
+ * Animatable written from a coroutine launched per scroll event, which is a race with three
+ * separate failures under a hard fling: every event in a frame read the same stale offset, each
+ * `snapTo` cancelled the one before it, and the connection had already told the list its scroll
+ * was consumed before any of that resolved. On a long thread flung hard into its top the list
+ * stopped dead and sprang back from wherever the race had left the offset.
  */
 class BounceState internal constructor(
     private val limitPx: Float,
 ) {
-    internal val offset = Animatable(0f)
+    internal var current by mutableFloatStateOf(0f)
+        private set
+
     internal var viewportPx: Float = limitPx
 
-    /** How far a further [delta] moves the content, given how far it has already been pulled. */
-    internal fun resist(delta: Float): Float {
-        val travelled = abs(offset.value) / limit()
-        return delta * (1f - travelled.coerceIn(0f, 0.92f))
-    }
-
+    /** How far the band can stretch. Beyond this a pull does nothing at all. */
     internal fun limit(): Float = (viewportPx * 0.28f).coerceAtLeast(limitPx)
 
-    val translation: Int get() = offset.value.roundToInt()
+    /**
+     * Stretch by [delta], and report how much was actually taken.
+     *
+     * Resistance grows with distance so the pull runs out rather than stopping dead, and the
+     * result is clamped: without a ceiling the residual 8% kept accumulating on a fast drag
+     * until the spring had a whole screen to travel back.
+     *
+     * The return value matters as much as the movement. Reporting the full delta as consumed
+     * while clamped tells the list its scroll was used when it was not, which is the difference
+     * between a band that stops stretching and a list that stops scrolling.
+     */
+    internal fun pull(delta: Float): Float {
+        val limit = limit()
+        val travelled = abs(current) / limit
+        val eased = delta * (1f - travelled.coerceIn(0f, 0.92f))
+        val next = (current + eased).coerceIn(-limit, limit)
+        val applied = next - current
+        current = next
+        return applied
+    }
+
+    /** Drag back towards rest. Returns what it took, so the list gets the remainder. */
+    internal fun close(delta: Float): Float {
+        if (current == 0f) return 0f
+        val closing = if (current > 0f) maxOf(delta, -current) else minOf(delta, -current)
+        current += closing
+        return closing
+    }
+
+    internal suspend fun settle(velocity: Float) {
+        // A spring rather than a tween: a tween returns at the same speed from any distance,
+        // which feels mechanical.
+        animate(
+            initialValue = current,
+            targetValue = 0f,
+            initialVelocity = velocity,
+            animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow),
+        ) { value, _ -> current = value }
+    }
+
+    val translation: Int get() = current.roundToInt()
 }
 
 @Composable
-fun rememberBounceState(): BounceState {
-    val state = remember { BounceState(limitPx = 120f) }
-    return state
-}
+fun rememberBounceState(): BounceState = remember { BounceState(limitPx = 120f) }
 
 /**
  * Attach to a container **wrapping** the scrollable. The scrollable itself should carry
@@ -60,8 +98,6 @@ fun rememberBounceState(): BounceState {
  */
 @Composable
 fun Modifier.bounce(state: BounceState): Modifier {
-    val scope = rememberCoroutineScope()
-
     val connection = remember(state) {
         object : NestedScrollConnection {
 
@@ -69,17 +105,9 @@ fun Modifier.bounce(state: BounceState): Modifier {
             // or the content jumps as the two compete for the same gesture.
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
-                val current = state.offset.value
-                if (current == 0f || available.y == 0f) return Offset.Zero
-                if (sign(current) == sign(available.y)) return Offset.Zero
-
-                val closing = if (current > 0f) {
-                    maxOf(available.y, -current)
-                } else {
-                    minOf(available.y, -current)
-                }
-                scope.launch { state.offset.snapTo(current + closing) }
-                return Offset(0f, closing)
+                if (state.current == 0f || available.y == 0f) return Offset.Zero
+                if (sign(state.current) == sign(available.y)) return Offset.Zero
+                return Offset(0f, state.close(available.y))
             }
 
             // Whatever the list could not use is overscroll — including *all* of it when the
@@ -90,21 +118,13 @@ fun Modifier.bounce(state: BounceState): Modifier {
                 source: NestedScrollSource,
             ): Offset {
                 if (source != NestedScrollSource.UserInput || available.y == 0f) return Offset.Zero
-                scope.launch { state.offset.snapTo(state.offset.value + state.resist(available.y)) }
-                return Offset(0f, available.y)
+                return Offset(0f, state.pull(available.y))
             }
 
             // Release: spring home, and swallow the fling so the list does not also coast.
             override suspend fun onPreFling(available: Velocity): Velocity {
-                if (state.offset.value == 0f) return Velocity.Zero
-                state.offset.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring(
-                        dampingRatio = 0.62f,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
-                    initialVelocity = available.y,
-                )
+                if (state.current == 0f) return Velocity.Zero
+                state.settle(available.y)
                 return available
             }
         }
