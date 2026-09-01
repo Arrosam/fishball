@@ -92,6 +92,7 @@ class Conversation(
     /** The turn just finished, so [harvest] can be asked about it after the answer is on screen. */
     private var lastExchange: Pair<String, String>? = null
     private var lastSources: List<String> = emptyList()
+    private var lastTier: Tier = Tier.LOW
 
     private data class Pending(val original: TurnContext, val kind: Kind) {
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
@@ -117,6 +118,7 @@ class Conversation(
 
         lastExchange = userText to reply.text
         lastSources = reply.sources.map { it.url }
+        lastTier = reply.sources.maxOfOrNull { it.tier } ?: Tier.LOW
         store.appendTurn(
             ConversationTurn(
                 id = store.nextId(),
@@ -249,7 +251,9 @@ class Conversation(
             LlmRequest(
                 system = AgentPrompt.SYSTEM,
                 messages = listOf(
-                    LlmMessage.user("${AgentPrompt.HARVEST}\n\n问：$question\n答：$answer"),
+                    LlmMessage.user(
+                        AgentPrompt.harvestBrief(question, answer, lastTier.label, lastSources.size),
+                    ),
                 ),
                 tools = listOf(Tools.remember),
                 forceTool = Tools.REMEMBER,
@@ -272,7 +276,10 @@ class Conversation(
                         question = question,
                         answer = answer,
                         ttl = WorldTtl.parse(fact.str("ttl")),
-                        tier = Tier.LOW,
+                        // The tier the answer actually rested on. Hard-coded LOW before, which
+                        // meant every remembered fact - including ones the 国家药品监督管理局
+                        // had stated outright - came back later marked as weakly sourced.
+                        tier = lastTier,
                         sources = lastSources,
                         // Embedded on the way in, so recall never has to embed the whole store.
                         embedding = retrieval?.embed(listOf(question))?.firstOrNull().orEmpty(),
@@ -730,11 +737,17 @@ class Conversation(
      * read any of this, and handing it a transcript written by another one is worse context
      * than a summary of what the two of you actually settled.
      */
-    suspend fun compact() {
-        val open = session ?: store.loadSession() ?: return
+    suspend fun compact(): Boolean {
+        val open = session ?: store.loadSession() ?: return false
         val sofar = store.turnsInSession(open.id)
-        val bridge = if (sofar.isEmpty()) open.bridge else summarise(sofar)
-        begin(Session(store.nextId(), now(), bridge = bridge))
+        // Nothing has been said in this session, so there is nothing to fold and no reason to
+        // start another one - the session it would open is the session it is already in.
+        // Switching model twice in a row used to roll a fresh empty session each time and
+        // announce a compaction that had not happened.
+        if (sofar.isEmpty()) return false
+
+        begin(Session(store.nextId(), now(), bridge = summarise(sofar)))
+        return true
     }
 
     private suspend fun summarise(turns: List<ConversationTurn>): String? {

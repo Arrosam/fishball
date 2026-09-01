@@ -793,9 +793,12 @@ fun PendingBubble(
  * Three magenta squares rising on staggered loops. Squares because this design has no circles
  * in it anywhere, and a round bubble here would be the only one - so they are bubbles by
  * behaviour rather than by shape, which is the same trick the checker and the hatch play.
+ *
+ * Shared with the settings screen, which waits on the same kind of thing for the same reason:
+ * a model is reading a conversation and will take a moment about it.
  */
 @Composable
-private fun Bubbling() {
+fun Bubbling() {
     val transition = rememberInfiniteTransition(label = "bubbles")
     val rise = List(BUBBLE_COUNT) { i ->
         transition.animateFloat(

@@ -102,12 +102,57 @@ class LiveSmokeTest {
         assertTrue(facts.isNotEmpty(), "nothing was remembered")
         assertTrue(facts.any { it.embedding.isNotEmpty() }, "a fact was stored without a vector")
 
+        // The tier the answer rested on, not a placeholder. It was hard-coded LOW, so a fact
+        // stated outright by 国家药品监督管理局 came back later marked as weakly sourced - and
+        // §10 would then treat it as something to re-search rather than something known.
+        println("tier -> " + facts.joinToString { it.tier.name })
+        assertTrue(
+            facts.any { it.tier >= org.areel.fishball.core.trust.Tier.INSTITUTIONAL },
+            "a well-sourced turn was remembered as weakly sourced",
+        )
+
         // Asked again in different words. Word overlap would miss this; meaning should not.
         val asked = "吃布洛芬会不会胃疼？"
         val vector = runBlocking { llm.embed(listOf(asked)) }.first()
         val candidates = store.recallCandidates(asked, vector, System.currentTimeMillis())
         println("candidates  -> " + candidates.joinToString { "%.3f %s".format(it.similarity, it.fact.question) })
         assertTrue(candidates.isNotEmpty(), "the paraphrase found nothing")
+    }
+
+    /**
+     * Compaction happens once, not once per attempt.
+     *
+     * Switching model folds the conversation. Switching again immediately afterwards has
+     * nothing left to fold - the new session is empty - and used to roll another fresh session
+     * and announce another summary, so flipping between modes stacked notices in the thread
+     * for work that never happened.
+     */
+    @Test
+    fun `compacting an empty session does nothing`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val store = InMemoryStore()
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = store,
+        )
+
+        // Nothing said yet: there is no session to fold, so there is nothing to announce.
+        assertTrue(!runBlocking { conversation.compact() }, "compacted an empty conversation")
+
+        runBlocking { conversation.ask("iPhone 17 Pro 电池容量多少？") }
+        assertTrue(runBlocking { conversation.compact() }, "did not compact a real conversation")
+
+        // And straight away again, which is the flip-flop case.
+        assertTrue(!runBlocking { conversation.compact() }, "compacted twice over one conversation")
+        println("compaction -> once for one conversation, and not again")
     }
 
     @Test

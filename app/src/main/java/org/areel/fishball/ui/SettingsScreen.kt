@@ -71,6 +71,8 @@ fun SettingsScreen(
     error: String?,
     /** Turns kept, and what they cost on disk. */
     history: Pair<Int, Long>,
+    /** A model switch is folding the conversation. It is a model call, so it is not instant. */
+    compacting: Boolean,
     onModeChange: (Mode) -> Unit,
     onKeyChange: (String) -> Unit,
     onClearHistory: () -> Unit,
@@ -115,14 +117,29 @@ fun SettingsScreen(
                     ) { if (mode != Mode.PRO) onModeChange(Mode.PRO) }
                 }
                 Spacer(Modifier.height(8.dp))
-                // Said plainly, because the effect is not obvious and it is not undoable: the
-                // new model has read none of the conversation, so what carries over is a
-                // summary rather than the thing itself.
-                Text(
-                    stringResource(R.string.mode_note),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Areel.Ink40,
-                )
+                if (compacting) {
+                    // The same mark that waits in the thread. Switching model reads the whole
+                    // conversation back to a model, which takes about as long as a turn does,
+                    // and a settings screen that simply sat there looked broken.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Bubbling()
+                        Text(
+                            stringResource(R.string.compacting),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Areel.Ink,
+                            modifier = Modifier.padding(start = 11.dp),
+                        )
+                    }
+                } else {
+                    // Said plainly, because the effect is not obvious and it is not undoable:
+                    // the new model has read none of the conversation, so what carries over is
+                    // a summary rather than the thing itself.
+                    Text(
+                        stringResource(R.string.mode_note),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink40,
+                    )
+                }
 
                 Spacer(Modifier.height(28.dp))
                 SettingLabel(stringResource(R.string.settings_key))

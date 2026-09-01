@@ -51,15 +51,18 @@ class Backend private constructor(
      * a transcript written by a different one is worse context than a paragraph describing what
      * the two of you actually settled — so the switch and the compaction are one action.
      *
-     * Returns false when the key is not entitled to that model, having changed nothing.
+     * [ModelSwitch.allowed] is false when the key is not entitled to that model, having
+     * changed nothing. [ModelSwitch.compacted] says whether there was actually a conversation
+     * to fold, so the thread is only told about a summary that exists.
      */
-    suspend fun setModel(id: String): Boolean {
-        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
+    suspend fun setModel(id: String): ModelSwitch {
+        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() }
+            ?: return ModelSwitch(allowed = false)
         val client = HydrogenClient(apiKey = key, model = id, onModelChanged = ::rememberModel)
-        if (!client.entitled(id)) return false
+        if (!client.entitled(id)) return ModelSwitch(allowed = false)
 
         rememberModel(id)
-        conversation?.compact()
+        val folded = conversation?.compact() ?: false
         conversation = Conversation(
             llm = client,
             retrieval = client,
@@ -67,7 +70,7 @@ class Backend private constructor(
             registry = registry,
             store = store,
         )
-        return true
+        return ModelSwitch(allowed = true, compacted = folded)
     }
 
     /**
@@ -170,6 +173,9 @@ class Backend private constructor(
         }
     }
 }
+
+/** What came of asking to change model. */
+data class ModelSwitch(val allowed: Boolean, val compacted: Boolean = false)
 
 /**
  * The memory file.

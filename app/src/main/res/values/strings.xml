@@ -23,6 +23,8 @@
     <string name="settings_mode">模式</string>
     <string name="mode_fast">快速模式</string>
     <string name="mode_pro">专业模式</string>
+    <!-- Shown while a model switch reads the conversation back. Folding, not thinking. -->
+    <string name="compacting">整理中…</string>
     <string name="mode_note">换模式以后，之前聊的会整理成一段摘要再接着聊。</string>
     <string name="mode_unavailable">当前激活码不支持专业模式</string>
     <string name="settings_key">激活码</string>

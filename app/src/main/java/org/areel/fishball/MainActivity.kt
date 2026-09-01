@@ -145,6 +145,7 @@ private fun FishBallApp() {
             var settingsError by remember { mutableStateOf<String?>(null) }
             var keyHint by remember { mutableStateOf(backend.keyHint()) }
             var history by remember { mutableStateOf(vm.historySize()) }
+            var compacting by remember { mutableStateOf(false) }
             val modeUnavailable = stringResource(R.string.mode_unavailable)
 
             SettingsScreen(
@@ -153,24 +154,29 @@ private fun FishBallApp() {
                 busy = settingsBusy,
                 error = settingsError,
                 history = history,
+                compacting = compacting,
                 onClearHistory = {
                     vm.clearHistory()
                     history = vm.historySize()
                 },
                 onModeChange = { wanted ->
                     settingsBusy = true
+                    compacting = true
                     settingsError = null
                     scope.launch {
                         val id = if (wanted == Mode.PRO) Backend.PRO else Backend.FAST
-                        if (backend.setModel(id)) {
+                        val switch = backend.setModel(id)
+                        if (switch.allowed) {
                             mode = wanted
-                            // The switch compacted the session, so the thread on screen is no
-                            // longer the conversation the model is holding. Saying so beats
-                            // letting the next answer quietly not remember.
-                            vm.noteCompacted()
+                            // Only when a summary was actually made. The thread is told the
+                            // conversation was folded because that changes what the next answer
+                            // remembers; saying it when nothing was folded is just noise, and
+                            // switching back and forth used to stack one notice per switch.
+                            if (switch.compacted) vm.noteCompacted()
                         } else {
                             settingsError = modeUnavailable
                         }
+                        compacting = false
                         settingsBusy = false
                     }
                 },

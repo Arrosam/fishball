@@ -231,13 +231,17 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
     val HARVEST = """
 下面是刚刚结束的一轮对话。判断这里面有没有值得记下来的东西，然后调用 remember。
 
-值得记的事实：查到的、以后再问还能用的结论。要写成一句完整的话，别写「见上文」。
-不值得记的：这一次特有的、或者你不确定的东西。宁可不记。
+关于事实，默认是记下来。这一轮是查过资料才答的，结论就是以后还用得上的东西：
+只要来源等级是「权威」或者「中等·机构」，就记，别犹豫。
+写成一句完整、单独看也看得懂的话，别写「见上文」，别只写一个词。
+
+只有这几种情况才不记：完全没查到东西、答案只是一句寒暄、
+或者这件事明天就会变（那种应该把 ttl 设成「总是重查」，而不是不记）。
 
 值得记的关于他的事：他自己说到的情况，比如在吃什么药、对什么过敏、做什么工作。
 只记他真的说过的，不要从问题里猜。他问了某个病不代表他有这个病。
 
-两样都没有就把 nothing 设成 true。
+两样都真的没有，才把 nothing 设成 true。
 """.trim()
 
     /**
@@ -259,6 +263,17 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 
 要问就最多两句，短句，像朋友随口问的那样，别像填表。
 """.trim()
+
+    /**
+     * The harvest, with the turn's evidence attached.
+     *
+     * The tier is included because "worth keeping" is not a judgement that can be made from the
+     * words alone: the same sentence is worth remembering when 国家药品监督管理局 said it and
+     * worth forgetting when a forum did.
+     */
+    fun harvestBrief(question: String, answer: String, tier: String, sources: Int): String =
+        HARVEST + "\n\n本轮最高来源等级：" + tier + "，一共 " + sources +
+            " 条来源。\n\n问：" + question + "\n答：" + answer
 
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
