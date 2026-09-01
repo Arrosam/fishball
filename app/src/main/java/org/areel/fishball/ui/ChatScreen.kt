@@ -45,6 +45,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clipToBounds
@@ -58,6 +61,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.areel.fishball.R
@@ -300,6 +304,33 @@ private fun Composer(
     // With nothing typed there is nothing to send, so the plate is a microphone instead. One
     // control, two jobs, and never both at once - which is why it can be the same square.
     val speaking = value.isEmpty()
+    val recording = voice.phase == VoicePhase.RECORDING
+
+    /*
+     * The bar is one height, always, and two separate things were moving it.
+     *
+     * Typing Chinese made it grow: `includeFontPadding` is the legacy behaviour and pads a line
+     * by the *font's* own ascent and descent, so the moment a CJK glyph forced a fallback font
+     * the line box grew with it and the whole composer stepped down. Turning it off and trimming
+     * the line-height means the box is exactly the line height whatever is being typed in it.
+     *
+     * Holding the microphone made it grow too, for a plainer reason: two lines of indicator are
+     * taller than one line of text. So the outer height is fixed here rather than left to the
+     * content, and the recording state buys the room for its second line by giving back its own
+     * padding instead of by pushing the bar up.
+     */
+    val fieldStyle = MaterialTheme.typography.bodyLarge.copy(
+        color = Areel.Ink,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.None,
+        ),
+    )
+    val lineBox = with(LocalDensity.current) { fieldStyle.lineHeight.toDp() }
+    // 12 above and below on the shell, 2 above and below on the ruled block inside it.
+    val fieldHeight = lineBox + 28.dp
+    val inset = if (recording) 4.dp else 12.dp
     Column(
         Modifier
             .fillMaxWidth()
@@ -327,8 +358,10 @@ private fun Composer(
             Box(
                 Modifier
                     .weight(1f)
+                    .height(fieldHeight)
                     .glassSurface()
-                    .padding(start = 14.dp, top = 12.dp, bottom = 12.dp),
+                    .padding(start = 14.dp, top = inset, bottom = inset),
+                contentAlignment = Alignment.CenterStart,
             ) {
               Box(
                 Modifier
@@ -339,22 +372,32 @@ private fun Composer(
                 // While the button is held the field is where the state is reported, because
                 // that is the one place already in view and a finger is covering the plate.
                 when (voice.phase) {
+                    // Both lines carry their own line height, so what fits is arithmetic
+                    // rather than whatever the font happens to want.
                     VoicePhase.RECORDING -> Column {
                         Text(
                             stringResource(R.string.voice_recording),
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 15.sp,
+                                lineHeight = 18.sp,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            ),
                             color = Areel.Magenta,
                         )
                         Text(
                             stringResource(R.string.voice_release),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            ),
                             color = Areel.Ink40,
                         )
                     }
 
                     VoicePhase.TRANSCRIBING -> Text(
                         stringResource(R.string.voice_transcribing),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = fieldStyle,
                         color = Areel.Ink40,
                     )
 
@@ -365,7 +408,7 @@ private fun Composer(
                         if (speaking && voice.notice != null) {
                             Text(
                                 voice.notice.orEmpty(),
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = fieldStyle,
                                 color = Areel.Ink40,
                             )
                         }
@@ -374,7 +417,7 @@ private fun Composer(
                     onValueChange = onValueChange,
                     enabled = enabled,
                     singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Areel.Ink),
+                    textStyle = fieldStyle,
                     cursorBrush = SolidColor(Areel.Magenta),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { onSend() }),
