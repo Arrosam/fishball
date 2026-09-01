@@ -2,11 +2,13 @@
 <!--
   Ink, with one glass disc on it.
 
-  The ground is the masthead's, for the reason the masthead has never looked sinister. The disc
-  is areel.org's `.shell` at icon scale, and it is the whole recipe rather than a tint: the
-  148deg wash, the 112deg specular streak, the white edge and the lit top lip. The streak is the
-  part that makes it read as glass - without it the disc was a lighter circle, which is what a
-  wash on its own always is.
+  The ground is the masthead's, for the reason the masthead has never looked sinister.
+
+  The disc is the shell's wash and its edge, and deliberately not the rest of it. A full-strength
+  112deg streak was tried and read as a bright diagonal slash across a 48dp circle: correct at
+  bubble size, where the pane is 300dp wide and the streak is a glint travelling across it, and
+  far too loud when the same proportion lands on something the size of a fingernail. What is
+  left is the part that survives being small.
 
   A circle, in a design with none. Allowed here because it is a lens rather than a shape, and
   because a launcher mask is going to round it anyway.
@@ -25,50 +27,24 @@
         android:fillColor="#101010"
         android:pathData="M0,0h108v108h-108z" />
 
-    <!-- background: linear-gradient(148deg, .26, .06, .18) -->
     <path android:pathData="M54,24 a30,30 0 1,0 0.1,0 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
-                android:startX="36"
-                android:startY="21"
-                android:endX="72"
-                android:endY="87">
-                <item android:offset="0" android:color="#42FFFFFF" />
-                <item android:offset="0.46" android:color="#0FFFFFFF" />
-                <item android:offset="1" android:color="#2EFFFFFF" />
+                android:startX="33"
+                android:startY="24"
+                android:endX="75"
+                android:endY="84">
+                <item android:offset="0" android:color="#3DFFFFFF" />
+                <item android:offset="0.46" android:color="#14FFFFFF" />
+                <item android:offset="1" android:color="#2BFFFFFF" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- ::before - the specular streak, 112deg, clipped to the pane -->
-    <group>
-        <clip-path android:pathData="M54,24 a30,30 0 1,0 0.1,0 Z" />
-        <path android:pathData="M0,0h108v108h-108z">
-            <aapt:attr name="android:fillColor">
-                <gradient
-                    android:type="linear"
-                    android:startX="-11"
-                    android:startY="28"
-                    android:endX="119"
-                    android:endY="80">
-                    <item android:offset="0.38" android:color="#00FFFFFF" />
-                    <item android:offset="0.46" android:color="#66FFFFFF" />
-                    <item android:offset="0.54" android:color="#00FFFFFF" />
-                </gradient>
-            </aapt:attr>
-        </path>
-    </group>
-
-    <!-- border: 1px solid rgba(255,255,255,.6) -->
+    <!-- The shell's white edge, which is what makes a wash read as a pane at all. -->
     <path
         android:pathData="M54,24 a30,30 0 1,0 0.1,0 Z"
-        android:strokeColor="#99FFFFFF"
+        android:strokeColor="#8CFFFFFF"
         android:strokeWidth="1" />
-
-    <!-- rgba(255,255,255,.7) 0 1px 0 inset - the lit lip, over the top of the pane -->
-    <path
-        android:pathData="M25,46.2 A30,30 0 0,1 83,46.2"
-        android:strokeColor="#B3FFFFFF"
-        android:strokeWidth="1.4" />
 </vector>
