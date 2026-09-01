@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Down. Filled rather than stroked, which is the whole point of it: this sits on
+  clear glass with the conversation showing through, and a 1.5 stroke competed
+  with whatever character happened to be behind it.
+
+  Both sides run at exactly 45 and the top edge is horizontal, so it is the same
+  geometry as everything else here - the chamfered plates, the fish, the send
+  arrow's head - rather than a generic caret.
+
+  Colour is set by the Icon() tint at the call site, not here.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M5 9 L19 9 L12 16 Z"
+        android:fillColor="#FF101010" />
+</vector>

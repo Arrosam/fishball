@@ -51,7 +51,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -280,8 +279,8 @@ fun ChatScreen(
             JumpToEnd(
                 visible = !atTail,
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 22.dp),
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 22.dp),
                 onClick = {
                     // Following again, not just scrolled: landing at the end and then being
                     // left behind by the next answer would undo the trip.
@@ -325,9 +324,11 @@ fun ChatScreen(
  * off screen", not "did they mean to leave it". So it appears while scrolled up whether they
  * scrolled up on purpose or an arriving answer grew the thread out from under them.
  *
- * Glass rather than the magenta of the send plate. It is a convenience sitting directly above
- * the one control in the app that does something irreversible, and two magenta squares stacked
- * in a corner would be one target read as two halves of the same thing.
+ * Clear glass with a solid magenta triangle, centred over the thread. It sits directly above
+ * the send plate, so it stays unfilled and lets the conversation show through: a second solid
+ * square in that corner read as two halves of one control, and centred it is plainly its own
+ * thing. The mark is filled rather than stroked because a hairline arrow on clear glass had to
+ * compete with whatever text happened to be behind it, and lost.
  *
  * Lifted out of the thread\'s Box on purpose: in there, `AnimatedVisibility` had the enclosing
  * Column\'s overload in scope as well as the plain one and resolved to the wrong receiver.
@@ -343,20 +344,19 @@ private fun JumpToEnd(visible: Boolean, modifier: Modifier, onClick: () -> Unit)
         Box(
             Modifier
                 .size(38.dp)
-                .background(Areel.Concrete2, RectangleShape)
+                // No fill under the glass. Everywhere else in the app a pane shows what is
+                // behind it - the CAD grid, a message scrolled under the band - and this one
+                // has the thread behind it, which is the thing it is offering to move.
                 .glassSurface(small = true)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_send),
+                painter = painterResource(R.drawable.ic_triangle_down),
                 contentDescription = stringResource(R.string.jump_to_end),
-                tint = Areel.Ink,
-                // The send arrow, turned over. A second file would be one more thing to keep
-                // at the same stroke weight for one glyph seen twice.
-                modifier = Modifier
-                    .size(20.dp)
-                    .rotate(180f),
+                // Magenta, which through clear glass is the only thing marking the target.
+                tint = Areel.Magenta,
+                modifier = Modifier.size(22.dp),
             )
         }
     }
