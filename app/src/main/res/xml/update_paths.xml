@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one directory the system installer is allowed to read out of this app.
+
+  Scoped to cache/updates rather than the whole cache: the grant travels with an intent to
+  another process, and there is no reason for that process to be able to name any file in this
+  app's cache other than the APK it was handed.
+-->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

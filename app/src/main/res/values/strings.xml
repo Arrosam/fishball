@@ -96,6 +96,25 @@
     <string name="memory_forget">忘掉</string>
 
     <!--
+      The update notice. It interrupts, so it says the whole thing in four short lines: what
+      this is, which version, what the button does, and how to make it go away.
+
+      No version numbers in the body copy beyond the label - "0.2a" means nothing to the
+      person reading this, and the only question they actually have is whether to press it.
+    -->
+    <string name="update_title">鱼丸有新版本了</string>
+    <string name="update_version">版本 %1$s</string>
+    <string name="update_install">马上更新</string>
+    <string name="update_later">以后再说</string>
+    <string name="update_downloading">正在下载，先别关掉…</string>
+    <!--
+      Android will not let one app install another without a per-app permission, and the only
+      place to grant it is Settings. Says what to do there, not that something went wrong.
+    -->
+    <string name="update_permission">系统要你先允许鱼丸安装应用。点下面这个按钮，把开关打开，再回来就能装了。</string>
+    <string name="update_open_settings">去打开</string>
+
+    <!--
       No privacy_disclosure string. Spec §22 was reversed: the operator says it in person,
       the app says nothing. Deliberate absence, not an oversight - do not re-add it.
     -->

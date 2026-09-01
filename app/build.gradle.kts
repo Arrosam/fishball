@@ -29,15 +29,25 @@ android {
         // holds it there now is the adaptive launcher icon, which is mipmap-anydpi-v26 only.
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // What the update check compares. Monotonic, and never reused: the name is for the
+        // person reading the modal, this is the only thing that decides.
+        versionCode = 2
         // Alpha, and named like one. The app works end to end; what it has not had is a second
         // pair of hands using it for a week, which is the only thing that earns a 1.
-        versionName = "0.1a"
+        versionName = "0.2a"
 
         buildConfigField(
             "String",
             "SEARXNG_BASE_URL",
             "\"${project.findProperty("fishball.searxng.baseUrl") ?: "https://search.areel.org"}\"",
+        )
+
+        // Where the app looks to find out whether it is out of date. The official site
+        // publishes this; see the fishball page under areel.org.
+        buildConfigField(
+            "String",
+            "UPDATE_MANIFEST_URL",
+            "\"${project.findProperty("fishball.update.manifestUrl") ?: "https://areel.org/fishball/latest.json"}\"",
         )
     }
 
