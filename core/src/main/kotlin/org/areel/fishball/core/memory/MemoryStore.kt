@@ -27,12 +27,30 @@ interface MemoryStore {
      * made outside — with a model, by the caller, which is the only part of it that needs a
      * network.
      */
-    fun recallCandidates(
-        question: String,
-        vector: List<Float>,
+    /**
+     * Cached answers worth asking a reranker about, best first.
+     *
+     * [vectors] is a list because the caller no longer searches with the question. It searches
+     * with the *facts the question needs*, which is usually more than one thing - "布洛芬伤胃吗"
+     * needs the side effects and it needs the dosage - and a fact is a candidate if it matches
+     * any of them. [terms] is the same list as plain text, for the word-overlap fallback.
+     *
+     * Wide on purpose. This pass is cheap, local and dumb; narrowing happens later, with a
+     * model, against the actual question.
+     */
+    fun recallWorldCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
         now: Long,
-        limit: Int = 4,
+        limit: Int = 10,
     ): List<WorldRecall>
+
+    /** The same pass over what the user has said about themselves. */
+    fun recallPreferenceCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
+        limit: Int = 10,
+    ): List<PreferenceRecall>
 
     /** Spec §19 — a world-fact correction invalidates the cache and forces a fresh search. */
     fun invalidateWorldFact(id: Long, at: Long)

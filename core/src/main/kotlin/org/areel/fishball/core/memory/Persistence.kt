@@ -62,6 +62,7 @@ data class PreferenceFactDto(
     val text: String,
     val kind: String,
     val ttl: String,
+    val embedding: List<Float> = emptyList(),
     val recordedAt: Long,
     val confirmedAt: Long,
 )
@@ -118,12 +119,18 @@ class PersistentStore(
     override fun recallWorldFact(question: String, now: Long): WorldRecall? =
         inner.recallWorldFact(question, now)
 
-    override fun recallCandidates(
-        question: String,
-        vector: List<Float>,
+    override fun recallWorldCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
         now: Long,
         limit: Int,
-    ): List<WorldRecall> = inner.recallCandidates(question, vector, now, limit)
+    ): List<WorldRecall> = inner.recallWorldCandidates(terms, vectors, now, limit)
+
+    override fun recallPreferenceCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
+        limit: Int,
+    ): List<PreferenceRecall> = inner.recallPreferenceCandidates(terms, vectors, limit)
 
     override fun invalidateWorldFact(id: Long, at: Long) {
         inner.invalidateWorldFact(id, at)
@@ -201,7 +208,7 @@ internal fun WorldFactDto.toDomain() = WorldFact(
 )
 
 internal fun PreferenceFact.toDto() = PreferenceFactDto(
-    id, text, kind.name, ttl.name, recordedAt, confirmedAt,
+    id, text, kind.name, ttl.name, embedding, recordedAt, confirmedAt,
 )
 
 internal fun PreferenceFactDto.toDomain(): PreferenceFact {
@@ -211,6 +218,7 @@ internal fun PreferenceFactDto.toDomain(): PreferenceFact {
         text = text,
         kind = parsedKind,
         ttl = enumOrNull<PreferenceTtl>(ttl) ?: parsedKind.defaultTtl,
+        embedding = embedding,
         recordedAt = recordedAt,
         confirmedAt = confirmedAt,
     )

@@ -28,6 +28,7 @@ object Tools {
     const val ANSWER = "answer"
     const val REMEMBER = "remember"
     const val CLARIFY = "clarify"
+    const val RECALL = "recall_terms"
 
     val classify = LlmTool(
         name = CLASSIFY,
@@ -67,6 +68,28 @@ object Tools {
                 enumProp("choice", listOf("vent", "advice"), "vent 是想倾诉，advice 是想要建议。")
             }
             putJsonArray("required") { add("choice") }
+        },
+    )
+
+    /** Spec §10 — what to look memory up by, which is not the question. */
+    val recallTerms = LlmTool(
+        name = RECALL,
+        description = "列出回答这个问题需要先知道的事实。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                putJsonObject("facts") {
+                    put("type", "array")
+                    put("description", "要查的事实，短语，最多三条。")
+                    putJsonObject("items") { put("type", "string") }
+                }
+                putJsonObject("about_user") {
+                    put("type", "array")
+                    put("description", "关于他本人的、会影响答案的事，最多三条。没有就留空。")
+                    putJsonObject("items") { put("type", "string") }
+                }
+            }
+            putJsonArray("required") { add("facts") }
         },
     )
 
@@ -152,6 +175,16 @@ object Tools {
                         )
                     }
                     putJsonArray("required") { add("question"); add("answer"); add("ttl") }
+                }
+                putJsonObject("outdated_facts") {
+                    put("type", "array")
+                    put("description", "已经不成立的旧记录的编号，来自上面列出的「查过」那几条。")
+                    putJsonObject("items") { put("type", "integer") }
+                }
+                putJsonObject("outdated_about_user") {
+                    put("type", "array")
+                    put("description", "已经不成立的旧记录的编号，来自上面列出的「关于他」那几条。")
+                    putJsonObject("items") { put("type", "integer") }
                 }
                 putJsonObject("about_user") {
                     put("type", "array")

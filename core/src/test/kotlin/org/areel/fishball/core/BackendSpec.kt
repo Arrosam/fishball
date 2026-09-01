@@ -182,7 +182,8 @@ object BackendSpec {
         val prefId = store.nextId()
         store.recordPreference(
             PreferenceFact(prefId, "在吃布洛芬", PreferenceKind.CURRENT_STATE,
-                PreferenceTtl.SIX_MONTHS, T0 - 210 * ONE_DAY_MS, T0 - 210 * ONE_DAY_MS),
+                PreferenceTtl.SIX_MONTHS,
+                recordedAt = T0 - 210 * ONE_DAY_MS, confirmedAt = T0 - 210 * ONE_DAY_MS),
         )
         check("stale preference is visible before confirmation",
             store.preferences().single { it.id == prefId }.isFresh(T0).not(), "")
@@ -430,7 +431,8 @@ object BackendSpec {
         val (e4, store4) = engine()
         store4.recordPreference(
             PreferenceFact(store4.nextId(), "在吃布洛芬", PreferenceKind.CURRENT_STATE,
-                PreferenceTtl.SIX_MONTHS, T0 - 210 * ONE_DAY_MS, T0 - 210 * ONE_DAY_MS),
+                PreferenceTtl.SIX_MONTHS,
+                recordedAt = T0 - 210 * ONE_DAY_MS, confirmedAt = T0 - 210 * ONE_DAY_MS),
         )
         check("§20 stale medical preference is confirmed before use",
             e4.firstStep(TurnContext("这个药能一起吃吗", TurnKind.FACTUAL, Topic.MEDICATION, now = T0))

@@ -96,6 +96,12 @@ data class PreferenceFact(
     val text: String,
     val kind: PreferenceKind,
     val ttl: PreferenceTtl,
+    /**
+     * The text, embedded. What the user has told us about themselves is retrieved the same way
+     * cached answers are - by meaning - because "他对什么过敏" has to find 对青霉素过敏 without
+     * sharing a word with it.
+     */
+    val embedding: List<Float> = emptyList(),
     val recordedAt: Long,
     /** Last time the user confirmed it. Confirming resets the clock (§20). */
     val confirmedAt: Long = recordedAt,
@@ -147,6 +153,9 @@ data class ConversationTurn(
     val shape: AnswerShape? = null,
     val sources: List<CitedSource> = emptyList(),
 )
+
+/** A remembered fact about the user, and how well it matched what was being looked for. */
+data class PreferenceRecall(val fact: PreferenceFact, val similarity: Double)
 
 /** A cached answer plus why it is or isn't usable, so the caller never has to re-derive it. */
 data class WorldRecall(

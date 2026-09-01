@@ -44,30 +44,55 @@ class InMemoryStore : MemoryStore {
         return WorldRecall(fact, score, fact.isFresh(now))
     }
 
-    override fun recallCandidates(
-        question: String,
-        vector: List<Float>,
+    override fun recallWorldCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
         now: Long,
         limit: Int,
     ): List<WorldRecall> {
         val live = world.filter { it.invalidatedAt == null }
         if (live.isEmpty()) return emptyList()
 
-        val scored = live.map { fact ->
-            // Cosine where both sides have a vector, word overlap where either does not. The
-            // fallback matters on a store written before embeddings existed, or written while
-            // the embedding model was unreachable.
-            val score = if (vector.isNotEmpty() && fact.embedding.isNotEmpty()) {
-                cosine(vector, fact.embedding)
-            } else {
-                Similarity.jaccard(question, fact.question)
-            }
-            WorldRecall(fact, score, fact.isFresh(now))
-        }
-        return scored
+        return live
+            .map { fact -> WorldRecall(fact, match(terms, vectors, fact.question, fact.embedding), fact.isFresh(now)) }
             .filter { it.similarity >= CANDIDATE_FLOOR }
             .sortedByDescending { it.similarity }
             .take(limit)
+    }
+
+    override fun recallPreferenceCandidates(
+        terms: List<String>,
+        vectors: List<List<Float>>,
+        limit: Int,
+    ): List<PreferenceRecall> {
+        if (preferences.isEmpty()) return emptyList()
+        return preferences
+            .map { fact -> PreferenceRecall(fact, match(terms, vectors, fact.text, fact.embedding)) }
+            .filter { it.similarity >= CANDIDATE_FLOOR }
+            .sortedByDescending { it.similarity }
+            .take(limit)
+    }
+
+    /**
+     * Best match against any of the things being looked for.
+     *
+     * Cosine where both sides have a vector, word overlap where either does not - the fallback
+     * matters on a store written before embeddings existed, or written while the embedding
+     * model was unreachable.
+     */
+    private fun match(
+        terms: List<String>,
+        vectors: List<List<Float>>,
+        text: String,
+        embedding: List<Float>,
+    ): Double {
+        val byVector = if (embedding.isEmpty()) {
+            0.0
+        } else {
+            vectors.maxOfOrNull { cosine(it, embedding) } ?: 0.0
+        }
+        val byWords = terms.maxOfOrNull { Similarity.jaccard(it, text) } ?: 0.0
+        return maxOf(byVector, byWords)
     }
 
     override fun invalidateWorldFact(id: Long, at: Long) {

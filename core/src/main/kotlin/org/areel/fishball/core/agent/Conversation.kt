@@ -22,6 +22,7 @@ import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.MemoryStore
 import org.areel.fishball.core.memory.PreferenceFact
 import org.areel.fishball.core.memory.PreferenceKind
+import org.areel.fishball.core.memory.PreferenceRecall
 import org.areel.fishball.core.memory.Speaker
 import org.areel.fishball.core.memory.WorldFact
 import org.areel.fishball.core.memory.WorldRecall
@@ -94,6 +95,9 @@ class Conversation(
     private var lastSources: List<String> = emptyList()
     private var lastTier: Tier = Tier.LOW
 
+    /** What memory offered for this turn. Read by the writing step and by the harvest. */
+    private var remembered: Remembered = Remembered.NOTHING
+
     private data class Pending(val original: TurnContext, val kind: Kind) {
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
     }
@@ -108,12 +112,16 @@ class Conversation(
 
         lastFailure = null
         val base = context(userText, at, progress) ?: return failure()
-        // §10 — only factual turns can be served from memory, so only they pay for the lookup.
-        val ctx = if (base.kind == TurnKind.FACTUAL) {
-            base.copy(recalled = recall(base.userText, at))
+        // §10 — a turn that is only being listened to has nothing to look up, and a crisis turn
+        // must not be answered from a cache. The two that reason about the world do the lookup.
+        remembered = if (base.kind == TurnKind.FACTUAL || base.kind == TurnKind.ADVICE) {
+            recall(base.userText, at, progress)
         } else {
-            base
+            Remembered.NOTHING
         }
+        // The engine only decides one thing with this - whether a cached answer can stand in
+        // for a search - so it gets the one fact that could, and the rest goes to the prose.
+        val ctx = base.copy(recalled = remembered.servable)
         val reply = run(engine.firstStep(ctx), ctx, progress)
 
         lastExchange = userText to reply.text
@@ -215,24 +223,97 @@ class Conversation(
     }
 
     /**
-     * Spec §10 — has this been answered before?
+     * Spec §10 — what is already known about this question.
      *
-     * Two stages, because they answer different questions. The vector pass finds things in the
-     * same neighbourhood; the reranker decides whether the nearest of them is actually an answer
-     * to *this* question, which cosine cannot tell you. Serving a stale near-miss as though it
-     * were the answer is the failure this guards against, and it is worse than searching again.
+     * Three stages, and each one is there because the stage before it cannot do the job.
+     *
+     * The question is not the search key. It carries grammar, politeness, and usually a pronoun
+     * standing in for the only word that matters; embedded whole, all of that drags the vector
+     * away from the thing being asked about. So the model is asked first what facts the question
+     * *needs*, and those are what memory is searched by - several of them, because a question
+     * rarely rests on one fact.
+     *
+     * The wide pass is cheap, local and dumb: ten cached answers and ten things known about this
+     * person, taken on cosine with a word-overlap floor. It is tuned to miss nothing, and it
+     * happily returns near-misses.
+     *
+     * The narrowing pass is where near-misses die. It is two different tests, because the two
+     * sections are two different kinds of claim - a cached answer is judged by a reranker on
+     * whether it answers the question, and a fact about the user is judged on how close it is to
+     * what was asked for. See [narrowAnswers] and [PREFERENCE_FLOOR] for why running one test
+     * over both throws away every true thing known about the person.
+     *
+     * Serving a stale near-miss as though it were the answer is the failure all of this guards
+     * against, and it is worse than searching again.
      */
-    private suspend fun recall(question: String, at: Long): WorldRecall? {
-        val engine = retrieval ?: return store.recallWorldFact(question, at)
+    private suspend fun recall(question: String, at: Long, progress: TurnProgress): Remembered {
+        // No embedding model reachable: fall back to word overlap, which finds a cached answer
+        // only when the question is asked in nearly the same words. A floor, not a search.
+        val engine = retrieval ?: return Remembered(listOfNotNull(store.recallWorldFact(question, at)))
 
-        val vector = engine.embed(listOf(question)).firstOrNull().orEmpty()
-        val candidates = store.recallCandidates(question, vector, at)
-        if (candidates.isEmpty()) return null
+        // What the question needs known, rather than the question itself.
+        val wanted = recallTerms(question, progress)
+        val facts = wanted.first.ifEmpty { listOf(question) }
+        val personal = wanted.second
 
-        val ranked = engine.rerank(question, candidates.map { it.fact.question })
-        val best = ranked.firstOrNull() ?: return null
-        if (best.score < RERANK_FLOOR) return null
-        return candidates.getOrNull(best.index)
+        // One embedding call for both lists; they are short and the round trip is the cost.
+        val all = facts + personal
+        val vectors = engine.embed(all)
+        val factVectors = vectors.take(facts.size)
+        val personalVectors = vectors.drop(facts.size)
+
+        val world = store.recallWorldCandidates(facts, factVectors, at)
+        val about = if (personal.isEmpty()) {
+            emptyList()
+        } else {
+            store.recallPreferenceCandidates(personal, personalVectors)
+        }
+        if (world.isEmpty() && about.isEmpty()) return Remembered.NOTHING
+
+        return Remembered(
+            world = narrowAnswers(question, world),
+            // Already scored, against the terms it was looked up by. See [PREFERENCE_FLOOR].
+            personal = about.filter { it.similarity >= PREFERENCE_FLOOR }.take(KEPT_MEMORIES),
+        )
+    }
+
+    /**
+     * The narrowing pass over cached answers, against the original question.
+     *
+     * The wide pass searched by the facts the question needs, so what comes back resembles those
+     * terms by construction; this asks the harder thing, which is whether any of it actually
+     * answers what was asked. Only a cross-encoder can tell those apart - measured live, a
+     * genuine match scored 0.96, a same-topic-different-question one 0.24.
+     */
+    private suspend fun narrowAnswers(question: String, world: List<WorldRecall>): List<WorldRecall> {
+        if (world.isEmpty()) return emptyList()
+        val engine = retrieval ?: return emptyList()
+        return engine.rerank(question, world.map { it.fact.question + "。" + it.fact.answer })
+            .filter { it.score >= RERANK_FLOOR }
+            .take(KEPT_MEMORIES)
+            .mapNotNull { world.getOrNull(it.index) }
+    }
+
+    /** Spec §10 — the facts a question needs, asked for before anything is looked up. */
+    private suspend fun recallTerms(
+        question: String,
+        progress: TurnProgress,
+    ): Pair<List<String>, List<String>> {
+        val result = llm.complete(
+            LlmRequest(
+                system = AgentPrompt.SYSTEM,
+                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
+                    LlmMessage.user(AgentPrompt.RECALL_TERMS + "\n\n" + question),
+                tools = listOf(Tools.recallTerms),
+                forceTool = Tools.RECALL,
+                maxTokens = 300,
+                stream = true,
+            ),
+            progress.forward(),
+        )
+        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input
+            ?: return emptyList<String>() to emptyList()
+        return input.strings("facts") to input.strings("about_user")
     }
 
     /**
@@ -247,12 +328,21 @@ class Conversation(
         val (question, answer) = lastExchange ?: return
         if (answer.isBlank()) return
 
+        // A correction usually arrives on a turn that did no lookup - "我已经不吃布洛芬了" is
+        // not a question and nothing was searched for it, so §19 would never see the record it
+        // contradicts. Cheaply, and only when the turn brought nothing of its own: no term
+        // extraction and no reranker, because a correction names the thing it corrects.
+        if (remembered.world.isEmpty() && remembered.personal.isEmpty()) {
+            remembered = nearby(question)
+        }
+
         val result = llm.complete(
             LlmRequest(
                 system = AgentPrompt.SYSTEM,
                 messages = listOf(
                     LlmMessage.user(
-                        AgentPrompt.harvestBrief(question, answer, lastTier.label, lastSources.size),
+                        AgentPrompt.harvestBrief(question, answer, lastTier.label, lastSources.size) +
+                            remembered.numbered(),
                     ),
                 ),
                 tools = listOf(Tools.remember),
@@ -261,8 +351,47 @@ class Conversation(
             ),
         )
         val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input ?: return
+        retire(input)
         if (input.bool("nothing") == true) return
         keep(input)
+    }
+
+    /**
+     * Spec §19 — memory the user has just contradicted.
+     *
+     * A world fact is invalidated rather than deleted: the store keeps it with a timestamp, so
+     * what was believed and when stays on the record even though it will never be served again.
+     * A fact about a person is deleted outright - keeping "在吃布洛芬" next to "不吃了" is not
+     * provenance, it is two answers to one question.
+     */
+    private fun retire(input: JsonObject) {
+        val at = now()
+        input.ints("outdated_facts").forEach { index ->
+            remembered.world.getOrNull(index)?.let { store.invalidateWorldFact(it.fact.id, at) }
+        }
+        input.ints("outdated_about_user").forEach { index ->
+            remembered.personal.getOrNull(index)?.let { store.forgetPreference(it.fact.id) }
+        }
+    }
+
+    /**
+     * What memory holds near something the user just said, on similarity alone.
+     *
+     * The cut is deliberately tighter than the wide pass in [recall]: nothing here is going to be
+     * narrowed by a reranker afterwards, and these rows are shown to the model as things it may
+     * strike out. A loose match offered for retirement is how a correction about one medicine
+     * ends up deleting what was known about another.
+     */
+    private suspend fun nearby(text: String): Remembered {
+        val engine = retrieval ?: return Remembered.NOTHING
+        val vector = engine.embed(listOf(text))
+        val terms = listOf(text)
+        return Remembered(
+            world = store.recallWorldCandidates(terms, vector, now(), NEARBY_LIMIT)
+                .filter { it.similarity >= NEARBY_FLOOR },
+            personal = store.recallPreferenceCandidates(terms, vector, NEARBY_LIMIT)
+                .filter { it.similarity >= NEARBY_FLOOR },
+        )
     }
 
     private suspend fun keep(input: JsonObject) {
@@ -299,6 +428,9 @@ class Conversation(
                     text = text,
                     kind = kind,
                     ttl = kind.defaultTtl,
+                    // Embedded like a cached answer, and for the same reason: "药物过敏史"
+                    // has to find 对青霉素过敏 without sharing a character with it.
+                    embedding = retrieval?.embed(listOf(text))?.firstOrNull().orEmpty(),
                     recordedAt = now(),
                 ),
             )
@@ -506,6 +638,12 @@ class Conversation(
             }
             if (plan.confirmations.isNotEmpty()) {
                 appendLine("${AgentPrompt.Label.CONFIRM}${plan.confirmations.joinToString("、")}")
+            }
+            val known = remembered.lines()
+            if (known.isNotEmpty()) {
+                appendLine()
+                appendLine(AgentPrompt.Label.KNOWN)
+                known.forEach { appendLine(it) }
             }
             if (evidence.isNotEmpty()) {
                 appendLine()
@@ -800,6 +938,44 @@ class Conversation(
          */
         const val RERANK_FLOOR = 0.5
 
+        /**
+         * How close a remembered fact about the user has to be to what was asked for.
+         *
+         * Cosine, not the reranker, and that is a measurement rather than a preference. A
+         * reranker scores whether a passage *answers* a query, and a fact about a person answers
+         * nothing - live, it put 对青霉素过敏 at 0.106 against 药物过敏史 and 0.0001 against the
+         * question that needed it. Run over this section it does not rank the facts, it deletes
+         * them.
+         *
+         * The number is where the two populations separate on this embedding model, which sits
+         * high and needs a high floor. Over five lookup terms against seven stored facts, every
+         * true match landed 0.665-0.758 and every false one at or below 0.614 - the worst being
+         * 有高血压, which scores warmly against anything medical. Two thirds of the way into that
+         * gap, and deliberately nearer the noise: a missed fact costs a question, an invented one
+         * puts a condition the user never mentioned into a medical answer.
+         */
+        const val PREFERENCE_FLOOR = 0.64
+
+        /** What survives the narrowing pass, per section, and is put in front of the model. */
+        const val KEPT_MEMORIES = 4
+
+        /**
+         * Offered for retirement on a turn that looked nothing up. Few, and loose.
+         *
+         * Looser than [PREFERENCE_FLOOR] on purpose, because the two numbers gate different
+         * things. That one decides what gets stated back to the user as known, where a near-miss
+         * becomes a fabricated fact and the number is the only guard. This one decides what the
+         * model is *shown* and may strike out, and it has to name an index while reading what the
+         * user actually said - the model is the filter, so the number should protect recall
+         * instead of duplicating a judgement made downstream of it.
+         *
+         * Set at 0.64 first, which is what a live correction measured: 布洛芬我已经停了 against a
+         * stored 在吃布洛芬 fell in the gap, was never offered, and the contradicted record went on
+         * being served.
+         */
+        const val NEARBY_LIMIT = 4
+        const val NEARBY_FLOOR = 0.5
+
         /** A card the reader will actually look at. Past four it is a list, not a citation. */
         const val MAX_SOURCES_SHOWN = 4
 
@@ -823,6 +999,45 @@ interface TurnProgress {
 
     /** For callers that only want the result — tests, and the log-replay path. */
     object Silent : TurnProgress
+}
+
+/**
+ * What memory offered for a turn, after both passes.
+ *
+ * Two sections because they are two different kinds of claim. A cached answer is something the
+ * world said and can go stale; a preference is something this person said about themselves and
+ * goes stale differently. They are searched separately, ranked together, and shown separately.
+ */
+data class Remembered(
+    val world: List<WorldRecall> = emptyList(),
+    val personal: List<PreferenceRecall> = emptyList(),
+) {
+    /** Spec §10 — the one cached answer good enough to stand in for a search. */
+    val servable: WorldRecall? get() = world.firstOrNull { it.servableWithoutSearch }
+
+    /** For the writing step: what is already known, so it is not asked for again. */
+    fun lines(): List<String> =
+        personal.map { "- [" + AgentPrompt.Label.KNOWN_USER + "] " + it.fact.text } +
+            world.map { "- [" + AgentPrompt.Label.KNOWN_FACT + "] " + it.fact.answer }
+
+    /** For the harvest: the same list, numbered, so a correction can point at one. */
+    fun numbered(): String {
+        if (world.isEmpty() && personal.isEmpty()) return ""
+        val out = StringBuilder("\n\n" + AgentPrompt.Label.KNOWN + "\n")
+        world.forEachIndexed { i, it ->
+            out.append("[").append(AgentPrompt.Label.KNOWN_FACT).append(" ").append(i).append("] ")
+                .append(it.fact.question).append(" — ").append(it.fact.answer).append("\n")
+        }
+        personal.forEachIndexed { i, it ->
+            out.append("[").append(AgentPrompt.Label.KNOWN_USER).append(" ").append(i).append("] ")
+                .append(it.fact.text).append("\n")
+        }
+        return out.toString()
+    }
+
+    companion object {
+        val NOTHING = Remembered()
+    }
 }
 
 /** What one turn produced, in the terms the UI draws. */
@@ -871,6 +1086,17 @@ private fun JsonObject.bool(key: String): Boolean? =
     this[key]?.let { runCatching { it.jsonPrimitive.boolean }.getOrNull() }
 
 private fun JsonObject.jsonArrayOrNull() = runCatching { jsonArray }.getOrNull()
+
+private fun JsonObject.strings(key: String): List<String> =
+    (this[key] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
+        ?.filter { it.isNotBlank() }
+        .orEmpty()
+
+private fun JsonObject.ints(key: String): List<Int> =
+    (this[key] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { runCatching { it.jsonPrimitive.content.toInt() }.getOrNull() }
+        .orEmpty()
 
 private fun kotlinx.serialization.json.JsonElement.jsonArrayOrNull() =
     runCatching { jsonArray }.getOrNull()

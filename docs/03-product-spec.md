@@ -136,9 +136,15 @@ confidence badges. Source card below the answer.
    ("do I have this"), and names the concrete next step: which specialty, which test. The
    refusal is structural: the answer they wanted is absent, not footnoted, because this user
    skips disclaimers.
-8. **Sessions are invisible.** Rolls over after 1 hour idle. A short bridge summary — what
-   was being discussed, what was unresolved — rides into the new session, so a back-reference
-   still resolves three hours later. The user never sees a boundary.
+8. **Sessions are invisible.** Rolls over when the conversation has been idle for an hour
+   **and** has grown past 256k tokens — *(amended 2026-08-31; it was idle time alone)*. Both,
+   because either on its own rolls a conversation that did not need rolling: a long thread
+   picked up after lunch is still the same thread, and a short one left overnight costs nothing
+   to keep. A short bridge summary — what was being discussed, what was unresolved — rides into
+   the new session, so a back-reference still resolves three hours later. The user never sees a
+   boundary. Switching model compacts as well, and for a different reason: the incoming model
+   has read none of this, and a transcript written by another one is worse context than a
+   summary of what the two of you settled.
 9. **Three kinds of memory.**
    - *World knowledge* — facts retrieved from search, each stamped with a TTL bucket:
      permanent / one year / one month / always-research. Unclassifiable defaults to
@@ -151,6 +157,31 @@ confidence badges. Source card below the answer.
     without searching. Expired, or the model is unsure of the TTL → search again.
     Re-searching costs three seconds; being confidently stale costs the user's trust in the
     whole app.
+
+    *How memory is searched — amended 2026-09-01.* Three stages, each because the one before
+    it cannot do the job.
+
+    - **The question is not the search key.** It carries grammar, politeness, and usually a
+      pronoun standing in for the only word that matters. The model is asked first what facts
+      the question *needs* — for 医生给我开了消炎药，吃之前我要注意什么 it answered
+      `药物过敏史 / 正在吃的其他药 / 是否怀孕或哺乳` — and those phrases are what memory is
+      searched with.
+    - **The wide pass** takes ten cached answers and ten things known about the user, on cosine
+      with a word-overlap floor. Tuned to miss nothing; it returns near-misses happily.
+    - **The narrowing pass is two different tests**, because the sections are two different
+      kinds of claim. A cached answer goes to the reranker against the original question
+      (measured: genuine match 0.96, same-topic-different-question 0.24, unrelated 0.00002).
+      A fact about the user is kept on cosine against the term it was looked up by.
+
+    The reranker is not used on the user section, and that is a measurement rather than a
+    preference: it scores whether a passage *answers* a query, and a personal fact answers
+    nothing. Live, it put 对青霉素过敏 at **0.106** against 药物过敏史 and **0.0001** against
+    the question that needed it — over that section it does not rank facts, it deletes them.
+    The cosine floor is 0.64, set where the two populations separate on this embedding model:
+    across five lookup terms and seven stored facts, every true match landed 0.665–0.758 and
+    every false one at or below 0.614 (the worst being 有高血压, which scores warmly against
+    anything medical). The floor sits nearer the noise on purpose — a missed fact costs a
+    question, an invented one puts a condition the user never mentioned into a medical answer.
 11. **Attachments.** Camera or file picker — docx, pdf, jpeg, png — attached to a message.
     OCR via Hydrogen. Discussed in the conversation; durable facts extracted into preference
     knowledge. Large documents are chunked and retrieved within the document. No library UI.
@@ -193,6 +224,14 @@ allergy) is accepted immediately as preference knowledge and never argued with. 
 about the world invalidates that cached fact and forces a fresh search; if authoritative
 sources still disagree it holds its ground politely. A user's belief is never written as world
 knowledge.
+
+*Finding what a correction contradicts — added 2026-09-01.* The turn carrying a correction is
+usually not a question — 布洛芬我已经停了 searches nothing — so the record it contradicts would
+never be in front of the model. After the answer is on screen, the harvest looks for itself:
+what memory holds near what was just said, on similarity alone, offered to the model numbered
+so it can strike one out. A world fact is invalidated and keeps its timestamp, because what was
+believed and when stays on the record. A fact about a person is deleted outright — keeping
+在吃布洛芬 next to 不吃了 is not provenance, it is two answers to one question.
 
 **20. Preference knowledge expires too**, same mechanism as world knowledge: permanent for
 allergies, chronic conditions and occupation; six months for current medication and current

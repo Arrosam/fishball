@@ -114,9 +114,116 @@ class LiveSmokeTest {
         // Asked again in different words. Word overlap would miss this; meaning should not.
         val asked = "吃布洛芬会不会胃疼？"
         val vector = runBlocking { llm.embed(listOf(asked)) }.first()
-        val candidates = store.recallCandidates(asked, vector, System.currentTimeMillis())
+        val candidates = store.recallWorldCandidates(
+            listOf(asked), listOf(vector), System.currentTimeMillis(),
+        )
         println("candidates  -> " + candidates.joinToString { "%.3f %s".format(it.similarity, it.fact.question) })
         assertTrue(candidates.isNotEmpty(), "the paraphrase found nothing")
+    }
+
+    /**
+     * Memory is searched by what the question needs, not by the question.
+     *
+     * "吃这个药要注意什么" shares no word with 对青霉素过敏 and is not asking about penicillin,
+     * so neither word overlap nor an embedding of the question itself will find it. What finds
+     * it is the model naming 药物过敏史 as something the answer depends on, and that phrase
+     * being what memory is actually searched with.
+     */
+    @Test
+    fun `what the question needs is what memory is searched by`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val store = InMemoryStore()
+
+        // Seeded the way the harvest would have written it, vector and all.
+        runBlocking {
+            val text = "对青霉素过敏"
+            store.recordPreference(
+                org.areel.fishball.core.memory.PreferenceFact(
+                    id = store.nextId(),
+                    text = text,
+                    kind = org.areel.fishball.core.memory.PreferenceKind.MEDICAL_CONSTANT,
+                    ttl = org.areel.fishball.core.memory.PreferenceTtl.PERMANENT,
+                    embedding = llm.embed(listOf(text)).first(),
+                    recordedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = store,
+        )
+
+        // §16 may hold this turn for a clarifying question, so the test answers it and reads the
+        // reply that actually lands. 阿莫西林 is a penicillin: what is known about them and what
+        // they have just been prescribed genuinely conflict, and an answer that does not say so
+        // is the failure this guards against.
+        val first = runBlocking { conversation.ask("医生给我开了消炎药，吃之前我要注意什么？") }
+        println("first  -> " + first.text)
+        val reply = runBlocking { conversation.ask("刚开的，阿莫西林胶囊，别的药没吃。") }
+        println("answer -> " + reply.text)
+        assertTrue(
+            reply.text.contains("青霉素") || reply.text.contains("过敏"),
+            "the answer never used what was known about them: " + reply.text,
+        )
+    }
+
+    /**
+     * Spec §19 — a fact the user has just contradicted stops being served.
+     *
+     * The turn that carries a correction is usually not a question, so it looks nothing up and
+     * the record it contradicts is never in front of the model. The harvest looks for itself.
+     */
+    @Test
+    fun `a stated change retires what it contradicts`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val store = InMemoryStore()
+
+        val stale = store.nextId()
+        runBlocking {
+            val text = "在吃布洛芬"
+            store.recordPreference(
+                org.areel.fishball.core.memory.PreferenceFact(
+                    id = stale,
+                    text = text,
+                    kind = org.areel.fishball.core.memory.PreferenceKind.CURRENT_STATE,
+                    ttl = org.areel.fishball.core.memory.PreferenceTtl.SIX_MONTHS,
+                    embedding = llm.embed(listOf(text)).first(),
+                    recordedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = store,
+        )
+
+        runBlocking {
+            conversation.ask("布洛芬我已经停了，现在什么药都没吃。")
+            conversation.harvest()
+        }
+        println("about user -> " + store.preferences().joinToString { it.text })
+        assertTrue(
+            store.preferences().none { it.id == stale },
+            "the contradicted record survived: " + store.preferences().joinToString { it.text },
+        )
     }
 
     /**

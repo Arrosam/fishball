@@ -241,7 +241,14 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 值得记的关于他的事：他自己说到的情况，比如在吃什么药、对什么过敏、做什么工作。
 只记他真的说过的，不要从问题里猜。他问了某个病不代表他有这个病。
 
-两样都真的没有，才把 nothing 设成 true。
+还有一件事：下面会列出你记过的相关内容，每条前面有编号。
+如果他这次说的话跟哪一条对不上了 —— 比如他说「我已经不吃布洛芬了」、
+「后来查出来不是甲亢」、或者你查到的新资料推翻了旧结论 —— 把那条的编号放进
+outdated_facts 或 outdated_about_user 里。同时把新的说法照常写进 world_fact 或 about_user。
+
+只在真的不成立时才这么做。他换了个话题不算，他问起某件事也不算。
+
+三样都真的没有，才把 nothing 设成 true。
 """.trim()
 
     /**
@@ -275,6 +282,27 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
         HARVEST + "\n\n本轮最高来源等级：" + tier + "，一共 " + sources +
             " 条来源。\n\n问：" + question + "\n答：" + answer
 
+    /**
+     * Spec §10 — what the question needs known, before anything is looked up.
+     *
+     * Memory is searched with these rather than with the question itself. A question is a poor
+     * search key: it carries its own grammar, its politeness and often a pronoun standing in
+     * for the only word that matters, and embedding all of that drags the vector away from the
+     * thing being asked about. What is wanted is the shape of the answer, not the shape of the
+     * asking - and usually more than one, because a question tends to need several facts.
+     */
+    val RECALL_TERMS = """
+要回答下面这个问题，你得先知道哪些事？
+
+facts 里写需要的事实，一条一个短语，别写成问句。
+比如问「布洛芬伤胃吗」，需要的是「布洛芬的常见副作用」「布洛芬的胃肠道风险」。
+
+about_user 里写关于他本人的、会影响这个答案的事。
+比如问吃药就写「药物过敏史」「正在吃的药」；跟他本人无关就留空。
+
+两边各最多三条，短语，不要解释。
+""".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："
@@ -286,6 +314,9 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
         const val FROM_LOG = "这是他以前跟你说过的话："
         const val NOTHING_LOGGED = "（没有找到相关的记录）"
         const val BRIDGE = "你们之前聊过的："
+        const val KNOWN = "你已经知道的（不用再查；跟这次问题有关的，回答里要照顾到）："
+        const val KNOWN_USER = "关于他"
+        const val KNOWN_FACT = "查过"
     }
 
     /** One search result, as the model sees it. The index is what `select_evidence` reports back. */
