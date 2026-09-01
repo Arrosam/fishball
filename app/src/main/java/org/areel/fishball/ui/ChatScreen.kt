@@ -535,7 +535,7 @@ private fun Composer(
             // grey it darkens to is the bar's own colour though, so on its own the plate
             // vanishes into the bar the moment it is doing something - hence the ink edge,
             // which is the only thing keeping it a button while its menu is out.
-            tapFeedback(plusDown)
+            tapFeedback(plusPress)
             val dim = plusDown || attach.open
             // The edge arrives rather than appearing. Snapped on, it read as a second button
             // replacing the first; faded in over the same beat as the glyph's turn, it reads as
@@ -557,14 +557,24 @@ private fun Composer(
                 animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessLow),
                 label = "plus-turn",
             )
-            // The target is bigger than the plate. They were the same square, so a tap a few
-            // pixels off the edge of the drawn button landed on nothing at all - no action and,
-            // more confusingly, no tick, which reads as the button having ignored you rather
-            // than as having been missed. The plate is still 48; what listens is 56.
+            // Built exactly like the masthead's more button: the plate is the target, the
+            // press moves it a pixel, and the interaction source it reports through is the one
+            // the tick listens to. An outer box larger than the plate was tried and taken back
+            // out - the taps that went unfelt were landing on the button all along, and it was
+            // the tick that was being dropped, not the touch.
             Box(
                 Modifier
-                    .padding(end = 6.dp)
-                    .size(56.dp)
+                    .padding(end = 10.dp)
+                    .size(48.dp)
+                    .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
+                    .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                    .then(
+                        if (edge > 0.01f) {
+                            Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
+                        } else {
+                            Modifier
+                        },
+                    )
                     .clickable(
                         interactionSource = plusPress,
                         indication = null,
@@ -573,29 +583,14 @@ private fun Composer(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
-                        .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
-                        .then(
-                            if (edge > 0.01f) {
-                                Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
-                            } else {
-                                Modifier
-                            },
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_plus),
-                        contentDescription = stringResource(R.string.attach),
-                        tint = Areel.Ink,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .rotate(turn),
-                    )
-                }
+                Icon(
+                    painter = painterResource(R.drawable.ic_plus),
+                    contentDescription = stringResource(R.string.attach),
+                    tint = Areel.Ink,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .rotate(turn),
+                )
             }
             // The same two parts as a user bubble - shell outside, ruled text block inside -
             // so what is being typed and what has already been said are the same object.
@@ -678,7 +673,7 @@ private fun Composer(
             // not contain anywhere.
             val sendPress = remember { MutableInteractionSource() }
             val sendDown by sendPress.collectIsPressedAsState()
-            if (!speaking) tapFeedback(sendDown)
+            if (!speaking) tapFeedback(sendPress)
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
             Box(

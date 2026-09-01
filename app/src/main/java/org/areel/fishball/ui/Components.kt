@@ -56,6 +56,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -195,7 +197,7 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     // On the way down, not the way up. A tap is felt when the finger lands - that is when the
     // person has committed to it - and a tick on release would arrive after the thing it is
     // meant to confirm has already happened on screen.
-    tapFeedback(pressed)
+    tapFeedback(interaction)
 
     Box {
         Box(
@@ -268,15 +270,27 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
  * Keyed on the press rather than the click: `clickable` fires on release, and a confirmation
  * that arrives after the screen has already changed is not a confirmation.
  *
+ * It collects the press *events* rather than watching a pressed flag, and that is the whole
+ * point of it. A flag is a value sampled between recompositions, so a quick tap - down and up
+ * inside one frame - could set it and clear it without any composition ever observing `true`,
+ * and the tap went unanswered. Which taps those were felt arbitrary from the outside: the same
+ * button, tapped the same way, buzzing or not depending on where the frame boundary fell.
+ * Every Press lands in this flow whether or not a frame happened to sit between it and its
+ * release.
+ *
  * LongPress, the same as the microphone. TextHandleMove was the light one and on a real phone
  * it is close enough to nothing that a tap felt unanswered - a haptic too faint to notice is
  * worse than none, because it spends the vibrator on a signal nobody receives.
  */
 @Composable
-internal fun tapFeedback(pressed: Boolean) {
+internal fun tapFeedback(interaction: InteractionSource) {
     val haptics = LocalHapticFeedback.current
-    LaunchedEffect(pressed) {
-        if (pressed) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    LaunchedEffect(interaction) {
+        interaction.interactions.collect { event ->
+            if (event is PressInteraction.Press) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+        }
     }
 }
 
