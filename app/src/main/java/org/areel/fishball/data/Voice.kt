@@ -59,7 +59,7 @@ class Voice(private val context: Context) {
             MediaRecorder()
         }
         return runCatching {
-            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            rec.setAudioSource(source)
             rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             // 16 kHz mono is what speech recognition wants; anything above it is bytes spent
@@ -76,9 +76,33 @@ class Voice(private val context: Context) {
             true
         }.getOrElse {
             runCatching { rec.release() }
+            // The next attempt asks for the microphone a different way. See [source].
+            if (source == MediaRecorder.AudioSource.VOICE_RECOGNITION) {
+                source = MediaRecorder.AudioSource.MIC
+            }
             false
         }
     }
+
+    /**
+     * Which microphone to ask for.
+     *
+     * VOICE_RECOGNITION first, and not as a preference. On the phone this was built for, MIC
+     * opened without error, lit the recording indicator, and delivered silence - every
+     * amplitude reading zero for the length of a held button, which is also why nothing was
+     * ever transcribed. The log showed the system's hotword service holding an input at the
+     * same time, and a device that mishandles two captures at once hands the newcomer an empty
+     * stream rather than refusing it.
+     *
+     * VOICE_RECOGNITION is the right ask regardless: it is the documented source for speech
+     * being sent to a recogniser, and it comes without the automatic gain and noise shaping
+     * that MIC applies for recording a room - both of which a transcriber would rather not have
+     * had done to its input.
+     *
+     * Falls back to MIC if the device does not offer it, because a source that cannot be opened
+     * at all is worse than one that might be quiet.
+     */
+    private var source = MediaRecorder.AudioSource.VOICE_RECOGNITION
 
     /**
      * Stop and hand back the recording, or null if there is nothing worth sending.
@@ -127,10 +151,6 @@ class Voice(private val context: Context) {
     fun level(): Float {
         val rec = recorder ?: return 0f
         val peak = runCatching { rec.maxAmplitude }.getOrDefault(0)
-        // TEMPORARY, for one diagnosis: the meter draws correctly when fed a synthetic level
-        // - verified on the emulator, bars sweeping 20px to 96px in a 96px field - and the
-        // emulator's own microphone answers this call with 0. What is not yet known is what a
-        // real one answers, and this is the only way to find out.
         android.util.Log.d("FishBallLevel", "peak=" + peak)
         return kotlin.math.sqrt((peak / MAX_AMPLITUDE).coerceIn(0f, 1f))
     }
