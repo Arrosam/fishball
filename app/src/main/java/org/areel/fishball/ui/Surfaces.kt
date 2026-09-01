@@ -2,6 +2,13 @@ package org.areel.fishball.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.composed
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -199,6 +206,60 @@ fun Modifier.userRule(): Modifier = this.drawBehind {
     val w = 3.dp.toPx()
     drawRect(Areel.Magenta, Offset(size.width - w, 0f), Size(w, size.height))
 }
+
+/**
+ * What the microphone is hearing, leaving the rule that marks the user's own words.
+ *
+ * The rule is already the thing that says "this is you"; while it is listening, it sends what
+ * it hears out across the field. Lines rather than a waveform, on the same grid as everything
+ * else - a smooth curve would be the only round thing in the app.
+ *
+ * Each line is born at the rule and travels left, fading evenly the whole way and reaching
+ * nothing by [TRAVEL] of the width. That fraction is what keeps it clear of 录音中 and
+ * 松开发送语音 at the other end: the words are read, not decorated, and a line arriving under
+ * them would be the meter drawing on the only text on screen.
+ *
+ * [level] is a lambda rather than a value so the reading is taken inside the draw. Passed by
+ * value it would recompose this whole strip of the composer twenty-five times a second to
+ * repaint two hundred pixels.
+ */
+fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed {
+    val transition = rememberInfiniteTransition(label = "voice-wave")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(WAVE_PERIOD_MS, easing = LinearEasing)),
+        label = "wave-phase",
+    )
+
+    drawBehind {
+        if (!active) return@drawBehind
+        val rule = 3.dp.toPx()
+        val width = 2.dp.toPx()
+        val travel = size.width * TRAVEL
+        // Never silent, and never still: a floor keeps the meter alive through the gaps between
+        // words, which is what says the recording is still running. The voice is the rest.
+        val strength = 0.22f + 0.78f * level().coerceIn(0f, 1f)
+
+        repeat(WAVE_LINES) { i ->
+            val p = (phase + i.toFloat() / WAVE_LINES) % 1f
+            val x = size.width - rule - width - p * travel
+            if (x < 0f) return@repeat
+            drawRect(
+                color = Areel.Magenta.copy(alpha = (1f - p) * strength),
+                topLeft = Offset(x, 0f),
+                size = Size(width, size.height),
+            )
+        }
+    }
+}
+
+/** One line every [WAVE_PERIOD_MS]/[WAVE_LINES]; slow enough to follow, quick enough to read as sound. */
+private const val WAVE_PERIOD_MS = 1400
+private const val WAVE_LINES = 5
+
+/** How far across the field a line gets before it is gone. Leaves the words at the left alone. */
+private const val TRAVEL = 0.55f
 
 /**
  * The mark. Every edge lands on 0/45/90 with the head into the upper-right, so it reads as a

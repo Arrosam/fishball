@@ -587,6 +587,8 @@ private fun Composer(
               Box(
                 Modifier
                     .fillMaxWidth()
+                    // Under the rule, so the lines come out from behind it rather than over it.
+                    .voiceWave(active = recording) { voice.level }
                     .userRule()
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
               ) {

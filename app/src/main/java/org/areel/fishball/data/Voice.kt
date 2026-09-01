@@ -108,6 +108,23 @@ class Voice(private val context: Context) {
         return file
     }
 
+    /**
+     * How loud it is right now, 0..1.
+     *
+     * `getMaxAmplitude` reports the peak since the last time it was asked, so it is a reading
+     * of the interval between calls rather than of an instant - which is what a meter wants.
+     * Square-rooted because loudness is not linear in amplitude: without it a normal speaking
+     * voice sits near the bottom of the range and the meter looks broken.
+     *
+     * Zero when nothing is recording, and zero on the very first call, which MediaRecorder
+     * always answers with 0 whatever the room is doing.
+     */
+    fun level(): Float {
+        val rec = recorder ?: return 0f
+        val peak = runCatching { rec.maxAmplitude }.getOrDefault(0)
+        return kotlin.math.sqrt((peak / MAX_AMPLITUDE).coerceIn(0f, 1f))
+    }
+
     /** Throw the recording away. Safe to call when nothing is running. */
     fun cancel() {
         recorder?.let { rec ->
@@ -168,5 +185,8 @@ class Voice(private val context: Context) {
 
         /** Below this it was a tap, not a held button. */
         const val MIN_MS = 600L
+
+        /** 16-bit signed, so this is as loud as a sample can be. */
+        const val MAX_AMPLITUDE = 32767f
     }
 }

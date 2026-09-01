@@ -6,6 +6,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,6 +49,16 @@ class VoiceState internal constructor(
     var notice: String? by mutableStateOf(null)
         private set
 
+    /**
+     * How loud the room is, 0..1, while recording. Read by the composer's meter.
+     *
+     * Smoothed on the way in. Raw peaks jump between frames hard enough that the meter
+     * flickers rather than moves; easing towards the reading keeps the fall gentle while
+     * letting a sudden word arrive immediately.
+     */
+    var level by mutableFloatStateOf(0f)
+        private set
+
     /** Set by the permission callback so a granted request can start recording immediately. */
     internal var awaitingPermission = false
 
@@ -68,7 +80,19 @@ class VoiceState internal constructor(
         // hold registered, and without it a button that looks the same pressed or not gives
         // nothing back until the first word is already lost.
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-        if (backend.voice.start()) phase = VoicePhase.RECORDING
+        if (!backend.voice.start()) return
+        phase = VoicePhase.RECORDING
+        level = 0f
+        scope.launch {
+            while (phase == VoicePhase.RECORDING) {
+                val now = backend.voice.level()
+                // Up fast, down slow. A word should reach the meter on the frame it is spoken;
+                // the gap after it should close over a few frames rather than snap shut.
+                level = if (now > level) now else level + (now - level) * LEVEL_FALL
+                delay(LEVEL_POLL_MS)
+            }
+            level = 0f
+        }
     }
 
     fun onRelease() {
@@ -104,6 +128,14 @@ class VoiceState internal constructor(
         awaitingPermission = false
         phase = VoicePhase.IDLE
         notice = deniedNotice
+    }
+
+    private companion object {
+        /** Fast enough to look continuous, slow enough not to be a busy loop. */
+        const val LEVEL_POLL_MS = 40L
+
+        /** How much of the gap the meter closes per reading when the room goes quiet. */
+        const val LEVEL_FALL = 0.35f
     }
 
     private fun granted() = ContextCompat.checkSelfPermission(
