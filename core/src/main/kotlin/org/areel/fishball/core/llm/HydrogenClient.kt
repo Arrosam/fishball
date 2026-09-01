@@ -537,6 +537,17 @@ class HydrogenClient(
             put("text", c.text)
         }
 
+        // Verified against the proxy before it was written: an Anthropic image block reaches
+        // fishball-flash and it reads what is in the picture.
+        is LlmContent.Image -> buildJsonObject {
+            put("type", "image")
+            putJsonObject("source") {
+                put("type", "base64")
+                put("media_type", c.mediaType)
+                put("data", c.base64)
+            }
+        }
+
         is LlmContent.ToolUse -> buildJsonObject {
             put("type", "tool_use")
             put("id", c.id)

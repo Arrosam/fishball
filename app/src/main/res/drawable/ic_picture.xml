@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Picture. A frame with a horizon and a sun, all edges on 0/45/90 so it sits in
+  the same language as ic_send and ic_gear rather than reading as a stock glyph.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins. Colour is set by the Icon() tint at the call site.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M4 5 H20 V19 H4 Z"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <!-- the hill, two 45 runs meeting inside the frame -->
+    <path
+        android:pathData="M4 16 L9 11 L13 15 L16 12 L20 16"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <path
+        android:pathData="M8 8 H10 V10 H8 Z"
+        android:fillColor="#FF101010" />
+</vector>

@@ -53,6 +53,9 @@ class Backend private constructor(
     /** The microphone, and the one upload it feeds. */
     val voice by lazy { Voice(context) }
 
+    /** Pictures, on their way from the gallery or the camera to the model. */
+    val attachments by lazy { Attachments(context) }
+
     /** For a permission check, which needs a Context and has no business holding the rest. */
     val appContext: Context get() = context
 

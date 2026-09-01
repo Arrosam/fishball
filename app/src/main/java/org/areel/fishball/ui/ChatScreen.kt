@@ -50,6 +50,24 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import org.areel.fishball.data.Attachment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -172,8 +190,16 @@ fun ChatScreen(
     val viewport by remember { derivedStateOf { listState.layoutInfo.viewportSize.height } }
     LaunchedEffect(viewport) { if (following) toEnd(smooth = false) }
 
+    val attach = rememberAttachState(vm.backend.attachments)
+
     fun send(text: String) {
-        vm.send(text)
+        // Whatever was attached rides this message and only this one - typed or spoken, the
+        // picture goes with the next thing said and is then let go of, so it cannot silently
+        // follow the conversation into a question it had nothing to do with.
+        val images = attach.pending.map { it.content }
+        attach.clear()
+        attach.close()
+        vm.send(text, images)
     }
 
     // Spoken input joins the thread through the same door typing does: what comes back from
@@ -279,6 +305,19 @@ fun ChatScreen(
              * two magenta squares stacked in a corner would be one target read as two halves
              * of the same thing.
              */
+            // The attach choices, floating over the thread rather than sitting in the bar.
+            // They are a menu, not part of the composer, and a menu that reflows the layout it
+            // is drawn over reads as the app rearranging itself around a question nobody asked.
+            AttachRow(
+                open = attach.open,
+                full = attach.full,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 10.dp),
+                onImage = attach::pickImage,
+                onCamera = attach::takePhoto,
+            )
+
             JumpToEnd(
                 visible = !atTail,
                 modifier = Modifier
@@ -322,8 +361,12 @@ fun ChatScreen(
                 draft = ""
             },
             voice = voice,
+            attach = attach,
         )
     }
+
+    // Over everything, including the composer that raised it.
+    AttachViewer(attach)
 }
 
 /**
@@ -387,6 +430,7 @@ private fun Composer(
     enabled: Boolean,
     onSend: () -> Unit,
     voice: VoiceState,
+    attach: AttachState,
 ) {
     // With nothing typed there is nothing to send, so the plate is a microphone instead. One
     // control, two jobs, and never both at once - which is why it can be the same square.
@@ -432,6 +476,9 @@ private fun Composer(
             // that exists to be read and typed into. Legibility wins over material purity.
             .background(Areel.Concrete2),
     ) {
+        // What is going with the next message, and what could. Both live above the bar's
+        // hairline so the field itself never moves for either of them.
+        AttachedRow(attach)
         Hairline()
         Row(
             Modifier
@@ -440,6 +487,38 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The masthead's more button, at the other end of the app. Same paper plate, same
+            // press offset, same darkening while its menu is out - it opens a menu of the same
+            // plates, so it should be the same object.
+            val plusPress = remember { MutableInteractionSource() }
+            val plusDown by plusPress.collectIsPressedAsState()
+            Box(
+                Modifier
+                    .padding(end = 10.dp)
+                    .size(48.dp)
+                    .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
+                    .background(
+                        if (plusDown || attach.open) Areel.Concrete2 else Areel.Paper,
+                        RectangleShape,
+                    )
+                    .clickable(
+                        interactionSource = plusPress,
+                        indication = null,
+                        enabled = enabled,
+                        onClick = attach::toggle,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_plus),
+                    contentDescription = stringResource(R.string.attach),
+                    tint = Areel.Ink,
+                    modifier = Modifier
+                        .size(22.dp)
+                        // Turns into a cross when it is open, which is what closes it.
+                        .rotate(if (attach.open) 45f else 0f),
+                )
+            }
             // The same two parts as a user bubble - shell outside, ruled text block inside -
             // so what is being typed and what has already been said are the same object.
             Box(
@@ -577,3 +656,235 @@ private fun Composer(
  * The list clamps this to whatever scroll is actually left.
  */
 private const val FAR_ENOUGH = 100_000f
+
+/**
+ * The choices, floating over the thread.
+ *
+ * Same plate as 记忆 and 设置 in the masthead menu, because that is what this is: the app's
+ * secondary actions, one shape for all of them, so the pattern is learned once. Drawn over the
+ * conversation rather than inside the bar - a menu that grows the layout it is drawn over reads
+ * as the app rearranging itself around a question nobody asked yet.
+ *
+ * The container never animates. Each plate carries its own entrance and its own retreat, so
+ * what slides back into the plus is the buttons and not the furniture around them.
+ */
+@Composable
+private fun AttachRow(
+    open: Boolean,
+    full: Boolean,
+    modifier: Modifier,
+    onImage: () -> Unit,
+    onCamera: () -> Unit,
+) {
+    // Kept in composition after closing so the plates can be seen leaving. Once the last one is
+    // home the row stops taking hit tests, which a plate at alpha 0 would otherwise keep doing.
+    var settled by remember { mutableStateOf(true) }
+    LaunchedEffect(open) {
+        if (open) settled = false else { delay(ATTACH_EXIT_MS + ATTACH_STAGGER_MS); settled = true }
+    }
+    if (!open && settled) return
+
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        AttachPlate(R.drawable.ic_picture, stringResource(R.string.attach_image), 0, open, !full, onImage)
+        AttachPlate(R.drawable.ic_camera, stringResource(R.string.attach_camera), 1, open, !full, onCamera)
+    }
+}
+
+/**
+ * One choice, built to the masthead menu's plate.
+ *
+ * The transform origin is the bottom-left rather than the menu's top-right, because this stack
+ * comes out of a button below and to the left of it. Going back it is eased rather than sprung,
+ * and in reverse order: an overshoot on the way out would bounce a plate *away* from the button
+ * it is supposed to be disappearing into, and collapsing near-first would read as the far plate
+ * falling through the near one.
+ */
+@Composable
+private fun AttachPlate(
+    icon: Int,
+    label: String,
+    order: Int,
+    open: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(open) {
+        if (open) {
+            delay(order * ATTACH_STAGGER_MS)
+            progress.animateTo(1f, spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow))
+        } else {
+            delay((1 - order).coerceAtLeast(0) * ATTACH_STAGGER_MS)
+            progress.animateTo(0f, tween(durationMillis = ATTACH_EXIT_MS.toInt(), easing = EaseMech))
+        }
+    }
+
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+
+    Column(
+        Modifier
+            .graphicsLayer {
+                alpha = (if (enabled) 1f else 0.4f) * progress.value.coerceIn(0f, 1f)
+                // Down and left, into the plus.
+                translationX = (progress.value - 1f) * -14.dp.toPx()
+                translationY = (1f - progress.value) * 34.dp.toPx()
+                scaleX = 0.86f + 0.14f * progress.value
+                scaleY = 0.86f + 0.14f * progress.value
+                transformOrigin = TransformOrigin(0f, 1f)
+            }
+            .shadow(6.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
+            .size(48.dp)
+            .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
+            .background(if (pressed) Areel.Concrete2 else Areel.Paper, RectangleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled && open,
+                onClick = onClick,
+            )
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = Areel.Magenta,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+            color = Areel.Ink,
+        )
+    }
+}
+
+/**
+ * The line of what is going with this message.
+ *
+ * A line of its own rather than a badge on the field: the field is where somebody is typing,
+ * and pictures pushed into it would take room from the sentence they belong to. The bar grows
+ * by exactly one row and gives it back when the last one is removed.
+ */
+@Composable
+private fun AttachedRow(attach: AttachState) {
+    val showing = attach.pending.isNotEmpty() || attach.loading > 0
+    AnimatedVisibility(
+        visible = showing,
+        enter = expandVertically(tween(190, easing = EaseMech)) + fadeIn(tween(150)),
+        exit = shrinkVertically(tween(170, easing = EaseMech)) + fadeOut(tween(120)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            attach.pending.forEach { item ->
+                AttachedThumb(item, onOpen = { attach.viewing = item }, onRemove = { attach.remove(item) })
+            }
+            repeat(attach.loading) {
+                Box(
+                    Modifier
+                        .size(THUMB)
+                        .background(Areel.Concrete2, RectangleShape)
+                        .glassSurface(small = true),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One picture, square, with the way to take it off in its corner.
+ *
+ * The cross sits *on* the image rather than beside it, which is the only place it can go and
+ * still be obviously about that one picture rather than about the row.
+ */
+@Composable
+private fun AttachedThumb(item: Attachment, onOpen: () -> Unit, onRemove: () -> Unit) {
+    Box(Modifier.size(THUMB + 6.dp)) {
+        Box(
+            Modifier
+                .size(THUMB)
+                .align(Alignment.BottomStart)
+                .background(Areel.Concrete2, RectangleShape)
+                .clickable(onClick = onOpen),
+        ) {
+            item.thumb?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Box(
+            Modifier
+                .size(20.dp)
+                .align(Alignment.TopEnd)
+                .background(Areel.Ink, RectangleShape)
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_plus),
+                contentDescription = stringResource(R.string.attach_remove),
+                tint = Areel.Paper,
+                // The plus, turned into a cross. The same glyph the composer's own button uses
+                // when it is open, which is what closing looks like in this app.
+                modifier = Modifier
+                    .size(14.dp)
+                    .rotate(45f),
+            )
+        }
+    }
+}
+
+/**
+ * One picture, filling the screen, because a 46dp square is not a look at anything.
+ *
+ * Dismissed by touching it anywhere. There is nothing to do in here but see the photograph, so
+ * a control bar would be three affordances for one action.
+ */
+@Composable
+private fun AttachViewer(attach: AttachState) {
+    val item = attach.viewing ?: return
+    Dialog(
+        onDismissRequest = { attach.viewing = null },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Areel.Ink.copy(alpha = 0.94f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { attach.viewing = null },
+            contentAlignment = Alignment.Center,
+        ) {
+            item.thumb?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Left to right, out of the plus. Same beat as the masthead menu. */
+private const val ATTACH_STAGGER_MS = 55L
+
+/** And back down into it, eased. Long enough to read as travel, short enough not to be waited on. */
+private const val ATTACH_EXIT_MS = 150L
+
+/** Square, and small enough that five of them fit across a phone. */
+private val THUMB = 56.dp

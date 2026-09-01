@@ -290,6 +290,46 @@ class LiveSmokeTest {
     }
 
     /**
+     * A picture reaches the model, and the answer is about what is in it.
+     *
+     * The proxy grew vision on 2026-09-01, so this is the test that says whether the app's own
+     * path carries an image rather than whether the endpoint accepts one. It goes the whole way
+     * through `Conversation.ask`, which is where the block is attached to the user turn.
+     */
+    @Test
+    fun `an attached picture reaches the model`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val bytes = javaClass.getResourceAsStream("/vision-probe.jpg")!!.readBytes()
+        val image = org.areel.fishball.core.llm.LlmContent.Image(
+            mediaType = "image/jpeg",
+            base64 = java.util.Base64.getEncoder().encodeToString(bytes),
+        )
+
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = InMemoryStore(),
+        )
+
+        val reply = runBlocking {
+            conversation.ask("这张图上写的是什么？照着念一遍就行。", images = listOf(image))
+        }
+        println("image answer -> " + reply.text)
+        println("image detail -> " + reply.detail)
+        assertTrue(
+            reply.text.contains("FISHBALL", ignoreCase = true) || reply.text.contains("1234"),
+            "the model did not see the picture: " + reply.text,
+        )
+    }
+
+    /**
      * Compaction happens once, not once per attempt.
      *
      * Switching model folds the conversation. Switching again immediately afterwards has

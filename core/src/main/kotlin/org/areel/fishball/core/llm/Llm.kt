@@ -74,6 +74,15 @@ data class LlmMessage(val role: Role, val content: List<LlmContent>) {
 sealed class LlmContent {
     data class Text(val text: String) : LlmContent()
 
+    /**
+     * A picture the user attached, as bytes rather than a path.
+     *
+     * `:core` has no filesystem and no Android, so what crosses this boundary is already
+     * base64: whoever picked the image owns reading and shrinking it, and this layer only has
+     * to know the media type to declare.
+     */
+    data class Image(val mediaType: String, val base64: String) : LlmContent()
+
     /** The model asking for a tool to be run. */
     data class ToolUse(val id: String, val name: String, val input: JsonObject) : LlmContent()
 

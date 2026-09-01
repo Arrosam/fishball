@@ -48,6 +48,17 @@
     <string name="send">发送</string>
 
     <!--
+      Attaching a picture. Two ways in, named for what the person does rather than for where
+      the file comes from: 图片 is the one already on the phone, 拍照 is the one taken now.
+    -->
+    <string name="attach">添加</string>
+    <string name="attach_image">图片</string>
+    <string name="attach_camera">拍照</string>
+    <string name="attach_remove">去掉这张</string>
+    <!-- Shown in the row itself once the cap is reached, so the two choices greying out is explained. -->
+    <string name="attach_full">最多 %1$d 张</string>
+
+    <!--
       Speaking instead of typing. The button is the send plate until there is something to
       send, so with an empty field it is a microphone — held down, not tapped, which the
       second line says outright because nothing about the control itself can.

@@ -95,11 +95,26 @@ class Conversation(
     /** What memory offered for this turn. Read by the writing step. */
     private var remembered: Remembered = Remembered.NOTHING
 
+    /** The pictures on this turn. Replaced by the next [ask], so they never carry over. */
+    private var attached: List<LlmContent.Image> = emptyList()
+
     private data class Pending(val original: TurnContext, val kind: Kind) {
         enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
     }
 
-    suspend fun ask(userText: String, progress: TurnProgress = TurnProgress.Silent): Reply {
+    suspend fun ask(
+        userText: String,
+        progress: TurnProgress = TurnProgress.Silent,
+        /**
+         * Pictures the user attached to this question.
+         *
+         * Carried on the writing turn and nowhere else. The classifier was the obvious second
+         * place and turned out to be the wrong one: handed an image it stops routing and starts
+         * describing, and live it answered a six-value enum with 文字识别. Routing is a decision
+         * about the sentence; the picture is for the answer.
+         */
+        images: List<LlmContent.Image> = emptyList(),
+    ): Reply {
         val at = now()
         rollSession(at)
 
@@ -112,6 +127,7 @@ class Conversation(
         // be lost whenever the search failed or they closed the app mid-thought.
         memory.noteUser(userText)
 
+        attached = images
         lastFailure = null
         val base = context(userText, at, progress) ?: return failure()
         // §10 — a turn that is only being listened to has nothing to look up, and a crisis turn
@@ -551,7 +567,7 @@ class Conversation(
         // reads every question as the first one it has ever been asked, which is what made
         // follow-ups like "那它呢" answer about nothing.
         val messages = priorTurns().toMutableList()
-        messages += LlmMessage.user(
+        messages += withImage(
             "${AgentPrompt.Label.QUESTION}${ctx.userText}\n\n$brief\n\n${AgentPrompt.COMPOSE}",
         )
 
@@ -659,6 +675,18 @@ class Conversation(
             ?.filter { it.isNotBlank() }
             .orEmpty()
         return written.ifEmpty { fallback }
+    }
+
+    /**
+     * A user turn, with this turn's pictures in front of the words.
+     *
+     * The images go first because that is the order the question is asked in: someone holds up
+     * a box and then says "can I take this". A model handed the sentence first has already
+     * started answering by the time it looks.
+     */
+    private fun withImage(text: String): LlmMessage {
+        if (attached.isEmpty()) return LlmMessage.user(text)
+        return LlmMessage(LlmMessage.Role.USER, attached + LlmContent.Text(text))
     }
 
     /** Spec §8's bridge, when there is one: the previous session folded into a paragraph. */

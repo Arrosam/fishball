@@ -8,4 +8,9 @@
 -->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!--
+      Where the camera writes. Scoped as its own entry rather than opening the whole cache:
+      the camera app needs to write exactly one file here and read nothing else.
+    -->
+    <cache-path name="shots" path="shots/" />
 </paths>

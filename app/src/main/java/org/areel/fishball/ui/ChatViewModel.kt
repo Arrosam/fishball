@@ -75,7 +75,7 @@ class ChatViewModel(
     var streamed by mutableStateOf("")
         private set
 
-    fun send(text: String) {
+    fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
         val question = text.trim()
         if (question.isEmpty() || busy) return
 
@@ -109,7 +109,7 @@ class ChatViewModel(
             } else {
                 // The driver blocks on network and writes the memory file; neither belongs on
                 // the frame thread. Narration hops back to the main thread to be shown.
-                withContext(Dispatchers.IO) { conversation.ask(question, progress) }
+                withContext(Dispatchers.IO) { conversation.ask(question, progress, images) }
             }
             val workedOut = narration.toList()
             val reasoning = thinking
