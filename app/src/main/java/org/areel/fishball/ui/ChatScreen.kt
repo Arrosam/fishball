@@ -44,7 +44,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -95,6 +102,7 @@ fun ChatScreen(
     val pending = busy
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     // Rows that have already played their entrance. A LazyColumn discards and rebuilds an
     // item when it scrolls out and back, so without this an old message re-animates every
@@ -256,6 +264,32 @@ fun ChatScreen(
             // the whole reason the strip is a checker and not a rule.
             CheckerBand(Modifier.align(Alignment.TopCenter))
 
+            /*
+             * The way back down, and only when there is a way back down.
+             *
+             * [atTail] is the position rather than the intent, which is what this needs: the
+             * question here is "is the end off screen", not "did they mean to leave it". It
+             * appears while scrolled up whether they scrolled up on purpose or an arriving
+             * answer grew the thread past them.
+             *
+             * Glass rather than the magenta of the send plate. It is a convenience sitting
+             * directly above the one control in the app that does something irreversible, and
+             * two magenta squares stacked in a corner would be one target read as two halves
+             * of the same thing.
+             */
+            JumpToEnd(
+                visible = !atTail,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 22.dp),
+                onClick = {
+                    // Following again, not just scrolled: landing at the end and then being
+                    // left behind by the next answer would undo the trip.
+                    following = true
+                    scope.launch { toEnd(smooth = true) }
+                },
+            )
+
             // The shade the composer casts on the thread running under it. Modifier.shadow on
             // the bar alone is not enough: Android throws elevation shadows downward, so a bar
             // pinned to the bottom gets almost nothing above it. Drawn over the list rather
@@ -281,6 +315,50 @@ fun ChatScreen(
             },
             voice = voice,
         )
+    }
+}
+
+/**
+ * The way back down, and only when there is a way back down.
+ *
+ * Driven by position rather than intent, which is what this needs: the question is "is the end
+ * off screen", not "did they mean to leave it". So it appears while scrolled up whether they
+ * scrolled up on purpose or an arriving answer grew the thread out from under them.
+ *
+ * Glass rather than the magenta of the send plate. It is a convenience sitting directly above
+ * the one control in the app that does something irreversible, and two magenta squares stacked
+ * in a corner would be one target read as two halves of the same thing.
+ *
+ * Lifted out of the thread\'s Box on purpose: in there, `AnimatedVisibility` had the enclosing
+ * Column\'s overload in scope as well as the plain one and resolved to the wrong receiver.
+ */
+@Composable
+private fun JumpToEnd(visible: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)) + slideInVertically { it / 2 },
+        exit = fadeOut(tween(140)) + slideOutVertically { it / 2 },
+        modifier = modifier,
+    ) {
+        Box(
+            Modifier
+                .size(38.dp)
+                .background(Areel.Concrete2, RectangleShape)
+                .glassSurface(small = true)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_send),
+                contentDescription = stringResource(R.string.jump_to_end),
+                tint = Areel.Ink,
+                // The send arrow, turned over. A second file would be one more thing to keep
+                // at the same stroke weight for one glyph seen twice.
+                modifier = Modifier
+                    .size(20.dp)
+                    .rotate(180f),
+            )
+        }
     }
 }
 

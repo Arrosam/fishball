@@ -41,6 +41,9 @@
     <string name="settings_save">保存</string>
     <string name="settings_cancel">取消</string>
 
+    <!-- Only a content description: the arrow says it, and a label beside it would not fit. -->
+    <string name="jump_to_end">回到最新</string>
+
     <!-- Composer: no placeholder by design. The field and the send control carry it. -->
     <string name="send">发送</string>
 
