@@ -318,6 +318,19 @@ fun ChatScreen(
              * two magenta squares stacked in a corner would be one target read as two halves
              * of the same thing.
              */
+            // Anywhere that is not the row or the button that opened it. The masthead's menu
+            // gets this free by living in a Popup; this one is drawn in the layout, so the
+            // catcher has to be explicit. It takes the tap rather than passing it on: a tap
+            // that both dismissed a menu and pressed what was underneath it would be one
+            // gesture doing two things.
+            if (attach.open) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) { detectTapGestures { attach.close() } },
+                )
+            }
+
             // The attach choices, floating over the thread rather than sitting in the bar.
             // They are a menu, not part of the composer, and a menu that reflows the layout it
             // is drawn over reads as the app rearranging itself around a question nobody asked.
@@ -544,19 +557,14 @@ private fun Composer(
                 animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessLow),
                 label = "plus-turn",
             )
+            // The target is bigger than the plate. They were the same square, so a tap a few
+            // pixels off the edge of the drawn button landed on nothing at all - no action and,
+            // more confusingly, no tick, which reads as the button having ignored you rather
+            // than as having been missed. The plate is still 48; what listens is 56.
             Box(
                 Modifier
-                    .padding(end = 10.dp)
-                    .size(48.dp)
-                    .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
-                    .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
-                    .then(
-                        if (edge > 0.01f) {
-                            Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
-                        } else {
-                            Modifier
-                        },
-                    )
+                    .padding(end = 6.dp)
+                    .size(56.dp)
                     .clickable(
                         interactionSource = plusPress,
                         indication = null,
@@ -565,14 +573,29 @@ private fun Composer(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_plus),
-                    contentDescription = stringResource(R.string.attach),
-                    tint = Areel.Ink,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .rotate(turn),
-                )
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
+                        .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                        .then(
+                            if (edge > 0.01f) {
+                                Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_plus),
+                        contentDescription = stringResource(R.string.attach),
+                        tint = Areel.Ink,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(turn),
+                    )
+                }
             }
             // The same two parts as a user bubble - shell outside, ruled text block inside -
             // so what is being typed and what has already been said are the same object.
