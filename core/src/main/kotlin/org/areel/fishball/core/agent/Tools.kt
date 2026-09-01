@@ -26,7 +26,8 @@ object Tools {
     const val SELECT = "select_evidence"
     const val QUOTE = "quote"
     const val ANSWER = "answer"
-    const val REMEMBER = "remember"
+    const val NOTE_USER = "note_user"
+    const val NOTE_FACT = "note_fact"
     const val CLARIFY = "clarify"
     const val RECALL = "recall_terms"
 
@@ -150,13 +151,56 @@ object Tools {
      * Spec §10/§20. Asked on its own after the answer, because hanging these off `answer` meant
      * they were only ever filled on the turns where the model happened to use that tool.
      */
-    val remember = LlmTool(
-        name = REMEMBER,
-        description = "记下这一轮里值得长期保留的东西。没有就把 nothing 设成 true。",
+    /**
+     * Spec §9 — what this person just said about themselves.
+     *
+     * Narrow on purpose. It used to share one tool with the world-fact harvest, which meant the
+     * model was asked about cached answers while looking at a message that had not been
+     * answered yet. The two now fire at different moments off different material, so they are
+     * two tools.
+     */
+    val noteUser = LlmTool(
+        name = NOTE_USER,
+        description = "记下他刚刚说的、关于他本人的事。没有就把 nothing 设成 true。",
         inputSchema = obj {
             put("type", "object")
             putJsonObject("properties") {
-                boolProp("nothing", "这一轮没有值得记的东西。")
+                boolProp("nothing", "这句话里没有关于他本人的、值得记的事。")
+                putJsonObject("outdated_about_user") {
+                    put("type", "array")
+                    put("description", "已经不成立的旧记录的编号，来自上面列出的那几条。")
+                    putJsonObject("items") { put("type", "integer") }
+                }
+                putJsonObject("about_user") {
+                    put("type", "array")
+                    put("description", "他自己说到的、关于他本人的事。没有就不要填。")
+                    putJsonObject("items") {
+                        put("type", "object")
+                        putJsonObject("properties") {
+                            stringProp("text", "一句话，比如「对青霉素过敏」。")
+                            enumProp(
+                                "kind",
+                                listOf("medical_constant", "profile", "current_state", "transient"),
+                                "过敏、慢性病选 medical_constant；在吃的药选 current_state；" +
+                                    "「最近」怎么样选 transient。",
+                            )
+                        }
+                        putJsonArray("required") { add("text"); add("kind") }
+                    }
+                }
+            }
+            putJsonArray("required") { add("nothing") }
+        },
+    )
+
+    /** Spec §10 — the answer that was just given, if it is worth keeping. */
+    val noteFact = LlmTool(
+        name = NOTE_FACT,
+        description = "记下这一轮查到的、以后还用得上的结论。没有就把 nothing 设成 true。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                boolProp("nothing", "这一轮没有值得记的结论。")
                 putJsonObject("world_fact") {
                     put("type", "object")
                     put("description", "查到的、以后还能用的事实。没有就不要填。")
@@ -178,30 +222,8 @@ object Tools {
                 }
                 putJsonObject("outdated_facts") {
                     put("type", "array")
-                    put("description", "已经不成立的旧记录的编号，来自上面列出的「查过」那几条。")
+                    put("description", "已经不成立的旧结论的编号，来自上面列出的那几条。")
                     putJsonObject("items") { put("type", "integer") }
-                }
-                putJsonObject("outdated_about_user") {
-                    put("type", "array")
-                    put("description", "已经不成立的旧记录的编号，来自上面列出的「关于他」那几条。")
-                    putJsonObject("items") { put("type", "integer") }
-                }
-                putJsonObject("about_user") {
-                    put("type", "array")
-                    put("description", "他自己说到的、关于他本人的事。没有就不要填。")
-                    putJsonObject("items") {
-                        put("type", "object")
-                        putJsonObject("properties") {
-                            stringProp("text", "一句话，比如「对青霉素过敏」。")
-                            enumProp(
-                                "kind",
-                                listOf("medical_constant", "profile", "current_state", "transient"),
-                                "过敏、慢性病选 medical_constant；在吃的药选 current_state；" +
-                                    "「最近」怎么样选 transient。",
-                            )
-                        }
-                        putJsonArray("required") { add("text"); add("kind") }
-                    }
                 }
             }
             putJsonArray("required") { add("nothing") }

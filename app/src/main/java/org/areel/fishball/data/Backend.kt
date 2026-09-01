@@ -2,6 +2,7 @@ package org.areel.fishball.data
 
 import android.content.Context
 import org.areel.fishball.core.agent.Conversation
+import org.areel.fishball.core.agent.MemoryBus
 import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.core.memory.PersistentStore
@@ -63,14 +64,34 @@ class Backend private constructor(
 
         rememberModel(id)
         val folded = conversation?.compact() ?: false
-        conversation = Conversation(
+        conversation = talk(key, client)
+        return ModelSwitch(allowed = true, compacted = folded)
+    }
+
+    /**
+     * One conversation, and the memory bus beside it.
+     *
+     * The bus gets its own client, pinned to the fast model and never re-pointed. Filing is
+     * bookkeeping — pull a phrase out of a sentence, decide whether it is worth keeping — and
+     * there is no reason for a professional-mode conversation to pay professional-mode prices
+     * for it. It also means switching modes changes what answers, not what remembers.
+     *
+     * No `onModelChanged` on this one either: the bus discovering it cannot use the fast model
+     * must not rewrite the id the *conversation* is restored from.
+     */
+    private fun talk(key: String, client: HydrogenClient): Conversation {
+        // Whatever was filing for the outgoing conversation stops now. Its scope would
+        // otherwise stay alive and keep writing on behalf of a conversation nobody is having.
+        conversation?.memory?.close()
+        val filing = HydrogenClient(apiKey = key, model = FAST)
+        return Conversation(
             llm = client,
             retrieval = client,
             search = search,
             registry = registry,
             store = store,
+            memory = MemoryBus(llm = filing, retrieval = filing, store = store),
         )
-        return ModelSwitch(allowed = true, compacted = folded)
     }
 
     /**
@@ -86,13 +107,7 @@ class Backend private constructor(
             // a user finishes and immediately backs out of the app - taking the process, and
             // the unflushed key, with them. They then reopen it and are asked to activate again.
             prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).commit()
-            conversation = Conversation(
-                llm = client,
-                retrieval = client,
-                search = search,
-                registry = registry,
-                store = store,
-            )
+            conversation = talk(key, client)
         }
         return check
     }
@@ -112,13 +127,7 @@ class Backend private constructor(
         // forgetting something it was told, to fix something it can work out for itself.
         val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: FAST
         val client = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel)
-        conversation = Conversation(
-            llm = client,
-            retrieval = client,
-            search = search,
-            registry = registry,
-            store = store,
-        )
+        conversation = talk(key, client)
         return true
     }
 

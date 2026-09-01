@@ -20,13 +20,9 @@ import org.areel.fishball.core.llm.Retrieval
 import org.areel.fishball.core.memory.CitedSource
 import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.MemoryStore
-import org.areel.fishball.core.memory.PreferenceFact
-import org.areel.fishball.core.memory.PreferenceKind
 import org.areel.fishball.core.memory.PreferenceRecall
 import org.areel.fishball.core.memory.Speaker
-import org.areel.fishball.core.memory.WorldFact
 import org.areel.fishball.core.memory.WorldRecall
-import org.areel.fishball.core.memory.WorldTtl
 import org.areel.fishball.core.quote.QuoteRequest
 import org.areel.fishball.core.quote.QuoteResult
 import org.areel.fishball.core.quote.QuoteVerifier
@@ -64,6 +60,12 @@ class Conversation(
     private val registry: SourceRegistry,
     private val store: MemoryStore,
     private val now: () -> Long = { System.currentTimeMillis() },
+    /**
+     * Memory, off to one side. Defaults to running on this conversation's own client so a test
+     * can pass one thing; `:app` gives it a client pinned to the fast model, because filing
+     * should not cost what answering costs.
+     */
+    val memory: MemoryBus = MemoryBus(llm, retrieval, store, now),
 ) {
 
     private val engine = TurnEngine(registry, store)
@@ -90,12 +92,7 @@ class Conversation(
      */
     private var lastFailure: String? = null
 
-    /** The turn just finished, so [harvest] can be asked about it after the answer is on screen. */
-    private var lastExchange: Pair<String, String>? = null
-    private var lastSources: List<String> = emptyList()
-    private var lastTier: Tier = Tier.LOW
-
-    /** What memory offered for this turn. Read by the writing step and by the harvest. */
+    /** What memory offered for this turn. Read by the writing step. */
     private var remembered: Remembered = Remembered.NOTHING
 
     private data class Pending(val original: TurnContext, val kind: Kind) {
@@ -109,6 +106,11 @@ class Conversation(
         store.appendTurn(
             ConversationTurn(store.nextId(), session!!.id, at, Speaker.USER, userText),
         )
+
+        // §9 — before anything else, and without waiting for it. What someone says about
+        // themselves is true whether or not this turn ever produces an answer, and it used to
+        // be lost whenever the search failed or they closed the app mid-thought.
+        memory.noteUser(userText)
 
         lastFailure = null
         val base = context(userText, at, progress) ?: return failure()
@@ -124,9 +126,14 @@ class Conversation(
         val ctx = base.copy(recalled = remembered.servable)
         val reply = run(engine.firstStep(ctx), ctx, progress)
 
-        lastExchange = userText to reply.text
-        lastSources = reply.sources.map { it.url }
-        lastTier = reply.sources.maxOfOrNull { it.tier } ?: Tier.LOW
+        // §10 — and the answer, once there is one. Launched, not awaited: the reply is
+        // already on its way to the screen. The caller no longer has to remember to file.
+        memory.noteAnswer(
+            question = userText,
+            answer = reply.text,
+            tier = reply.sources.maxOfOrNull { it.tier } ?: Tier.LOW,
+            sources = reply.sources.map { it.url },
+        )
         store.appendTurn(
             ConversationTurn(
                 id = store.nextId(),
@@ -251,8 +258,9 @@ class Conversation(
         // only when the question is asked in nearly the same words. A floor, not a search.
         val engine = retrieval ?: return Remembered(listOfNotNull(store.recallWorldFact(question, at)))
 
-        // What the question needs known, rather than the question itself.
-        val wanted = recallTerms(question, progress)
+        // What the question needs known, rather than the question itself. On the fast model,
+        // like everything else about memory.
+        val wanted = memory.terms(question, priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS), progress)
         val facts = wanted.first.ifEmpty { listOf(question) }
         val personal = wanted.second
 
@@ -292,149 +300,6 @@ class Conversation(
             .filter { it.score >= RERANK_FLOOR }
             .take(KEPT_MEMORIES)
             .mapNotNull { world.getOrNull(it.index) }
-    }
-
-    /** Spec §10 — the facts a question needs, asked for before anything is looked up. */
-    private suspend fun recallTerms(
-        question: String,
-        progress: TurnProgress,
-    ): Pair<List<String>, List<String>> {
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
-                    LlmMessage.user(AgentPrompt.RECALL_TERMS + "\n\n" + question),
-                tools = listOf(Tools.recallTerms),
-                forceTool = Tools.RECALL,
-                maxTokens = 300,
-                stream = true,
-            ),
-            progress.forward(),
-        )
-        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input
-            ?: return emptyList<String>() to emptyList()
-        return input.strings("facts") to input.strings("about_user")
-    }
-
-    /**
-     * Spec §10 and §20 — decide what to keep, once the answer is already on screen.
-     *
-     * Deliberately not part of [ask]. It is a whole extra model call and nobody should wait on
-     * it to read their answer; the caller runs it afterwards. It is also asked as its own
-     * narrow question rather than as fields on the answer tool, which is why memory now gets
-     * written at all - the model replies in prose most turns and never reached those fields.
-     */
-    suspend fun harvest() {
-        val (question, answer) = lastExchange ?: return
-        if (answer.isBlank()) return
-
-        // A correction usually arrives on a turn that did no lookup - "我已经不吃布洛芬了" is
-        // not a question and nothing was searched for it, so §19 would never see the record it
-        // contradicts. Cheaply, and only when the turn brought nothing of its own: no term
-        // extraction and no reranker, because a correction names the thing it corrects.
-        if (remembered.world.isEmpty() && remembered.personal.isEmpty()) {
-            remembered = nearby(question)
-        }
-
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = listOf(
-                    LlmMessage.user(
-                        AgentPrompt.harvestBrief(question, answer, lastTier.label, lastSources.size) +
-                            remembered.numbered(),
-                    ),
-                ),
-                tools = listOf(Tools.remember),
-                forceTool = Tools.REMEMBER,
-                maxTokens = 512,
-            ),
-        )
-        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input ?: return
-        retire(input)
-        if (input.bool("nothing") == true) return
-        keep(input)
-    }
-
-    /**
-     * Spec §19 — memory the user has just contradicted.
-     *
-     * A world fact is invalidated rather than deleted: the store keeps it with a timestamp, so
-     * what was believed and when stays on the record even though it will never be served again.
-     * A fact about a person is deleted outright - keeping "在吃布洛芬" next to "不吃了" is not
-     * provenance, it is two answers to one question.
-     */
-    private fun retire(input: JsonObject) {
-        val at = now()
-        input.ints("outdated_facts").forEach { index ->
-            remembered.world.getOrNull(index)?.let { store.invalidateWorldFact(it.fact.id, at) }
-        }
-        input.ints("outdated_about_user").forEach { index ->
-            remembered.personal.getOrNull(index)?.let { store.forgetPreference(it.fact.id) }
-        }
-    }
-
-    /**
-     * What memory holds near something the user just said, on similarity alone.
-     *
-     * The cut is deliberately tighter than the wide pass in [recall]: nothing here is going to be
-     * narrowed by a reranker afterwards, and these rows are shown to the model as things it may
-     * strike out. A loose match offered for retirement is how a correction about one medicine
-     * ends up deleting what was known about another.
-     */
-    private suspend fun nearby(text: String): Remembered {
-        val engine = retrieval ?: return Remembered.NOTHING
-        val vector = engine.embed(listOf(text))
-        val terms = listOf(text)
-        return Remembered(
-            world = store.recallWorldCandidates(terms, vector, now(), NEARBY_LIMIT)
-                .filter { it.similarity >= NEARBY_FLOOR },
-            personal = store.recallPreferenceCandidates(terms, vector, NEARBY_LIMIT)
-                .filter { it.similarity >= NEARBY_FLOOR },
-        )
-    }
-
-    private suspend fun keep(input: JsonObject) {
-        (input["world_fact"] as? JsonObject)?.let { fact ->
-            val question = fact.str("question").orEmpty()
-            val answer = fact.str("answer").orEmpty()
-            if (question.isNotBlank() && answer.isNotBlank()) {
-                store.recordWorldFact(
-                    WorldFact(
-                        id = store.nextId(),
-                        question = question,
-                        answer = answer,
-                        ttl = WorldTtl.parse(fact.str("ttl")),
-                        // The tier the answer actually rested on. Hard-coded LOW before, which
-                        // meant every remembered fact - including ones the 国家药品监督管理局
-                        // had stated outright - came back later marked as weakly sourced.
-                        tier = lastTier,
-                        sources = lastSources,
-                        // Embedded on the way in, so recall never has to embed the whole store.
-                        embedding = retrieval?.embed(listOf(question))?.firstOrNull().orEmpty(),
-                        recordedAt = now(),
-                    ),
-                )
-            }
-        }
-        (input["about_user"] as? kotlinx.serialization.json.JsonArray)?.forEach { element ->
-            val item = element as? JsonObject ?: return@forEach
-            val text = item.str("text").orEmpty()
-            if (text.isBlank()) return@forEach
-            val kind = preferenceKind(item.str("kind"))
-            store.recordPreference(
-                PreferenceFact(
-                    id = store.nextId(),
-                    text = text,
-                    kind = kind,
-                    ttl = kind.defaultTtl,
-                    // Embedded like a cached answer, and for the same reason: "药物过敏史"
-                    // has to find 对青霉素过敏 without sharing a character with it.
-                    embedding = retrieval?.embed(listOf(text))?.firstOrNull().orEmpty(),
-                    recordedAt = now(),
-                ),
-            )
-        }
     }
 
     // ---- the step machine ---------------------------------------------------------------
@@ -1020,7 +885,7 @@ data class Remembered(
         personal.map { "- [" + AgentPrompt.Label.KNOWN_USER + "] " + it.fact.text } +
             world.map { "- [" + AgentPrompt.Label.KNOWN_FACT + "] " + it.fact.answer }
 
-    /** For the harvest: the same list, numbered, so a correction can point at one. */
+    /** For the bus: the same list, numbered, so a correction can point at one. */
     fun numbered(): String {
         if (world.isEmpty() && personal.isEmpty()) return ""
         val out = StringBuilder("\n\n" + AgentPrompt.Label.KNOWN + "\n")
@@ -1070,7 +935,7 @@ data class SourceRef(
  * classifier and the evidence filter also produce text, and streaming a half-formed decision
  * into the answer slot would show the user working notes as though they were the answer.
  */
-private fun TurnProgress.forward(answer: Boolean = false): (LlmDelta) -> Unit = { delta ->
+internal fun TurnProgress.forward(answer: Boolean = false): (LlmDelta) -> Unit = { delta ->
     when (delta) {
         is LlmDelta.Thinking -> thinking(delta.text)
         is LlmDelta.Text -> if (answer) answer(delta.text)
@@ -1079,21 +944,21 @@ private fun TurnProgress.forward(answer: Boolean = false): (LlmDelta) -> Unit = 
 
 // ---- small JSON readers ------------------------------------------------------------------
 
-private fun JsonObject.str(key: String): String? =
+internal fun JsonObject.str(key: String): String? =
     this[key]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
 
-private fun JsonObject.bool(key: String): Boolean? =
+internal fun JsonObject.bool(key: String): Boolean? =
     this[key]?.let { runCatching { it.jsonPrimitive.boolean }.getOrNull() }
 
-private fun JsonObject.jsonArrayOrNull() = runCatching { jsonArray }.getOrNull()
+internal fun JsonObject.jsonArrayOrNull() = runCatching { jsonArray }.getOrNull()
 
-private fun JsonObject.strings(key: String): List<String> =
+internal fun JsonObject.strings(key: String): List<String> =
     (this[key] as? kotlinx.serialization.json.JsonArray)
         ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
         ?.filter { it.isNotBlank() }
         .orEmpty()
 
-private fun JsonObject.ints(key: String): List<Int> =
+internal fun JsonObject.ints(key: String): List<Int> =
     (this[key] as? kotlinx.serialization.json.JsonArray)
         ?.mapNotNull { runCatching { it.jsonPrimitive.content.toInt() }.getOrNull() }
         .orEmpty()
@@ -1121,11 +986,4 @@ private fun topic(raw: String?): Topic = when (raw) {
     else -> Topic.GENERAL
 }
 
-private fun preferenceKind(raw: String?): PreferenceKind = when (raw) {
-    "medical_constant" -> PreferenceKind.MEDICAL_CONSTANT
-    "profile" -> PreferenceKind.PROFILE
-    "current_state" -> PreferenceKind.CURRENT_STATE
-    // Unknown lands on the shortest life, matching PreferenceTtl.parse: a fact about a person
-    // that expires too early costs a question, one that expires too late becomes a slow lie.
-    else -> PreferenceKind.TRANSIENT
-}
+

@@ -3,6 +3,8 @@ package org.areel.fishball.core.memory
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.text.Similarity
 import org.areel.fishball.core.text.cosine
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Reference implementation of [MemoryStore], held in RAM.
@@ -10,13 +12,21 @@ import org.areel.fishball.core.text.cosine
  * Not a mock — this is the behaviour `:app`'s SQLite implementation must reproduce, and the
  * spec tests run against it. Keeping a real, readable implementation in `:core` means the
  * storage rules are pinned somewhere testable rather than living only inside SQL.
+ *
+ * Safe for one writer alongside readers, which it has to be: the memory bus writes from its
+ * own coroutine while the turn that triggered it is still reading. Copy-on-write rather than a
+ * lock because the shape of the load is lopsided — recall reads the whole list on every turn
+ * and writes arrive a handful at a time — and because a reader mid-iteration must never see a
+ * ConcurrentModificationException on a background write it knows nothing about.
  */
 class InMemoryStore : MemoryStore {
 
-    private val world = mutableListOf<WorldFact>()
-    private val preferences = mutableListOf<PreferenceFact>()
-    private val turns = mutableListOf<ConversationTurn>()
-    private var idSeq = 0L
+    private val world = CopyOnWriteArrayList<WorldFact>()
+    private val preferences = CopyOnWriteArrayList<PreferenceFact>()
+    private val turns = CopyOnWriteArrayList<ConversationTurn>()
+
+    /** Ids are handed out from two coroutines now, and two facts sharing one is a lost fact. */
+    private val idSeq = AtomicLong(0)
 
     private companion object {
         /** Low. This pass is a net, not a decision — the reranker makes the decision. */
@@ -24,7 +34,7 @@ class InMemoryStore : MemoryStore {
     }
     private var current: org.areel.fishball.core.session.Session? = null
 
-    override fun nextId(): Long = ++idSeq
+    override fun nextId(): Long = idSeq.incrementAndGet()
 
     // ---- world knowledge -------------------------------------------------------------
 
@@ -179,7 +189,7 @@ class InMemoryStore : MemoryStore {
         world = world.map { it.toDto() },
         preferences = preferences.map { it.toDto() },
         turns = turns.map { it.toDto() },
-        idSeq = idSeq,
+        idSeq = idSeq.get(),
     )
 
     fun restore(snapshot: MemorySnapshot) {
@@ -191,11 +201,13 @@ class InMemoryStore : MemoryStore {
         current = snapshot.session?.let {
             org.areel.fishball.core.session.Session(it.id, it.startedAt, it.bridge)
         }
-        idSeq = maxOf(
-            snapshot.idSeq,
-            (world.maxOfOrNull { it.id } ?: 0L),
-            (preferences.maxOfOrNull { it.id } ?: 0L),
-            (turns.maxOfOrNull { it.id } ?: 0L),
+        idSeq.set(
+            maxOf(
+                snapshot.idSeq,
+                (world.maxOfOrNull { it.id } ?: 0L),
+                (preferences.maxOfOrNull { it.id } ?: 0L),
+                (turns.maxOfOrNull { it.id } ?: 0L),
+            ),
         )
     }
 }

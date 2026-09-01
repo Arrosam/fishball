@@ -108,8 +108,15 @@ class PersistentStore(
         }
     }
 
-    private fun flush() {
+    /**
+     * Synchronised because there are two writers now: the turn appending to the log, and the
+     * memory bus recording what it learned, on its own coroutine. Each call encodes the whole
+     * store and replaces the file, so two of them interleaving would race one full snapshot
+     * against another and let the older one land last.
+     */
+    private fun flush() = synchronized(this) {
         runCatching { io.write(json.encodeToString(MemorySnapshot.serializer(), inner.snapshot())) }
+        Unit
     }
 
     override fun nextId(): Long = inner.nextId()

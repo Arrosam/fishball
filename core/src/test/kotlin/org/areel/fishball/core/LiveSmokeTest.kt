@@ -93,7 +93,8 @@ class LiveSmokeTest {
 
         runBlocking {
             conversation.ask("我对青霉素过敏。布洛芬常见的副作用是什么？")
-            conversation.harvest()
+            // The bus files on its own coroutine; a test is the one caller that has to wait.
+            conversation.memory.idle()
         }
 
         val facts = store.worldFacts()
@@ -217,7 +218,7 @@ class LiveSmokeTest {
 
         runBlocking {
             conversation.ask("布洛芬我已经停了，现在什么药都没吃。")
-            conversation.harvest()
+            conversation.memory.idle()
         }
         println("about user -> " + store.preferences().joinToString { it.text })
         assertTrue(

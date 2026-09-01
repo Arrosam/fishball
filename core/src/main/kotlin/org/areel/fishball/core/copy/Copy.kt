@@ -241,27 +241,50 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
      * fields, so memory that depended on them was never written at all. Asking one narrow
      * question and forcing the tool is the difference between a feature and an intention.
      */
-    val HARVEST = """
-下面是刚刚结束的一轮对话。判断这里面有没有值得记下来的东西，然后调用 remember。
+    /**
+     * Spec §9 — what this person just said about themselves, read the moment they say it.
+     *
+     * Runs on the user's message alone, before there is an answer, because a fact about a
+     * person is true whether or not the turn that carried it ever finished. Waiting for the
+     * reply meant a stated allergy was lost if the search failed, if the proxy was down, or if
+     * they closed the app while it was thinking.
+     */
+    val NOTE_USER = """
+下面是用户刚刚说的一句话。只看这一句，判断里面有没有关于他本人、值得记下来的事，然后调用 note_user。
 
-关于事实，默认是记下来。这一轮是查过资料才答的，结论就是以后还用得上的东西：
+值得记的：他自己说到的情况 —— 在吃什么药、对什么过敏、做什么工作、住哪、家里有谁、
+长期在关心什么。写成一句完整的话，单独拿出来也看得懂。
+
+只记他真的说过的。他问了某个病不代表他有这个病，他问某个东西怎么买也不代表他要买。
+从问题里猜出来的事，一律不记。
+
+下面会列出你记过的相关内容，每条前面有编号。如果他这句话跟哪一条对不上了 ——
+比如他说「我已经不吃布洛芬了」、「后来查出来不是甲亢」—— 把那条的编号放进
+outdated_about_user，同时把新的说法写进 about_user。只在真的不成立时才这么做。
+
+两样都真的没有，才把 nothing 设成 true。大部分闲聊和提问都是 nothing。
+""".trim()
+
+    /**
+     * Spec §10 — what the world said, read once the answer is on screen.
+     *
+     * Separate from [NOTE_USER] because the material is different: this one needs the answer
+     * and the sources it rested on, and neither exists when the question arrives.
+     */
+    val NOTE_FACT = """
+下面是刚刚结束的一轮对话。判断查到的结论值不值得记下来，然后调用 note_fact。
+
+默认是记下来。这一轮是查过资料才答的，结论就是以后还用得上的东西：
 只要来源等级是「权威」或者「中等·机构」，就记，别犹豫。
 写成一句完整、单独看也看得懂的话，别写「见上文」，别只写一个词。
 
 只有这几种情况才不记：完全没查到东西、答案只是一句寒暄、
 或者这件事明天就会变（那种应该把 ttl 设成「总是重查」，而不是不记）。
 
-值得记的关于他的事：他自己说到的情况，比如在吃什么药、对什么过敏、做什么工作。
-只记他真的说过的，不要从问题里猜。他问了某个病不代表他有这个病。
+下面会列出你记过的相关结论，每条前面有编号。如果这一轮查到的新资料推翻了旧结论，
+把那条的编号放进 outdated_facts。只在真的不成立时才这么做。
 
-还有一件事：下面会列出你记过的相关内容，每条前面有编号。
-如果他这次说的话跟哪一条对不上了 —— 比如他说「我已经不吃布洛芬了」、
-「后来查出来不是甲亢」、或者你查到的新资料推翻了旧结论 —— 把那条的编号放进
-outdated_facts 或 outdated_about_user 里。同时把新的说法照常写进 world_fact 或 about_user。
-
-只在真的不成立时才这么做。他换了个话题不算，他问起某件事也不算。
-
-三样都真的没有，才把 nothing 设成 true。
+真的没有值得记的，才把 nothing 设成 true。
 """.trim()
 
     /**
@@ -285,14 +308,17 @@ outdated_facts 或 outdated_about_user 里。同时把新的说法照常写进 w
 """.trim()
 
     /**
-     * The harvest, with the turn's evidence attached.
+     * The world-fact harvest, with the turn's evidence attached.
      *
      * The tier is included because "worth keeping" is not a judgement that can be made from the
      * words alone: the same sentence is worth remembering when 国家药品监督管理局 said it and
      * worth forgetting when a forum did.
      */
-    fun harvestBrief(question: String, answer: String, tier: String, sources: Int): String =
-        HARVEST + "\n\n本轮最高来源等级：" + tier + "，一共 " + sources +
+    fun noteUserBrief(userText: String): String =
+        NOTE_USER + "\n\n他说：" + userText
+
+    fun noteFactBrief(question: String, answer: String, tier: String, sources: Int): String =
+        NOTE_FACT + "\n\n本轮最高来源等级：" + tier + "，一共 " + sources +
             " 条来源。\n\n问：" + question + "\n答：" + answer
 
     /**
