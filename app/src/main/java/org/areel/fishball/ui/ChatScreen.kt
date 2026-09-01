@@ -501,8 +501,13 @@ private fun Composer(
             val dim = plusDown || attach.open
             // One glyph, turned. Swapping a plus for a cross is two icons agreeing to look
             // like one; turning it is the same mark doing the thing the word describes.
+            //
+            // 225, not 235. A plus has four-fold symmetry, so where it *rests* is the angle
+            // modulo 90: 235 rests at 55 and the cross leans ten degrees off square. 225 rests
+            // at 45, which is a cross exactly. The travel is unchanged - still more than half a
+            // turn - so the spin reads the same and only the landing is square.
             val turn by animateFloatAsState(
-                targetValue = if (attach.open) 235f else 0f,
+                targetValue = if (attach.open) 225f else 0f,
                 animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessLow),
                 label = "plus-turn",
             )
