@@ -697,8 +697,8 @@ private fun Composer(
                             ) {
                                 // And again as it leaves. The other buttons only open
                                 // something; this one has posted a message by now, and the
-                                // second tick is the receipt for that.
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                // second beat is the receipt for that.
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onSend()
                             }
                         },

@@ -266,15 +266,17 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
  * The tick a button gives when a finger lands on it.
  *
  * Keyed on the press rather than the click: `clickable` fires on release, and a confirmation
- * that arrives after the screen has already changed is not a confirmation. TextHandleMove is
- * the light one - the firm LongPress belongs to holding the microphone, where it is the only
- * signal that a recording has begun.
+ * that arrives after the screen has already changed is not a confirmation.
+ *
+ * LongPress, the same as the microphone. TextHandleMove was the light one and on a real phone
+ * it is close enough to nothing that a tap felt unanswered - a haptic too faint to notice is
+ * worse than none, because it spends the vibrator on a signal nobody receives.
  */
 @Composable
 internal fun tapFeedback(pressed: Boolean) {
     val haptics = LocalHapticFeedback.current
     LaunchedEffect(pressed) {
-        if (pressed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        if (pressed) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 }
 

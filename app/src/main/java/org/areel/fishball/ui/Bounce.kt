@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -151,7 +152,11 @@ fun Modifier.bounce(
     atStart: () -> Boolean = { true },
     atEnd: () -> Boolean = { true },
 ): Modifier {
-    val connection = remember(state, atStart, atEnd) {
+    // The predicates are read through a holder rather than captured. They are new lambdas on
+    // every recomposition, so keying the connection on them rebuilt it constantly - and a
+    // nested-scroll connection swapped out underneath a gesture is a gesture that stops.
+    val edges = rememberUpdatedState(atStart to atEnd)
+    val connection = remember(state) {
         object : NestedScrollConnection {
 
             // Dragging back toward rest must close the bounce before the list scrolls again,
@@ -176,14 +181,26 @@ fun Modifier.bounce(
             ): Offset {
                 if (source != NestedScrollSource.UserInput || available.y == 0f) return Offset.Zero
                 // Positive is content coming down, which only runs out at the top.
-                if (available.y > 0f && !atStart()) return Offset.Zero
-                if (available.y < 0f && !atEnd()) return Offset.Zero
+                if (available.y > 0f && !edges.value.first()) return Offset.Zero
+                if (available.y < 0f && !edges.value.second()) return Offset.Zero
                 return Offset(0f, state.pull(available.y))
             }
 
-            // Release: spring home, and swallow the fling so the list does not also coast.
-            override suspend fun onPreFling(available: Velocity): Velocity {
+            /**
+              * Release.
+              *
+              * A fling *into* the edge is the band's: it is already stretched, and letting the
+              * list coast as well would be two things moving at once. A fling *away* from it is
+              * the list's, and taking that was how a drag died - one stray pixel of stretch
+              * picked up on the way, and the whole flick that followed was swallowed, so the
+              * thread stopped where the finger left it instead of carrying on.
+              */
+             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (state.current == 0f) return Velocity.Zero
+                if (available.y != 0f && sign(state.current) != sign(available.y)) {
+                    state.settle(0f)
+                    return Velocity.Zero
+                }
                 state.settle(available.y)
                 return available
             }
@@ -199,8 +216,8 @@ fun Modifier.bounce(
              */
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 if (available.y == 0f) return Velocity.Zero
-                if (available.y > 0f && !atStart()) return Velocity.Zero
-                if (available.y < 0f && !atEnd()) return Velocity.Zero
+                if (available.y > 0f && !edges.value.first()) return Velocity.Zero
+                if (available.y < 0f && !edges.value.second()) return Velocity.Zero
                 state.settle(available.y.coerceIn(-MAX_ARRIVAL_V, MAX_ARRIVAL_V))
                 return available
             }
