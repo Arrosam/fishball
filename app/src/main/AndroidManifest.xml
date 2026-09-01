@@ -12,6 +12,13 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!--
+      Holding the composer's button down to speak instead of type. Asked for at the moment the
+      button is first held, not on launch: a microphone prompt on the activation screen, before
+      anything has been said, is a request with no visible reason for it.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

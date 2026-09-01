@@ -39,6 +39,23 @@ class Backend private constructor(
     /** The model in use, as stored. Empty before the first sign-in. */
     val modelId: String get() = prefs().getString(KEY_MODEL, null).orEmpty()
 
+    /**
+     * Spoken audio, as text. Null when there is nothing usable to send on.
+     *
+     * Lives here rather than on [Voice] so the activation code stays inside the one class that
+     * holds it: the recorder hands over a file, not a credential.
+     */
+    suspend fun transcribe(file: java.io.File): String? {
+        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return null
+        return voice.transcribe(file, key)
+    }
+
+    /** The microphone, and the one upload it feeds. */
+    val voice by lazy { Voice(context) }
+
+    /** For a permission check, which needs a Context and has no business holding the rest. */
+    val appContext: Context get() = context
+
     /** Enough of the code to recognise it by, and not enough to read it off a screen. */
     fun keyHint(): String {
         val key = prefs().getString(KEY_API, null).orEmpty()

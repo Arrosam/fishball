@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +45,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -162,6 +165,10 @@ fun ChatScreen(
         vm.send(text)
     }
 
+    // Spoken input joins the thread through the same door typing does: what comes back from
+    // ASR is sent as the question, not offered as a draft to confirm.
+    val voice = rememberVoiceState(backend = vm.backend, onText = { send(it) })
+
     Column(
         Modifier
             .fillMaxSize()
@@ -268,6 +275,7 @@ fun ChatScreen(
                 send(draft)
                 draft = ""
             },
+            voice = voice,
         )
     }
 }
@@ -287,7 +295,11 @@ private fun Composer(
     onValueChange: (String) -> Unit,
     enabled: Boolean,
     onSend: () -> Unit,
+    voice: VoiceState,
 ) {
+    // With nothing typed there is nothing to send, so the plate is a microphone instead. One
+    // control, two jobs, and never both at once - which is why it can be the same square.
+    val speaking = value.isEmpty()
     Column(
         Modifier
             .fillMaxWidth()
@@ -324,7 +336,40 @@ private fun Composer(
                     .userRule()
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
               ) {
-                BasicTextField(
+                // While the button is held the field is where the state is reported, because
+                // that is the one place already in view and a finger is covering the plate.
+                when (voice.phase) {
+                    VoicePhase.RECORDING -> Column {
+                        Text(
+                            stringResource(R.string.voice_recording),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Areel.Magenta,
+                        )
+                        Text(
+                            stringResource(R.string.voice_release),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Areel.Ink40,
+                        )
+                    }
+
+                    VoicePhase.TRANSCRIBING -> Text(
+                        stringResource(R.string.voice_transcribing),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Areel.Ink40,
+                    )
+
+                    // The field is always here, and the notice sits behind it as a hint.
+                    // Replacing the field with the notice was a trap: the only way to clear
+                    // the line was to type, and there was nothing left to type into.
+                    VoicePhase.IDLE -> {
+                        if (speaking && voice.notice != null) {
+                            Text(
+                                voice.notice.orEmpty(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Areel.Ink40,
+                            )
+                        }
+                        BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     enabled = enabled,
@@ -334,23 +379,59 @@ private fun Composer(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { onSend() }),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                        )
+                    }
+                }
               }
             }
             // A square plate rather than an IconButton. M3's IconButton clips its container to
             // CircleShape, so the send control came out round - the one shape this design does
             // not contain anywhere.
+            val held = voice.phase == VoicePhase.RECORDING
             Box(
                 Modifier
                     .padding(start = 10.dp)
                     .size(48.dp)
-                    .background(if (enabled) Areel.Magenta else Areel.Ink20, RectangleShape)
-                    .clickable(enabled = enabled, onClick = onSend),
+                    .background(
+                        when {
+                            !enabled -> Areel.Ink20
+                            // Held: inverted, so the control that is doing something looks
+                            // pressed rather than merely coloured.
+                            held -> Areel.Ink
+                            else -> Areel.Magenta
+                        },
+                        RectangleShape,
+                    )
+                    .then(
+                        if (speaking) {
+                            // Held, not tapped - the second line of the indicator promises
+                            // that releasing sends, and only a press gesture can keep that
+                            // promise. tryAwaitRelease returns on a lifted finger and on a
+                            // cancelled gesture alike, which is the behaviour wanted: sliding
+                            // off the button still ends the recording rather than orphaning it.
+                            Modifier.pointerInput(enabled) {
+                                if (!enabled) return@pointerInput
+                                detectTapGestures(
+                                    onPress = {
+                                        voice.onHold()
+                                        tryAwaitRelease()
+                                        voice.onRelease()
+                                    },
+                                )
+                            }
+                        } else {
+                            Modifier.clickable(enabled = enabled, onClick = onSend)
+                        },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_send),
-                    contentDescription = stringResource(R.string.send),
+                    painter = painterResource(
+                        if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
+                    ),
+                    contentDescription = stringResource(
+                        if (speaking) R.string.voice_hold else R.string.send,
+                    ),
                     tint = if (enabled) Areel.Paper else Areel.Ink40,
                     modifier = Modifier.size(24.dp),
                 )

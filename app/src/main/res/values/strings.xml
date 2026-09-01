@@ -44,6 +44,20 @@
     <!-- Composer: no placeholder by design. The field and the send control carry it. -->
     <string name="send">发送</string>
 
+    <!--
+      Speaking instead of typing. The button is the send plate until there is something to
+      send, so with an empty field it is a microphone — held down, not tapped, which the
+      second line says outright because nothing about the control itself can.
+    -->
+    <string name="voice_hold">按住说话</string>
+    <string name="voice_recording">录音中</string>
+    <string name="voice_release">松开发送语音</string>
+    <string name="voice_transcribing">正在转文字…</string>
+    <!-- Heard nothing usable. Says what to do, and does not blame the microphone or the person. -->
+    <string name="voice_empty">没听清，再说一遍吧。</string>
+    <!-- The permission was refused. One line, and the place it can be changed. -->
+    <string name="voice_no_permission">要先允许鱼丸用麦克风才能说话。</string>
+
     <!-- The thread before anything is in it. Author's copy, approved 2026-08-31. -->
     <string name="thread_empty">我是鱼丸，你的私人AI助理，来问我第一个问题，让我们一起探索这个世界吧！</string>
 

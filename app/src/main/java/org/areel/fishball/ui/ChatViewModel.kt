@@ -46,7 +46,8 @@ data class ChatMessage(
 )
 
 class ChatViewModel(
-    private val backend: Backend,
+    /** Also read by the screen, which needs it for the microphone. */
+    val backend: Backend,
     private val compactedNotice: String,
 ) : ViewModel() {
 

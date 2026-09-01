@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microphone. A capsule the design does not otherwise contain would read as a
+  borrowed glyph, so the head is a rectangle with its four corners cut at 45 -
+  the same chamfer the message plates use - and everything else runs orthogonal.
+
+  The first version pointed the head downward over a wide V and read as a
+  download arrow. The head has to be a closed barrel standing upright, with the
+  cradle passing under it rather than meeting at a point.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins, coordinates on integers. Colour is set by the Icon()
+  tint at the call site, not here.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- the barrel, standing upright, corners chamfered at 45 -->
+    <path
+        android:pathData="M10 5 L11 4 L13 4 L14 5 L14 12 L13 13 L11 13 L10 12 Z"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <!-- the cradle passing under the barrel, then the stem and the base rule -->
+    <path
+        android:pathData="M7 10 L7 13 L9 15 L15 15 L17 13 L17 10 M12 15 L12 19 M9 19 L15 19"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+</vector>
