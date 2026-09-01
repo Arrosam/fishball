@@ -51,6 +51,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -185,6 +190,12 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // Read here: a Canvas is not a composable scope, so the label cannot be fetched inside it.
+    val moreLabel = stringResource(R.string.more)
+    // On the way down, not the way up. A tap is felt when the finger lands - that is when the
+    // person has committed to it - and a tick on release would arrive after the thing it is
+    // meant to confirm has already happened on screen.
+    tapFeedback(pressed)
 
     Box {
         Box(
@@ -203,11 +214,11 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_more),
-                contentDescription = stringResource(R.string.more),
-                tint = Areel.Ink,
-                modifier = Modifier.size(20.dp),
+            MoreMark(
+                open = open,
+                modifier = Modifier
+                    .size(20.dp)
+                    .semantics { contentDescription = moreLabel },
             )
         }
 
@@ -248,6 +259,69 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The tick a button gives when a finger lands on it.
+ *
+ * Keyed on the press rather than the click: `clickable` fires on release, and a confirmation
+ * that arrives after the screen has already changed is not a confirmation. TextHandleMove is
+ * the light one - the firm LongPress belongs to holding the microphone, where it is the only
+ * signal that a recording has begun.
+ */
+@Composable
+internal fun tapFeedback(pressed: Boolean) {
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(pressed) {
+        if (pressed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+}
+
+/**
+ * 三 becoming 一.
+ *
+ * Three bars is the sign for a menu and one bar is the sign for closing it, and they are the
+ * same strokes either way - so the button does not swap one picture for another. The top bar
+ * walks down to the middle and the other two carry on out of the box, which is also what
+ * opening the menu looks like from the plates' side: things coming down out of the button.
+ *
+ * Drawn rather than shipped as two drawables because each bar has to move on its own. The
+ * geometry is the one the rest of the icon set is on - 24 grid, 18 wide, 2.4 thick, bars on
+ * 5-unit centres at 7, 12 and 17 - which is why the top bar has one step exactly to travel.
+ */
+@Composable
+private fun MoreMark(open: Boolean, modifier: Modifier) {
+    val turn by animateFloatAsState(
+        targetValue = if (open) 1f else 0f,
+        // A little bounce as the top bar arrives, matching the plates it is opening. The two
+        // that are leaving are already transparent by the time the overshoot happens.
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow),
+        label = "more-mark",
+    )
+
+    Canvas(modifier) {
+        val unit = size.minDimension / 24f
+        val left = 3f * unit
+        val width = 18f * unit
+        val thick = 2.4f * unit
+
+        fun bar(centre: Float, alpha: Float) {
+            if (alpha <= 0.01f) return
+            drawRect(
+                color = Areel.Ink,
+                topLeft = Offset(left, centre * unit - thick / 2f),
+                size = Size(width, thick),
+                alpha = alpha.coerceIn(0f, 1f),
+            )
+        }
+
+        // The top bar walks its one step down to the middle, and stays.
+        bar(7f + 5f * turn, 1f)
+        // The other two carry on downward and are gone before they reach the edge, so nothing
+        // needs clipping and the box stays exactly the icon's size.
+        bar(12f + 9f * turn, 1f - turn)
+        bar(17f + 9f * turn, 1f - turn)
     }
 }
 

@@ -119,12 +119,39 @@ fun rememberBounceState(): BounceState = remember { BounceState(limitPx = 120f) 
 private const val ARRIVAL_MS = 130
 
 /**
+ * The fastest arrival the band will honour, in pixels per second.
+ *
+ * Measured rather than estimated: on this spring the peak comes out at about 0.124px per px/s,
+ * so 3000 - the first guess - threw the thread 373px past its own end, six times the overshoot
+ * the jump button uses and far too much to call little. 650 lands near 80px, which reads as a
+ * thread that arrived with momentum rather than one that was flung off the screen.
+ */
+private const val MAX_ARRIVAL_V = 650f
+
+/**
  * Attach to a container **wrapping** the scrollable. The scrollable itself should carry
  * `Modifier.offset { IntOffset(0, state.translation) }` so the whole list moves as one sheet.
  */
 @Composable
-fun Modifier.bounce(state: BounceState): Modifier {
-    val connection = remember(state) {
+fun Modifier.bounce(
+    state: BounceState,
+    /**
+     * Whether the scrollable is actually at that end of its content.
+     *
+     * Without these the band read every unconsumed pixel as an edge, and a LazyColumn hands
+     * back unconsumed pixels for a reason that has nothing to do with edges: dragged hard
+     * towards the top, it runs out of *composed* items before it runs out of items, and for a
+     * frame or two it cannot take the delta because the row above has not been measured yet.
+     * The band took that as the top of the conversation, stretched, and sprang - which from
+     * the outside is a thread that stops dead half way up a hard drag.
+     *
+     * Default true, which is the old behaviour and the right one for a container that has no
+     * list in it: whatever cannot be scrolled is overscroll.
+     */
+    atStart: () -> Boolean = { true },
+    atEnd: () -> Boolean = { true },
+): Modifier {
+    val connection = remember(state, atStart, atEnd) {
         object : NestedScrollConnection {
 
             // Dragging back toward rest must close the bounce before the list scrolls again,
@@ -136,14 +163,21 @@ fun Modifier.bounce(state: BounceState): Modifier {
                 return Offset(0f, state.close(available.y))
             }
 
-            // Whatever the list could not use is overscroll — including *all* of it when the
-            // content fits and the list can scroll nowhere.
+            // What the list could not use is overscroll only where there is nothing left to
+            // scroll to. Everywhere else it is the list catching up with itself, and taking it
+            // would stop a drag the content was still able to serve.
+            //
+            // Content that fits the viewport reports both ends at once, so it still bounces in
+            // either direction - which is the case this band exists for.
             override fun onPostScroll(
                 consumed: Offset,
                 available: Offset,
                 source: NestedScrollSource,
             ): Offset {
                 if (source != NestedScrollSource.UserInput || available.y == 0f) return Offset.Zero
+                // Positive is content coming down, which only runs out at the top.
+                if (available.y > 0f && !atStart()) return Offset.Zero
+                if (available.y < 0f && !atEnd()) return Offset.Zero
                 return Offset(0f, state.pull(available.y))
             }
 
@@ -151,6 +185,23 @@ fun Modifier.bounce(state: BounceState): Modifier {
             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (state.current == 0f) return Velocity.Zero
                 state.settle(available.y)
+                return available
+            }
+
+            /**
+             * The list has finished coasting and still has speed left, which can only mean it
+             * ran out of conversation. Carry that speed into the band so the thread runs past
+             * its own end and comes back, rather than stopping against nothing.
+             *
+             * The leftover velocity is what decides how far - a gentle flick barely moves, a
+             * hard one visibly overshoots - capped so that a very hard fling does not throw the
+             * whole thread off the screen and spring it back from there.
+             */
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (available.y == 0f) return Velocity.Zero
+                if (available.y > 0f && !atStart()) return Velocity.Zero
+                if (available.y < 0f && !atEnd()) return Velocity.Zero
+                state.settle(available.y.coerceIn(-MAX_ARRIVAL_V, MAX_ARRIVAL_V))
                 return available
             }
         }

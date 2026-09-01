@@ -73,6 +73,10 @@ class VoiceState internal constructor(
 
     fun onRelease() {
         if (phase != VoicePhase.RECORDING) return
+        // Felt on the way up too. Holding to speak is the one gesture in the app with no visible
+        // moment of completion - the finger is over the button - so the end of it is told by
+        // touch, the same way the beginning was.
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val file = backend.voice.stop()
         if (file == null) {
             // Too short to be speech. Silent on purpose: this is the mis-tap of somebody

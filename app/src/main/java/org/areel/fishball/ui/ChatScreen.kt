@@ -70,6 +70,9 @@ import androidx.compose.ui.window.DialogProperties
 import org.areel.fishball.data.Attachment
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -122,6 +125,7 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
 
     // Rows that have already played their entrance. A LazyColumn discards and rebuilds an
     // item when it scrolls out and back, so without this an old message re-animates every
@@ -233,7 +237,14 @@ fun ChatScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .clipToBounds()
-                .bounce(bounce),
+                // The list is asked where it is rather than inferred from what it declined to
+                // scroll. See Bounce.kt: a LazyColumn declines mid-drag while it composes the
+                // row above, which is not the top of anything.
+                .bounce(
+                    state = bounce,
+                    atStart = { !listState.canScrollBackward },
+                    atEnd = { !listState.canScrollForward },
+                ),
         ) {
             // The platform stretch is turned off: with the rubber band below it, an edge would
             // stretch and translate at once, which reads as two effects arguing.
@@ -330,7 +341,20 @@ fun ChatScreen(
                     // left behind by the next answer would undo the trip.
                     following = true
                     scope.launch {
+                        // Ticking while it travels, so the trip is felt as distance rather than
+                        // as one event. Light, and often enough to read as texture rather than
+                        // as a series of separate taps.
+                        val ticking = launch {
+                            while (isActive) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                delay(JUMP_TICK_MS)
+                            }
+                        }
                         toEnd(smooth = true)
+                        ticking.cancel()
+                        // And one firmer one on arrival. The texture stops, something solid
+                        // happens: that is the end of the conversation, felt.
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         // After the list has actually stopped, not alongside it: run the two
                         // together and the overshoot is spent while the thread is still moving,
                         // so nothing arrives anywhere.
@@ -498,7 +522,16 @@ private fun Composer(
             // grey it darkens to is the bar's own colour though, so on its own the plate
             // vanishes into the bar the moment it is doing something - hence the ink edge,
             // which is the only thing keeping it a button while its menu is out.
+            tapFeedback(plusDown)
             val dim = plusDown || attach.open
+            // The edge arrives rather than appearing. Snapped on, it read as a second button
+            // replacing the first; faded in over the same beat as the glyph's turn, it reads as
+            // the one button changing state.
+            val edge by animateFloatAsState(
+                targetValue = if (dim) 1f else 0f,
+                animationSpec = tween(durationMillis = 160, easing = EaseMech),
+                label = "plus-edge",
+            )
             // One glyph, turned. Swapping a plus for a cross is two icons agreeing to look
             // like one; turning it is the same mark doing the thing the word describes.
             //
@@ -517,7 +550,13 @@ private fun Composer(
                     .size(48.dp)
                     .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
                     .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
-                    .then(if (dim) Modifier.border(1.dp, Areel.Ink) else Modifier)
+                    .then(
+                        if (edge > 0.01f) {
+                            Modifier.border(1.dp, Areel.Ink.copy(alpha = edge))
+                        } else {
+                            Modifier
+                        },
+                    )
                     .clickable(
                         interactionSource = plusPress,
                         indication = null,
@@ -612,6 +651,10 @@ private fun Composer(
             // A square plate rather than an IconButton. M3's IconButton clips its container to
             // CircleShape, so the send control came out round - the one shape this design does
             // not contain anywhere.
+            val sendPress = remember { MutableInteractionSource() }
+            val sendDown by sendPress.collectIsPressedAsState()
+            if (!speaking) tapFeedback(sendDown)
+            val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
             Box(
                 Modifier
@@ -645,7 +688,17 @@ private fun Composer(
                                 )
                             }
                         } else {
-                            Modifier.clickable(enabled = enabled, onClick = onSend)
+                            Modifier.clickable(
+                                interactionSource = sendPress,
+                                indication = null,
+                                enabled = enabled,
+                            ) {
+                                // And again as it leaves. The other buttons only open
+                                // something; this one has posted a message by now, and the
+                                // second tick is the receipt for that.
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSend()
+                            }
                         },
                     ),
                 contentAlignment = Alignment.Center,
@@ -895,6 +948,9 @@ private fun AttachViewer(attach: AttachState) {
         }
     }
 }
+
+/** How often the jump ticks on its way down. Texture, not a countdown. */
+private const val JUMP_TICK_MS = 55L
 
 /** Left to right, out of the plus. Same beat as the masthead menu. */
 private const val ATTACH_STAGGER_MS = 55L
