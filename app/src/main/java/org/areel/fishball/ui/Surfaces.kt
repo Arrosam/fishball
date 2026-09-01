@@ -9,6 +9,10 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.composed
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -214,39 +218,58 @@ fun Modifier.userRule(): Modifier = this.drawBehind {
  * it hears out across the field. Lines rather than a waveform, on the same grid as everything
  * else - a smooth curve would be the only round thing in the app.
  *
- * Each line is born at the rule and travels left, fading evenly the whole way and reaching
- * nothing by [TRAVEL] of the width. That fraction is what keeps it clear of 录音中 and
- * 松开发送语音 at the other end: the words are read, not decorated, and a line arriving under
- * them would be the meter drawing on the only text on screen.
+ * Each line is emitted at the rule and travels left at a constant speed, fading evenly the
+ * whole way and reaching nothing by [TRAVEL] of the width. That fraction is what keeps it clear
+ * of 录音中 and 松开发送语音 at the other end: the words are read, not decorated.
  *
- * [level] is a lambda rather than a value so the reading is taken inside the draw. Passed by
- * value it would recompose this whole strip of the composer twenty-five times a second to
- * repaint two hundred pixels.
+ * **The gap between lines is the voice.** Speed is constant, so how far apart they sit is
+ * decided entirely by how often one is emitted, and that interval shortens with volume - a loud
+ * moment packs them, a quiet one strings them out. An earlier version modulated brightness
+ * instead, which the eye reads as one thing pulsing rather than as a rate.
+ *
+ * It starts empty. The lines are a queue rather than a standing pattern, so pressing the button
+ * emits the first one at the rule and the field fills from there; the previous version ran a
+ * loop the whole time and appeared already full the instant it was shown.
  */
 fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed {
-    val transition = rememberInfiniteTransition(label = "voice-wave")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(WAVE_PERIOD_MS, easing = LinearEasing)),
-        label = "wave-phase",
-    )
+    // Progress of each live line, 0 at the rule to 1 where it is gone. A plain list, because
+    // there are never more than a handful and they leave in the order they arrived.
+    val lines = remember { mutableStateListOf<Float>() }
+
+    LaunchedEffect(active) {
+        lines.clear()
+        if (!active) return@LaunchedEffect
+        var last = withFrameNanos { it }
+        var sinceEmit = Float.MAX_VALUE      // emit one immediately, so the press is answered
+        while (true) {
+            val now = withFrameNanos { it }
+            val dt = ((now - last) / 1_000_000L).toFloat()
+            last = now
+
+            val loud = level().coerceIn(0f, 1f)
+            val interval = EMIT_SLOW_MS + (EMIT_FAST_MS - EMIT_SLOW_MS) * loud
+
+            sinceEmit += dt
+            if (sinceEmit >= interval) {
+                sinceEmit = 0f
+                lines.add(0f)
+            }
+            for (i in lines.indices) lines[i] = lines[i] + dt / LIFE_MS
+            while (lines.isNotEmpty() && lines.first() >= 1f) lines.removeAt(0)
+        }
+    }
 
     drawBehind {
-        if (!active) return@drawBehind
+        if (lines.isEmpty()) return@drawBehind
         val rule = 3.dp.toPx()
         val width = 2.dp.toPx()
         val travel = size.width * TRAVEL
-        // Never silent, and never still: a floor keeps the meter alive through the gaps between
-        // words, which is what says the recording is still running. The voice is the rest.
-        val strength = 0.22f + 0.78f * level().coerceIn(0f, 1f)
 
-        repeat(WAVE_LINES) { i ->
-            val p = (phase + i.toFloat() / WAVE_LINES) % 1f
+        lines.forEach { p ->
             val x = size.width - rule - width - p * travel
-            if (x < 0f) return@repeat
+            if (x < 0f) return@forEach
             drawRect(
-                color = Areel.Magenta.copy(alpha = (1f - p) * strength),
+                color = Areel.Magenta.copy(alpha = (1f - p).coerceIn(0f, 1f)),
                 topLeft = Offset(x, 0f),
                 size = Size(width, size.height),
             )
@@ -254,9 +277,17 @@ fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed
     }
 }
 
-/** One line every [WAVE_PERIOD_MS]/[WAVE_LINES]; slow enough to follow, quick enough to read as sound. */
-private const val WAVE_PERIOD_MS = 1400
-private const val WAVE_LINES = 5
+/**
+ * How often a line leaves the rule, in milliseconds, at silence and at full voice.
+ *
+ * These two numbers are the whole meter. Speed is fixed, so the interval is the spacing, and
+ * the spacing is what somebody reads as loud or quiet.
+ */
+private const val EMIT_SLOW_MS = 260f
+private const val EMIT_FAST_MS = 70f
+
+/** How long a line takes to cross [TRAVEL] and fade out. */
+private const val LIFE_MS = 1300f
 
 /** How far across the field a line gets before it is gone. Leaves the words at the left alone. */
 private const val TRAVEL = 0.55f

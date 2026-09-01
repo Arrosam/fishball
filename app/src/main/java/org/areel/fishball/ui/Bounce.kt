@@ -201,7 +201,13 @@ fun Modifier.bounce(
                     state.settle(0f)
                     return Velocity.Zero
                 }
-                state.settle(available.y)
+                // Capped, like every other arrival. This took the raw fling velocity, which on
+                // a hard flick is thousands of pixels a second, and fed it straight into the
+                // spring - so a single pixel of stretch picked up anywhere turned the next
+                // flick into six hundred pixels of travel and return. Measured off a recording
+                // of the fault: 560, 600 and 680px of spring-back on three separate drags,
+                // none of them at an edge.
+                state.settle(available.y.coerceIn(-MAX_ARRIVAL_V, MAX_ARRIVAL_V))
                 return available
             }
 
