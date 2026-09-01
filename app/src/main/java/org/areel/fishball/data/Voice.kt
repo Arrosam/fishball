@@ -87,6 +87,11 @@ class Voice(private val context: Context) {
      * plate used to be, and somebody reaching for it out of habit should get silence rather than
      * an empty turn. `MediaRecorder.stop()` also throws outright on a file with no frames in it,
      * which is the same case seen from the other side.
+     *
+     * A whole second, not the fraction it was. Nobody says anything in under a second, so
+     * everything below it is either a mis-tap or a word that was cut off at both ends - and a
+     * half-word sent to be transcribed comes back as either nothing or a guess, both of which
+     * cost a turn to undo.
      */
     fun stop(): File? {
         val rec = recorder ?: return null
@@ -183,8 +188,8 @@ class Voice(private val context: Context) {
         const val SAMPLE_RATE = 16_000
         const val BIT_RATE = 64_000
 
-        /** Below this it was a tap, not a held button. */
-        const val MIN_MS = 600L
+        /** Below this nothing was said. See [stop]. */
+        const val MIN_MS = 1000L
 
         /** 16-bit signed, so this is as loud as a sample can be. */
         const val MAX_AMPLITUDE = 32767f

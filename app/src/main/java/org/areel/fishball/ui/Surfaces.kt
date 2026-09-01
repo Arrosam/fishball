@@ -10,9 +10,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.composed
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -215,82 +216,95 @@ fun Modifier.userRule(): Modifier = this.drawBehind {
  * What the microphone is hearing, leaving the rule that marks the user's own words.
  *
  * The rule is already the thing that says "this is you"; while it is listening, it sends what
- * it hears out across the field. Lines rather than a waveform, on the same grid as everything
- * else - a smooth curve would be the only round thing in the app.
+ * it hears out across the field. Lines rather than a curve, on the same grid as everything
+ * else - a smooth waveform would be the only round thing in the app - but read together they
+ * are a waveform, because each one is as tall as the room was loud at the moment it left.
  *
- * Each line is emitted at the rule and travels left at a constant speed, fading evenly the
- * whole way and reaching nothing by [TRAVEL] of the width. That fraction is what keeps it clear
- * of 录音中 and 松开发送语音 at the other end: the words are read, not decorated.
+ * **The height is the voice.** Two earlier versions put it elsewhere and neither read as sound:
+ * brightness, which the eye takes as one thing pulsing, and spacing, which is a rate rather
+ * than a level. A bar that grows when you speak is the only one of the three that looks like
+ * what a voice does, and it is what every meter has always done. The lines leave at a fixed
+ * interval now, so the shape they make travelling away is the shape of what was said.
  *
- * **The gap between lines is the voice.** Speed is constant, so how far apart they sit is
- * decided entirely by how often one is emitted, and that interval shortens with volume - a loud
- * moment packs them, a quiet one strings them out. An earlier version modulated brightness
- * instead, which the eye reads as one thing pulsing rather than as a rate.
+ * Each is emitted at the rule, travels left at a constant speed, and fades evenly the whole way
+ * to nothing by [TRAVEL] of the width. That fraction keeps them clear of 录音中 and
+ * 松开发送语音 at the other end: the words are read, not decorated.
  *
- * It starts empty. The lines are a queue rather than a standing pattern, so pressing the button
- * emits the first one at the rule and the field fills from there; the previous version ran a
- * loop the whole time and appeared already full the instant it was shown.
+ * It starts empty. The lines are a queue, not a standing pattern, so pressing the button emits
+ * the first at the rule and the field fills from there.
  */
 fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed {
-    // Progress of each live line, 0 at the rule to 1 where it is gone. A plain list, because
-    // there are never more than a handful and they leave in the order they arrived.
-    val lines = remember { mutableStateListOf<Float>() }
+    // A plain list plus a frame counter, rather than a snapshot list: these change every frame
+    // and only the drawing needs to know, so one state read is cheaper than twenty writes.
+    val pulses = remember { mutableListOf<Pulse>() }
+    var tick by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(active) {
-        lines.clear()
+        pulses.clear()
+        tick++
         if (!active) return@LaunchedEffect
         var last = withFrameNanos { it }
-        var sinceEmit = Float.MAX_VALUE      // emit one immediately, so the press is answered
+        var since = EMIT_MS                       // emit at once, so the press is answered
         while (true) {
             val now = withFrameNanos { it }
             val dt = ((now - last) / 1_000_000L).toFloat()
             last = now
 
-            val loud = level().coerceIn(0f, 1f)
-            val interval = EMIT_SLOW_MS + (EMIT_FAST_MS - EMIT_SLOW_MS) * loud
-
-            sinceEmit += dt
-            if (sinceEmit >= interval) {
-                sinceEmit = 0f
-                lines.add(0f)
+            since += dt
+            if (since >= EMIT_MS) {
+                since = 0f
+                // The level is read here and kept, so the bar carries the moment it left
+                // rather than being restyled by whatever is said after it.
+                pulses.add(Pulse(0f, level().coerceIn(0f, 1f)))
             }
-            for (i in lines.indices) lines[i] = lines[i] + dt / LIFE_MS
-            while (lines.isNotEmpty() && lines.first() >= 1f) lines.removeAt(0)
+            pulses.forEach { it.travelled += dt / LIFE_MS }
+            while (pulses.isNotEmpty() && pulses.first().travelled >= 1f) pulses.removeAt(0)
+            tick++
         }
     }
 
     drawBehind {
-        if (lines.isEmpty()) return@drawBehind
+        @Suppress("UNUSED_EXPRESSION") tick        // subscribe: this is what repaints each frame
+        if (pulses.isEmpty()) return@drawBehind
         val rule = 3.dp.toPx()
         val width = 2.dp.toPx()
         val travel = size.width * TRAVEL
+        val mid = size.height / 2f
 
-        lines.forEach { p ->
-            val x = size.width - rule - width - p * travel
+        pulses.forEach { pulse ->
+            val x = size.width - rule - width - pulse.travelled * travel
             if (x < 0f) return@forEach
+            // Grown from the middle, both ways, which is what makes a row of bars read as a
+            // wave rather than as a bar chart.
+            val half = size.height * (QUIET + (1f - QUIET) * pulse.loudness) / 2f
             drawRect(
-                color = Areel.Magenta.copy(alpha = (1f - p).coerceIn(0f, 1f)),
-                topLeft = Offset(x, 0f),
-                size = Size(width, size.height),
+                color = Areel.Magenta.copy(alpha = (1f - pulse.travelled).coerceIn(0f, 1f)),
+                topLeft = Offset(x, mid - half),
+                size = Size(width, half * 2f),
             )
         }
     }
 }
 
-/**
- * How often a line leaves the rule, in milliseconds, at silence and at full voice.
- *
- * These two numbers are the whole meter. Speed is fixed, so the interval is the spacing, and
- * the spacing is what somebody reads as loud or quiet.
- */
-private const val EMIT_SLOW_MS = 260f
-private const val EMIT_FAST_MS = 70f
+/** One line, and how loud it was when it left. */
+private class Pulse(var travelled: Float, val loudness: Float)
+
+/** How often a line leaves the rule. Fixed, so the shape is the voice and not the rhythm. */
+private const val EMIT_MS = 70f
 
 /** How long a line takes to cross [TRAVEL] and fade out. */
 private const val LIFE_MS = 1300f
 
 /** How far across the field a line gets before it is gone. Leaves the words at the left alone. */
 private const val TRAVEL = 0.55f
+
+/**
+ * The height of a line in silence, as a fraction of the field.
+ *
+ * Not zero: a recording that is running has to look like one even between words, and a row of
+ * invisible bars would say the microphone had stopped listening.
+ */
+private const val QUIET = 0.16f
 
 /**
  * The mark. Every edge lands on 0/45/90 with the head into the upper-right, so it reads as a
