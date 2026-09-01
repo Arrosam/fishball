@@ -68,6 +68,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import org.areel.fishball.data.Attachment
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -492,15 +494,25 @@ private fun Composer(
             // plates, so it should be the same object.
             val plusPress = remember { MutableInteractionSource() }
             val plusDown by plusPress.collectIsPressedAsState()
+            // Grey while pressed or open, exactly as the masthead's more button behaves. The
+            // grey it darkens to is the bar's own colour though, so on its own the plate
+            // vanishes into the bar the moment it is doing something - hence the ink edge,
+            // which is the only thing keeping it a button while its menu is out.
+            val dim = plusDown || attach.open
+            // One glyph, turned. Swapping a plus for a cross is two icons agreeing to look
+            // like one; turning it is the same mark doing the thing the word describes.
+            val turn by animateFloatAsState(
+                targetValue = if (attach.open) 235f else 0f,
+                animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessLow),
+                label = "plus-turn",
+            )
             Box(
                 Modifier
                     .padding(end = 10.dp)
                     .size(48.dp)
                     .offset(x = if (plusDown) 1.dp else 0.dp, y = if (plusDown) 1.dp else 0.dp)
-                    .background(
-                        if (plusDown || attach.open) Areel.Concrete2 else Areel.Paper,
-                        RectangleShape,
-                    )
+                    .background(if (dim) Areel.Concrete2 else Areel.Paper, RectangleShape)
+                    .then(if (dim) Modifier.border(1.dp, Areel.Ink) else Modifier)
                     .clickable(
                         interactionSource = plusPress,
                         indication = null,
@@ -515,8 +527,7 @@ private fun Composer(
                     tint = Areel.Ink,
                     modifier = Modifier
                         .size(22.dp)
-                        // Turns into a cross when it is open, which is what closes it.
-                        .rotate(if (attach.open) 45f else 0f),
+                        .rotate(turn),
                 )
             }
             // The same two parts as a user bubble - shell outside, ruled text block inside -
