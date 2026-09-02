@@ -512,7 +512,7 @@ private fun JumpToEnd(visible: Boolean, modifier: Modifier, onClick: () -> Unit)
                 // behind it - the CAD grid, a message scrolled under the band - and this one
                 // has the thread behind it, which is the thing it is offering to move.
                 .glassSurface(small = true)
-                .clickable(onClick = onClick),
+                .pressable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -627,7 +627,6 @@ private fun Composer(
             // vanishes into the bar the moment it is doing something - hence the ink edge,
             // which is the only thing keeping it a button while its menu is out.
             // A toggle, like the menu: the row it opens stays on screen. See [Feel].
-            feel(plusPress, Feel.TOGGLE)
             val dim = plusDown || attach.open
             // The edge arrives rather than appearing. Snapped on, it read as a second button
             // replacing the first; faded in over the same beat as the glyph's turn, it reads as
@@ -661,8 +660,9 @@ private fun Composer(
                 Box(
                     Modifier
                         .requiredSize(48.dp + TOUCH_SLOP * 2)
-                        .clickable(
-                            interactionSource = plusPress,
+                        .pressable(
+                            Feel.TOGGLE,
+                            interaction = plusPress,
                             indication = null,
                             enabled = enabled,
                             onClick = attach::toggle,
@@ -806,10 +806,6 @@ private fun Composer(
             // A square plate rather than an IconButton. M3's IconButton clips its container to
             // CircleShape, so the send control came out round - the one shape this design does
             // not contain anywhere.
-            val sendPress = remember { MutableInteractionSource() }
-            val sendDown by sendPress.collectIsPressedAsState()
-            // Clicky: the release is the send, so it is felt as hard as the press.
-            if (!speaking) feel(sendPress, Feel.CLICKY)
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
             val working = voice.phase == VoicePhase.TRANSCRIBING
@@ -852,15 +848,14 @@ private fun Composer(
                                 }
                             }
                         } else {
-                            Modifier.clickable(
-                                interactionSource = sendPress,
-                                indication = null,
+                            // The buzz is [Feel.CLICKY]'s own, so there is nothing to add here
+                            // beyond doing the thing.
+                            Modifier.pressable(
+                                Feel.CLICKY,
                                 enabled = enabled,
-                            ) {
-                                // The buzz on release is [Feel.CLICKY]'s own, so there
-                                // is nothing to add here beyond doing the thing.
-                                onSend()
-                            }
+                                indication = null,
+                                onClick = onSend,
+                            )
                         },
                     ),
                 contentAlignment = Alignment.Center,
@@ -1251,8 +1246,8 @@ private fun AttachPlate(
             .size(48.dp)
             .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
             .background(if (pressed) Areel.Concrete2 else Areel.Paper, RectangleShape)
-            .clickable(
-                interactionSource = interaction,
+            .pressable(
+                interaction = interaction,
                 indication = null,
                 enabled = enabled && open,
                 onClick = onClick,
@@ -1326,7 +1321,7 @@ private fun AttachedThumb(item: Attachment, onOpen: () -> Unit, onRemove: () -> 
                 .size(THUMB)
                 .align(Alignment.BottomStart)
                 .background(Areel.Concrete2, RectangleShape)
-                .clickable(onClick = onOpen),
+                .pressable(onClick = onOpen),
         ) {
             item.thumb?.let {
                 Image(
@@ -1342,7 +1337,7 @@ private fun AttachedThumb(item: Attachment, onOpen: () -> Unit, onRemove: () -> 
                 .size(20.dp)
                 .align(Alignment.TopEnd)
                 .background(Areel.Ink, RectangleShape)
-                .clickable(onClick = onRemove),
+                .pressable(onClick = onRemove),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

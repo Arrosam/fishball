@@ -113,7 +113,7 @@ fun KeyGate(
             if (error != null) {
                 Column {
                     Row(
-                        Modifier.clickable(enabled = detail != null) { showDetail = !showDetail },
+                        Modifier.pressable(Feel.TOGGLE, enabled = detail != null) { showDetail = !showDetail },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(

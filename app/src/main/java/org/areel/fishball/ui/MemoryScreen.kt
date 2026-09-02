@@ -157,7 +157,7 @@ private fun MemoryBand(onBack: () -> Unit) {
             Box(
                 Modifier
                     .size(44.dp)
-                    .clickable(onClick = onBack),
+                    .pressable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -194,7 +194,7 @@ private fun MemoryTab(
     Box(
         modifier
             .background(if (selected) Areel.Paper else Areel.Concrete2, RectangleShape)
-            .clickable(onClick = onClick)
+            .pressable(onClick = onClick)
             .padding(vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {

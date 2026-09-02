@@ -158,7 +158,7 @@ fun SettingsScreen(
                     Modifier
                         .fillMaxWidth()
                         .glassSurface(small = true)
-                        .clickable(enabled = !editingKey) { editingKey = true; draft = "" }
+                        .pressable(enabled = !editingKey) { editingKey = true; draft = "" }
                         .padding(horizontal = 12.dp, vertical = 14.dp),
                 ) {
                     if (editingKey) {
@@ -244,7 +244,7 @@ fun SettingsScreen(
                         ),
                         style = MaterialTheme.typography.labelMedium,
                         color = Areel.Magenta,
-                        modifier = Modifier.clickable(enabled = turns > 0) {
+                        modifier = Modifier.pressable(enabled = turns > 0) {
                             if (confirmingClear) {
                                 onClearHistory()
                                 confirmingClear = false
@@ -304,7 +304,7 @@ private fun ModeTab(
     Box(
         modifier
             .background(if (selected) Areel.Paper else Areel.Concrete2, RectangleShape)
-            .clickable(onClick = onClick)
+            .pressable(onClick = onClick)
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -334,7 +334,7 @@ private fun Plate(
                 },
                 RectangleShape,
             )
-            .clickable(enabled = enabled, onClick = onClick)
+            .pressable(enabled = enabled, onClick = onClick)
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -361,7 +361,7 @@ private fun SettingsBand(onBack: () -> Unit) {
             Box(
                 Modifier
                     .size(40.dp)
-                    .clickable(onClick = onBack),
+                    .pressable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(

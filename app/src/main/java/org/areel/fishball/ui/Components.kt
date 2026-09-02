@@ -235,15 +235,15 @@ private fun MorePlate(
     // Read here: a Canvas is not a composable scope, so the label cannot be fetched inside it.
     val moreLabel = stringResource(R.string.more)
     // A toggle: firm going down, a lighter note coming up. See [Feel].
-    feel(interaction, Feel.TOGGLE)
 
     Box {
         Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
             Box(
                 Modifier
                     .requiredSize(44.dp + TOUCH_SLOP * 2)
-                    .clickable(
-                        interactionSource = interaction,
+                    .pressable(
+                        Feel.TOGGLE,
+                        interaction = interaction,
                         indication = null,
                         onClick = onToggle,
                     ),
@@ -419,7 +419,7 @@ private fun MenuPlate(icon: Int, label: String, order: Int, open: Boolean, onCli
             .size(44.dp)
             .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
             .background(if (pressed) Areel.Concrete2 else Areel.Paper, RectangleShape)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .pressable(interaction = interaction, indication = null, onClick = onClick)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -712,7 +712,7 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
                     Row(
                         Modifier
                             .weight(1f)
-                            .clickable(enabled = source.url.isNotBlank(), onClick = openSite),
+                            .pressable(enabled = source.url.isNotBlank(), onClick = openSite),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (favicon != null) {

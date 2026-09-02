@@ -245,7 +245,7 @@ private fun UpdatePlate(
     Box(
         modifier
             .background(if (filled) Areel.Magenta else Areel.Concrete2, RectangleShape)
-            .clickable(onClick = onClick)
+            .pressable(onClick = onClick)
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
