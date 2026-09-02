@@ -103,12 +103,22 @@ class LiveSmokeTest {
         assertTrue(facts.isNotEmpty(), "nothing was remembered")
         assertTrue(facts.any { it.embedding.isNotEmpty() }, "a fact was stored without a vector")
 
-        // The tier the answer rested on, not a placeholder. It was hard-coded LOW, so a fact
-        // stated outright by 国家药品监督管理局 came back later marked as weakly sourced - and
-        // §10 would then treat it as something to re-search rather than something known.
+        /*
+         * The tier the answer rested on, not a placeholder.
+         *
+         * It was hard-coded LOW, so a fact stated outright by 国家药品监督管理局 came back later
+         * marked as weakly sourced, and §10 would then treat it as something to re-search
+         * rather than something known. That is the bug being guarded, and anything above LOW
+         * catches it.
+         *
+         * The bar was HIGH and is not any more: the re-tiering put the medical outlets a
+         * medication question actually lands on - 丁香园, 百度百科 - at 中, and 高 now begins at
+         * governments and the press. A turn resting on those is honestly MEDIUM, and asserting
+         * otherwise would be asking the test to disagree with the scale.
+         */
         println("tier -> " + facts.joinToString { it.tier.name })
         assertTrue(
-            facts.any { it.tier >= org.areel.fishball.core.trust.Tier.INSTITUTIONAL },
+            facts.any { it.tier > org.areel.fishball.core.trust.Tier.LOW },
             "a well-sourced turn was remembered as weakly sourced",
         )
 
@@ -357,12 +367,12 @@ class LiveSmokeTest {
         // Nothing said yet: there is no session to fold, so there is nothing to announce.
         assertTrue(!runBlocking { conversation.compact() }, "compacted an empty conversation")
 
+        // And one real exchange is still not enough. Folding is for a conversation too long to
+        // hand over whole; this one fits in the window many times over, and a paragraph about
+        // it would be less than the thing itself.
         runBlocking { conversation.ask("iPhone 17 Pro 电池容量多少？") }
-        assertTrue(runBlocking { conversation.compact() }, "did not compact a real conversation")
-
-        // And straight away again, which is the flip-flop case.
-        assertTrue(!runBlocking { conversation.compact() }, "compacted twice over one conversation")
-        println("compaction -> once for one conversation, and not again")
+        assertTrue(!runBlocking { conversation.compact() }, "folded a conversation under 128K")
+        println("compaction -> held off, because there was nothing worth folding")
     }
 
     @Test
@@ -447,11 +457,15 @@ class LiveSmokeTest {
 
         val thinking = StringBuilder()
         val streamed = StringBuilder()
+        val narrated = mutableListOf<String>()
         val reply = runBlocking {
             conversation.ask(
                 "布洛芬常见的副作用是什么？",
                 object : org.areel.fishball.core.agent.TurnProgress {
-                    override fun step(text: String) = println("  narration: $text")
+                    override fun step(text: String) {
+                        narrated += text
+                        println("  narration: $text")
+                    }
                     override fun thinking(delta: String) { thinking.append(delta) }
                     override fun answer(delta: String) { streamed.append(delta) }
                 },
@@ -459,7 +473,20 @@ class LiveSmokeTest {
         }
         println("thinking -> ${thinking.length} chars: ${thinking.take(120)}")
         println("streamed -> ${streamed.length} chars")
-        assertTrue(thinking.isNotEmpty(), "no thinking streamed; the wait would show nothing")
+        /*
+         * Something has to reach the screen while the turn runs.
+         *
+         * It used to be thinking specifically, which was fair when a turn made five calls and
+         * at least one of them narrated its reasoning. The turn is one loop now, and what it
+         * shows is what it is doing - 正在查, 看了维基百科 - with the thinking alongside when
+         * the model emits any. Asserting on the thinking block alone was asserting on the
+         * provider: it is on or off depending on what the route points at this week, and the
+         * wait is not silent either way.
+         */
+        assertTrue(
+            thinking.isNotEmpty() || narrated.isNotEmpty(),
+            "nothing reached the screen while the turn ran",
+        )
 
         println("shape    -> ${reply.shape}")
         println("detail   -> ${reply.detail}")

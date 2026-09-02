@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.llm.LlmClient
 import org.areel.fishball.core.llm.LlmMessage
+import org.areel.fishball.core.llm.Effort
 import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
 import org.areel.fishball.core.llm.Retrieval
@@ -90,8 +91,9 @@ class MemoryBus(
                     messages = context + LlmMessage.user(AgentPrompt.RECALL_TERMS + "\n\n" + question),
                     tools = listOf(Tools.recallTerms),
                     forceTool = Tools.RECALL,
-                    maxTokens = 300,
-                    stream = true,
+                    maxTokens = TOOL_BUDGET,
+                    model = SYSTEM_MODEL,
+                    effort = Effort.HIGH,
                 ),
                 progress.forward(),
             )
@@ -184,7 +186,9 @@ class MemoryBus(
                 messages = listOf(LlmMessage.user(brief)),
                 tools = listOf(tool),
                 forceTool = force,
-                maxTokens = 512,
+                maxTokens = TOOL_BUDGET,
+                model = SYSTEM_MODEL,
+                effort = Effort.HIGH,
             ),
         )
         return (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input

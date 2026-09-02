@@ -50,6 +50,14 @@ class MemoryBusTest {
         override suspend fun validate() = KeyCheck.Valid(listOf("spy"), "spy")
     }
 
+    /** A chat client that cannot be reached, so the turn has no way to produce an answer. */
+    private object Dead : LlmClient {
+        override suspend fun complete(request: LlmRequest, onDelta: (LlmDelta) -> Unit) =
+            LlmResult.Failed("spy is offline", retryable = false)
+
+        override suspend fun validate() = KeyCheck.Valid(listOf("spy"), "spy")
+    }
+
     private object NoSearch : SearchGateway {
         override suspend fun search(query: SearchQuery) =
             SearchResponse(query = query, hits = emptyList(), failed = true)
@@ -67,12 +75,9 @@ class MemoryBusTest {
     fun `memory work never touches the chat client`() {
         val store = InMemoryStore()
 
-        val chat = Spy { forced ->
-            when (forced) {
-                Tools.CLASSIFY -> json("""{"kind":"smalltalk","topic":"general","subject":""}""")
-                else -> null
-            }
-        }
+        // Answers in prose and calls nothing. What is being asserted is what it is *not*
+        // asked to do - there is no classify call left for it to be asked for.
+        val chat = Spy { null }
         val filing = Spy { forced ->
             when (forced) {
                 Tools.NOTE_USER -> json(
@@ -115,15 +120,15 @@ class MemoryBusTest {
     /**
      * Spec §9 — recorded on receipt, not on reply.
      *
-     * The turn is made to fail after the message lands: search is dead and the chat client
-     * refuses to classify, so no answer is ever produced. What the person said about themselves
-     * has to survive that, because it was true before the turn started.
+     * The turn is made to fail after the message lands: search is dead and the chat client is
+     * unreachable, so no answer is ever produced. What the person said about themselves has to
+     * survive that, because it was true before the turn started.
      */
     @Test
     fun `what the user said survives a turn that never answers`() {
         val store = InMemoryStore()
-        // Answers nothing, ever. Classification fails, so the turn ends in an apology.
-        val chat = Spy { null }
+        // Unreachable, every round. The turn ends in an apology and nothing is written.
+        val chat = Dead
         val filing = Spy { forced ->
             if (forced == Tools.NOTE_USER) {
                 json("""{"nothing":false,"about_user":[{"text":"在吃布洛芬","kind":"current_state"}]}""")

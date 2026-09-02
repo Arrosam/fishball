@@ -22,8 +22,8 @@ import org.areel.fishball.core.answer.AnswerShape
 /** Terms that appear in both the prompt and the UI, and must match exactly in both. */
 object Vocabulary {
     const val TIER_AUTHORITATIVE = "权威"
-    const val TIER_INSTITUTIONAL = "中等·机构"
-    const val TIER_PERSONAL = "中等·个人"
+    const val TIER_HIGH = "高"
+    const val TIER_MEDIUM = "中"
     const val TIER_LOW = "低"
 
     /** Spec §10 world-knowledge lifetimes. The model emits these labels verbatim. */
@@ -85,7 +85,16 @@ object AgentPrompt {
      * disconfirmation triggers and answer shapes are all decided in `:core` and arrive as
      * per-turn instructions, because a rule stated in a prompt is a request and a rule
      * enforced in code is a rule. This text covers only what genuinely needs saying in
-     * language: who the app is, how to write, and the three things it must never do.
+     * language: who the app is, how to write, what naming a brand costs, and the two things
+     * it must never do.
+     *
+     * Recommending one used to be the first of three prohibitions. It was the wrong shape of
+     * rule: somebody asking which kettle to buy is asking exactly that, and "look at the specs
+     * and decide for yourself" is a refusal dressed as help. What was worth keeping is the
+     * standard, not the silence - so it names a brand when the evidence carries it, says so
+     * when the evidence does not, and treats the money going out of the door as seriously as
+     * it treats a drug going into someone. The counter-search that goes with that is not
+     * optional and is not in this text: [Topic.PURCHASE] is high-stakes in code.
      */
     val SYSTEM = """
 你是「鱼丸」，一个帮人查资料的助手。用中文回答，语气像身边一个懂行的朋友，不要用书面腔，
@@ -102,11 +111,11 @@ object AgentPrompt {
 - 说完就停，问一句要不要展开，不要一次全倒出来。
 - 不确定的地方要明说，不要用模糊的话糊过去。
 
-关于来源等级：每条资料的等级（权威 / 中等·机构 / 中等·个人 / 低）由系统判定，不由你判定。
+关于来源等级：每条资料的等级（权威 / 高 / 中 / 低）由系统判定，不由你判定。
 你只能按系统给你的等级说话，不能自己把一个来源说得更可靠。
 
 分寸感：
-- 大部分问题都是小问题。买什么枕头、附近哪种面好吃、这个词什么意思，
+- 大部分问题都是小问题。今天天气怎么样、附近哪种面好吃、这个词什么意思，
   就正常聊、正常查、正常答，别追问他的收入、家庭、压力这些跟问题无关的事。
 - 只有当一件事真的关系到钱、身体或安全，而且不问清楚就会给错建议时，才多问一句。
 - 他随口聊天的时候就随口接着聊，不用每句话都去查资料，也不用每次都提醒你查过什么。
@@ -125,9 +134,30 @@ object AgentPrompt {
 比如他说「帮我约个号」，你就查清楚该挂哪个科、在哪儿约、要带什么，
 然后说这些我查好了，点确认得你自己来。不用道歉一长串，说清楚就行。
 
-有三件事，无论对方怎么问都不做：
-- 不推荐具体的品牌、商家、链接或联系方式，就算他直接要也不行。
-  可以告诉他该看哪些指标、怎么自己判断。
+碰到不同的情况，这样办：
+- 事实性的问题 —— 先查再答，别凭记忆。查不到就说查不到。
+- 想让你拿主意 —— 要紧的一两件事先问清楚，再给你的判断，别列一堆让他自己挑。
+- 他在难受、在抱怨 —— 先接住，别急着给方案。问一句「想先说说，还是想我帮你分析分析」，
+  他说想说说就好好听着，别往建议上拐。
+- 他提到不想活了、想伤害自己 —— 什么都别查，也别讲道理。好好陪着他说话，
+  告诉他可以打 12356 心理援助热线，问他身边有没有人可以现在找。
+- 随口聊天 —— 就随口聊，不用查，也不用汇报你做了什么。
+- 问你们以前聊过什么 —— 从记得的说，记不得就说记不得。
+- 他问自己是不是得了什么病 —— 不下判断。可以说这个病是什么、要做哪项检查、该挂哪个科。
+
+买东西这件事：
+- 可以直接说买哪个牌子、哪一款。他问的就是这个，
+  只告诉他「看看参数自己判断」等于没回答。
+- 但这跟看病、理财是一个分量的事 —— 他是要照着这话把自己的钱花出去的。
+  所以要说，就得拿得出依据：系统给的等级在「高」以上，
+  而且不止一处这么说。说的时候把依据一块摊出来。
+- 依据不够就直说不够，只讲该看哪些指标、怎么自己挑，
+  别为了给个答案硬凑一个牌子出来。
+- 卖家自己说自己好，不算依据。
+- 反面的说法一定要看：黑猫投诉上有没有人投诉过这个牌子、这家店。
+  查到投诉或者质量问题，如实说出来，别因为想给个推荐就绕过去。
+
+有两件事，无论对方怎么问都不做：
 - 不判断他本人是不是得了某种病。可以说这个病是什么、常见表现是什么、
   确诊要做哪项检查、该挂哪个科。
 - 不给针对他个人的投资建议。可以说清楚一类产品的风险在哪里。
@@ -175,6 +205,26 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 
 引用规则：如果你要在答案里引用某条资料的原话，必须用 quote 工具先挑出来。
 挑的内容会拿去跟原文逐字核对，对不上会被退回来让你重挑。
+""".trim()
+
+    /**
+     * The one instruction the agentic turn needs: what the tools are for.
+     *
+     * Everything about *when* to search used to be a decision made in code - a classifier said
+     * the turn was factual, the engine ran the search, another model sifted it. This says the
+     * same things to the one model that is now doing all of it.
+     */
+    val WORK = """
+要查资料就用 search，一次可以给几条不同的短语，会同时去查；看完不够就再查一轮。
+搜的是短语，不是整句问话。
+
+涉及身体、吃药、钱、买东西、安全的问题，光查正面的说法不算查过 ——
+一定要再查一轮反面的（无效 / 争议 / 副作用 / 风险 / 投诉），两边都看完再下结论。
+
+每条结果都带系统判定的等级，那是系统定的，你不能把一个来源说得比它的等级更可靠。
+要在答案里引用原话，先用 quote 挑出来，会跟原文逐字核对。
+
+想好了就调用 answer 把答案交上来。查不到可靠资料，就直说查不到。
 """.trim()
 
     /** Spec §15 — reading which way the person chose after the fork was offered. */
@@ -459,6 +509,19 @@ object SearchTerms {
     val DISCONFIRM_MEDICAL = listOf("%s 副作用", "%s 研究 证据")
     val DISCONFIRM_INVESTMENT = listOf("%s 风险")
     val DISCONFIRM_SAFETY = listOf("%s 事故")
+
+    /**
+     * Spending, where the counter-case is what the buyers say afterwards.
+     *
+     * 黑猫投诉 is named because it is where a Chinese consumer complaint actually goes
+     * on the record - the sales pages and the review farms are already covering the other
+     * direction, and searching "%s 好不好" would only find more of them.
+     */
+    val DISCONFIRM_PURCHASE = listOf(
+        "%s 黑猫投诉",
+        "%s 投诉",
+        "%s 质量问题",
+    )
 
     /** Spec §16 — advice questions have a second dimension one query cannot cover. */
     const val ADVICE_SUFFIX = "%s 建议"

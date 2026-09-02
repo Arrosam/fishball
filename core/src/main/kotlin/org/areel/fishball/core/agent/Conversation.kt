@@ -6,11 +6,14 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.areel.fishball.core.answer.AnswerPlan
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.copy.UiCopy
 import org.areel.fishball.core.llm.LlmClient
+import org.areel.fishball.core.llm.Effort
 import org.areel.fishball.core.llm.LlmContent
 import org.areel.fishball.core.llm.LlmDelta
 import org.areel.fishball.core.llm.LlmMessage
@@ -30,6 +33,7 @@ import org.areel.fishball.core.quote.SourceText
 import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.session.Session
+import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
 import org.areel.fishball.core.session.SessionManager
 import org.areel.fishball.core.session.estimateTokens
 import org.areel.fishball.core.trust.ClaimContext
@@ -68,7 +72,6 @@ class Conversation(
     val memory: MemoryBus = MemoryBus(llm, retrieval, store, now),
 ) {
 
-    private val engine = TurnEngine(registry, store)
     private val resolver = TrustResolver(registry)
     private val verifier = QuoteVerifier()
     private val sessions = SessionManager()
@@ -80,7 +83,6 @@ class Conversation(
      * the turn on hold, and the *next* thing the user types is an answer to that, not a new
      * question — so it has to be routed differently.
      */
-    private var pending: Pending? = null
 
     /**
      * Why the last model call failed, for the turn that is about to report it.
@@ -98,9 +100,26 @@ class Conversation(
     /** The pictures on this turn. Replaced by the next [ask], so they never carry over. */
     private var attached: List<LlmContent.Image> = emptyList()
 
-    private data class Pending(val original: TurnContext, val kind: Kind) {
-        enum class Kind { FORK, CLARIFY, CONFIRM_PREFERENCES }
-    }
+    /**
+     * This turn's thread with the model, from the routing question to the written answer.
+     *
+     * One exchange, not two calls. Routing and writing used to be strangers: the classifier was
+     * asked what kind of question this was, its answer was thrown away except for six enum
+     * values, and then a second call started from nothing and wrote the reply. Everything the
+     * model worked out on the way to `factual` - what the pronoun pointed at, which of two
+     * readings it had settled on, what it had already noticed was missing - was discarded, and
+     * the writing turn re-derived whatever of it it could.
+     *
+     * Now the classification is a tool call in this list, the brief comes back as that call's
+     * result, and the answer is written in the same conversation. These models think out loud
+     * before every block and the thinking rides along in the assistant turn, so the reasoning
+     * behind the routing is in front of the model while it writes - which is the whole point.
+     *
+     * A field rather than a parameter because a turn is one call to [ask] at a time and half a
+     * dozen functions sit between the two ends of it. It is rebuilt from the log at the top of
+     * every turn, so nothing survives a turn that should not.
+     */
+    private var thread = mutableListOf<LlmMessage>()
 
     suspend fun ask(
         userText: String,
@@ -108,10 +127,10 @@ class Conversation(
         /**
          * Pictures the user attached to this question.
          *
-         * Carried on the writing turn and nowhere else. The classifier was the obvious second
-         * place and turned out to be the wrong one: handed an image it stops routing and starts
-         * describing, and live it answered a six-value enum with 文字识别. Routing is a decision
-         * about the sentence; the picture is for the answer.
+         * On the question itself, which is now the only user turn there is. They used to be
+         * kept off the classifier, which stopped routing and started describing the moment it
+         * was handed one - live, it answered a six-value enum with 文字识别. There is no
+         * classifier left to keep them from.
          */
         images: List<LlmContent.Image> = emptyList(),
     ): Reply {
@@ -129,18 +148,14 @@ class Conversation(
 
         attached = images
         lastFailure = null
-        val base = context(userText, at, progress) ?: return failure()
-        // §10 — a turn that is only being listened to has nothing to look up, and a crisis turn
-        // must not be answered from a cache. The two that reason about the world do the lookup.
-        remembered = if (base.kind == TurnKind.FACTUAL || base.kind == TurnKind.ADVICE) {
-            recall(base.userText, at, progress)
-        } else {
-            Remembered.NOTHING
-        }
-        // The engine only decides one thing with this - whether a cached answer can stand in
-        // for a search - so it gets the one fact that could, and the rest goes to the prose.
-        val ctx = base.copy(recalled = remembered.servable)
-        val reply = run(engine.firstStep(ctx), ctx, progress)
+        // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
+        thread = priorTurns().toMutableList()
+        // What is already known, before anything is looked up. It used to be gated on the
+        // classifier calling the turn factual; there is no classifier now, and a conversation
+        // that forgets what it was told because somebody asked casually is worse than one bus
+        // call nobody was waiting on.
+        remembered = recall(userText, at, progress)
+        val reply = converse(userText, progress)
 
         // §10 — and the answer, once there is one. Launched, not awaited: the reply is
         // already on its way to the screen. The caller no longer has to remember to file.
@@ -166,84 +181,208 @@ class Conversation(
         return reply
     }
 
-    // ---- routing ------------------------------------------------------------------------
+    // ---- the turn ------------------------------------------------------------------------
 
-    /** Builds the turn's context, resuming a held question if one is outstanding. */
-    private suspend fun context(userText: String, at: Long, progress: TurnProgress): TurnContext? {
-        val held = pending
-        if (held != null) {
-            pending = null
-            return when (held.kind) {
-                Pending.Kind.FORK -> held.original.copy(fork = forkAnswer(userText), now = at)
+    /**
+     * One conversation with the model, for as long as it takes.
+     *
+     * This replaced a pipeline: a classifier decided what kind of question it was, an engine
+     * chose a step from that, one search ran, a second model sifted the results, a plan was
+     * computed, and a writer was handed the survivors. Every one of those was a decision made
+     * before anyone had read a word of what came back.
+     *
+     * Now there is one model, three tools and a loop. It can search several things at once,
+     * read what returns, search again in the light of it, quote from what it found, and answer
+     * when it is satisfied. That is what a person does when they look something up, and the
+     * pipeline could not express it: the old shape could only ever ask the one question the
+     * classifier had extracted before the search began.
+     *
+     * What did *not* move into the model: the tier every result carries, and the verification
+     * every quotation goes through. It picks what to look for and what to make of it, and never
+     * what a source is worth or whether it really says what it is quoted as saying.
+     */
+    private suspend fun converse(userText: String, progress: TurnProgress): Reply {
+        // Insertion-ordered, so the numbering the model sees is stable across rounds - [3] in
+        // round two is the same page it was in round one.
+        val seen = LinkedHashMap<String, Evidence>()
+        val verified = mutableMapOf<String, String>()
 
-                // The clarifying answers matter to the search and to the prose, so they are
-                // folded into the question rather than kept beside it.
-                Pending.Kind.CLARIFY -> held.original.copy(
-                    userText = "${held.original.userText}\n${userText}",
-                    clarified = true,
-                    now = at,
+        val known = remembered.lines()
+        thread += withImage(
+            buildString {
+                append(AgentPrompt.Label.QUESTION).append(userText)
+                if (known.isNotEmpty()) {
+                    appendLine()
+                    appendLine()
+                    appendLine(AgentPrompt.Label.KNOWN)
+                    known.forEach { appendLine(it) }
+                }
+                appendLine()
+                append(AgentPrompt.WORK)
+            },
+        )
+
+        repeat(MAX_TURN_ROUNDS) { round ->
+            val result = llm.complete(
+                LlmRequest(
+                    system = systemWithBridge(),
+                    messages = thread,
+                    tools = listOf(Tools.search, Tools.quote, Tools.answer),
+                    // Only at the end. Forcing it earlier would take the search away on the
+                    // very turn the model was about to use it.
+                    forceTool = if (round == MAX_TURN_ROUNDS - 1) Tools.ANSWER else null,
+                    maxTokens = MAIN_BUDGET,
+                    effort = Effort.MAX,
+                    temperature = 0.4,
+                ),
+                progress.forward(answer = true),
+            )
+            if (result !is LlmResult.Ok) {
+                return Reply(
+                    UiCopy.SERVICE_UNAVAILABLE,
+                    detail = (result as? LlmResult.Failed)?.reason,
                 )
+            }
 
-                // §20 — whatever they said, the point was to unstick the aging preference.
-                // Confirming every stale item is wrong; the honest reading is that the user
-                // has now spoken to it, so the turn proceeds and the store is left alone for
-                // the maintenance screen to settle.
-                Pending.Kind.CONFIRM_PREFERENCES -> held.original.copy(now = at)
+            // Either hatch: the tool it is asked for, or prose with no tool call at all, which
+            // is still an answer. A reply that is neither is a budget that ran out mid-thought.
+            val answered = result.toolCalls.firstOrNull { it.name == Tools.ANSWER }
+            val written = answered?.input?.str("text").orEmpty()
+                .ifBlank { if (result.toolCalls.isEmpty()) result.text else "" }
+            if (written.isNotBlank()) {
+                val sources = cite(seen.values.toList(), verified)
+                return Reply(text = written, shape = shapeOf(sources), sources = sources)
+            }
+            if (result.toolCalls.isEmpty()) return@repeat
+
+            thread += result.raw
+            thread += LlmMessage(
+                LlmMessage.Role.USER,
+                result.toolCalls.map { call ->
+                    when (call.name) {
+                        Tools.SEARCH -> lookUp(call, seen, progress)
+                        Tools.QUOTE -> checkQuote(call, seen, verified)
+                        else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
+                    }
+                },
+            )
+        }
+        return Reply(
+            UiCopy.SERVICE_UNAVAILABLE,
+            detail = "gave up after $MAX_TURN_ROUNDS rounds without an ${Tools.ANSWER} call",
+        )
+    }
+
+    /**
+     * One `search` call: every query in it, at the same time.
+     *
+     * The list is run concurrently rather than in sequence because the model asks for several
+     * angles on one question and then waits for all of them - in sequence that is four round
+     * trips of somebody watching a spinner.
+     *
+     * Results are tiered on the way past and remembered for the rest of the turn, so a later
+     * `quote` can be checked against a page found three rounds ago.
+     */
+    private suspend fun lookUp(
+        call: LlmContent.ToolUse,
+        seen: LinkedHashMap<String, Evidence>,
+        progress: TurnProgress,
+    ): LlmContent.ToolResult = coroutineScope {
+        val queries = call.input.strings("queries")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(Tools.MAX_QUERIES)
+        if (queries.isEmpty()) {
+            return@coroutineScope LlmContent.ToolResult(
+                call.id,
+                "没给查询词。",
+                isError = true,
+            )
+        }
+        progress.step(UiCopy.Narration.SEARCHING)
+
+        val responses = queries.map { q -> async { search.search(SearchQuery(q)) } }.awaitAll()
+        if (responses.all { it.failed }) {
+            return@coroutineScope LlmContent.ToolResult(
+                call.id,
+                "搜索服务这会儿连不上，一条都没查成。",
+                isError = true,
+            )
+        }
+
+        val fresh = responses
+            .filterNot { it.failed }
+            .flatMap { it.hits.take(HITS_PER_QUERY) }
+            .distinctBy { it.url }
+            .filterNot { seen.containsKey(it.url) }
+            .take(HITS_PER_CALL)
+            .map { Evidence(it, resolver.resolve(it)) }
+
+        fresh.forEach { seen[it.hit.url] = it }
+        fresh.take(3).forEach { progress.step(UiCopy.Narration.looked(it.resolution.displayName)) }
+
+        val body = buildString {
+            appendLine("查了：" + queries.joinToString("、"))
+            if (fresh.isEmpty()) {
+                append("没有新的结果，这几条查到的都是刚才看过的。")
+                return@buildString
+            }
+            val numbered = seen.values.toList()
+            fresh.forEach { e ->
+                appendLine(
+                    AgentPrompt.evidenceLine(
+                        index = numbered.indexOf(e),
+                        name = e.resolution.attribution(),
+                        tier = e.resolution.tier.label,
+                        title = e.hit.title,
+                        snippet = e.hit.snippet,
+                        url = e.hit.url,
+                    ),
+                )
             }
         }
-        return classify(userText, at, progress)
+        LlmContent.ToolResult(call.id, body)
     }
 
-    private suspend fun classify(userText: String, at: Long, progress: TurnProgress): TurnContext? {
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                // The tail, so a pronoun has something to point at: "那它呢" is a factual
-                // question about whatever was last discussed, and unaccompanied it is a
-                // question about nothing.
-                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
-                    LlmMessage.user("${AgentPrompt.CLASSIFY}\n\n${userText}"),
-                tools = listOf(Tools.classify),
-                forceTool = Tools.CLASSIFY,
-                maxTokens = 256,
-                stream = true,
-            ),
-            progress.forward(),
+    /** One `quote` call, checked word for word against the page it claims to come from. */
+    private fun checkQuote(
+        call: LlmContent.ToolUse,
+        seen: Map<String, Evidence>,
+        verified: MutableMap<String, String>,
+    ): LlmContent.ToolResult {
+        val url = call.input.str("url").orEmpty()
+        val sources = seen.values.map { SourceText(it.hit.url, it.text) }
+        val outcome = verifier.verify(
+            QuoteRequest(url, call.input.str("text").orEmpty()),
+            sources,
         )
-        if (result is LlmResult.Failed) lastFailure = result.reason
-        val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()
-            ?: run {
-                // Reached the model but got no classification back: a reply with no tool call
-                // at all, which means the tool contract is not being honoured.
-                if (lastFailure == null) lastFailure = "no ${Tools.CLASSIFY} call in the reply"
-                return null
+        return when (outcome) {
+            is QuoteResult.Verified -> {
+                verified[url] = outcome.quote.exact
+                LlmContent.ToolResult(call.id, outcome.quote.exact)
             }
-        val input = call.input
-        return TurnContext(
-            userText = userText,
-            kind = turnKind(input.str("kind")),
-            topic = topic(input.str("topic")),
-            subject = input.str("subject").orEmpty(),
-            diagnosticSelfQuestion = input.bool("diagnostic_self_question") ?: false,
-            now = at,
-        )
+
+            is QuoteResult.Rejected ->
+                LlmContent.ToolResult(call.id, outcome.feedback, isError = true)
+        }
     }
 
-    private suspend fun forkAnswer(userText: String): ForkAnswer {
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = listOf(LlmMessage.user("${AgentPrompt.FORK_READ}\n\n${userText}")),
-                tools = listOf(Tools.fork),
-                forceTool = Tools.FORK,
-                maxTokens = 128,
-            ),
-        )
-        val choice = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input?.str("choice")
-        // Defaulting to VENT: mistaking a request for advice as venting costs one extra turn,
-        // mistaking venting as a request for advice talks over someone who wanted to be heard.
-        return if (choice == "advice") ForkAnswer.WANT_ADVICE else ForkAnswer.VENT
+    /**
+     * What the meter shows, from the sources the answer actually rests on.
+     *
+     * Computed after the fact now rather than planned before it. The plan used to choose the
+     * shape and hand the writer a sentence budget with it; with the model doing its own looking
+     * there is no before-the-fact to plan in, and the honest thing left to say is how good the
+     * sources it ended up with were.
+     */
+    private fun shapeOf(sources: List<SourceRef>): AnswerShape? = when {
+        sources.isEmpty() -> null
+        sources.any { it.tier >= Tier.AUTHORITATIVE } -> AnswerShape.CONFIDENT
+        sources.any { it.tier >= Tier.HIGH } -> AnswerShape.ATTRIBUTED
+        else -> AnswerShape.WEAK_LEAD
     }
+
+    // ---- routing ------------------------------------------------------------------------
 
     /**
      * Spec §10 — what is already known about this question.
@@ -320,105 +459,6 @@ class Conversation(
 
     // ---- the step machine ---------------------------------------------------------------
 
-    private suspend fun run(step: Step, ctx: TurnContext, progress: TurnProgress): Reply =
-        when (step) {
-            // §18 — the floor. Nothing below it runs: no search, no tiers, no citations.
-            is Step.Crisis -> compose(AgentPrompt.CRISIS, ctx, null, emptyList(), progress)
-
-            Step.Chat -> compose(AgentPrompt.CHAT, ctx, null, emptyList(), progress)
-
-            Step.Listen -> compose(AgentPrompt.LISTEN, ctx, null, emptyList(), progress)
-
-            is Step.ComfortAndFork -> {
-                pending = Pending(ctx, Pending.Kind.FORK)
-                Reply(step.prompt)
-            }
-
-            is Step.Clarify -> {
-                val asked = clarifyingQuestions(ctx, step.questions, progress)
-                if (asked.isEmpty()) {
-                    // Nothing worth asking. Carrying on as though it had already been asked is
-                    // the honest reading of §16: the rule is one bundled turn, not a compulsory
-                    // one, and a clarifying question nobody needed is a turn spent not
-                    // answering.
-                    run(engine.firstStep(ctx.copy(clarified = true)), ctx.copy(clarified = true), progress)
-                } else {
-                    pending = Pending(ctx, Pending.Kind.CLARIFY)
-                    Reply(asked.joinToString("\n"))
-                }
-            }
-
-            is Step.ConfirmPreferences -> {
-                pending = Pending(ctx, Pending.Kind.CONFIRM_PREFERENCES)
-                Reply(step.stale.joinToString("\n") { UiCopy.confirmPreference(it.text) })
-            }
-
-            is Step.ServeFromMemory -> compose(
-                "${AgentPrompt.Label.FROM_MEMORY}\n${step.fact.answer}",
-                ctx,
-                null,
-                emptyList(),
-                progress,
-            )
-
-            is Step.SearchLog -> {
-                val turns = store.searchTurns(step.query, step.from, step.to)
-                val digest = turns.joinToString("\n") { AgentPrompt.logLine(it.speaker == Speaker.USER, it.text) }
-                compose(
-                    "${AgentPrompt.Label.FROM_LOG}\n${digest.ifBlank { AgentPrompt.Label.NOTHING_LOGGED }}",
-                    ctx,
-                    null,
-                    emptyList(),
-                    progress,
-                )
-            }
-
-            is Step.Search -> {
-                progress.step(step.narration)
-                val support = gather(step.queries, ctx, progress)
-                val next = engine.afterSupportSearch(
-                    ctx = ctx,
-                    support = support.evidence,
-                    searchFailed = support.allFailed,
-                    conflictInSupport = support.conflict,
-                )
-                runAfterSearch(next, ctx, support.evidence, progress)
-            }
-
-            is Step.Answer -> answer(step.plan, ctx, emptyList(), progress)
-
-            else -> Reply(AgentPrompt.Label.NOTHING_LOGGED)
-        }
-
-    private suspend fun runAfterSearch(
-        step: Step,
-        ctx: TurnContext,
-        support: List<Evidence>,
-        progress: TurnProgress,
-    ): Reply = when (step) {
-        is Step.Disconfirm -> {
-            // R6. Narrated out loud because a user watching a spinner deserves to know the app
-            // is now trying to prove itself wrong, which is the least obvious thing it does.
-            progress.step(step.narration)
-            val counter = gather(step.queries, ctx, progress)
-            answer(
-                (engine.afterDisconfirmation(ctx, support, counter.evidence) as Step.Answer).plan,
-                ctx,
-                support + counter.evidence,
-                progress,
-            )
-        }
-
-        is Step.Answer -> answer(step.plan, ctx, support, progress)
-
-        else -> answer(
-            (engine.afterSupportSearch(ctx, support, false) as Step.Answer).plan,
-            ctx,
-            support,
-            progress,
-        )
-    }
-
     // ---- search -------------------------------------------------------------------------
 
     private class Gathered(
@@ -427,255 +467,7 @@ class Conversation(
         val conflict: Boolean = false,
     )
 
-    private suspend fun gather(
-        queries: List<SearchQuery>,
-        ctx: TurnContext,
-        progress: TurnProgress,
-    ): Gathered {
-        val responses = queries.map { search.search(it) }
-        // §23 turns on this distinction: every request failing is not the same as finding
-        // nothing, and only one of the two permits an answer.
-        if (responses.all { it.failed }) return Gathered(emptyList(), allFailed = true)
-
-        val claim = ClaimContext(topic = ctx.topic)
-        val candidates = responses
-            .filterNot { it.failed }
-            .flatMap { it.hits }
-            .distinctBy { it.url }
-            .map { Evidence(it, resolver.resolve(it, claim)) }
-
-        if (candidates.isEmpty()) return Gathered(emptyList(), allFailed = false)
-
-        candidates.take(3).forEach { progress.step(UiCopy.Narration.looked(it.resolution.displayName)) }
-
-        val chosen = selectRelevant(ctx, candidates, progress)
-        return Gathered(chosen.first, allFailed = false, conflict = chosen.second)
-    }
-
-    /**
-     * The model filters for relevance only. Tiering has already happened and is not up for
-     * discussion — the prompt says so, and this ignores anything it might say about it.
-     */
-    private suspend fun selectRelevant(
-        ctx: TurnContext,
-        candidates: List<Evidence>,
-        progress: TurnProgress,
-    ): Pair<List<Evidence>, Boolean> {
-        val listing = candidates.mapIndexed { i, e ->
-            AgentPrompt.evidenceLine(
-                index = i,
-                name = e.resolution.attribution(),
-                tier = e.resolution.tier.label,
-                title = e.hit.title,
-                snippet = e.hit.snippet,
-                url = e.hit.url,
-            )
-        }.joinToString("\n\n")
-
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = listOf(
-                    LlmMessage.user(
-                        "${AgentPrompt.SELECT_EVIDENCE}\n\n" +
-                            "${AgentPrompt.Label.QUESTION}${ctx.userText}\n\n$listing",
-                    ),
-                ),
-                tools = listOf(Tools.select),
-                forceTool = Tools.SELECT,
-                maxTokens = 512,
-                stream = true,
-            ),
-            progress.forward(),
-        )
-        val call = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()
-            // A failed selection must not silently drop the evidence — falling back to
-            // everything keeps the tier rules working on a full set rather than an empty one.
-            ?: return candidates to false
-
-        val picked = call.input["indices"]?.jsonArray
-            ?.mapNotNull { it.jsonPrimitive.intOrNull() }
-            ?.mapNotNull { candidates.getOrNull(it) }
-            .orEmpty()
-
-        return (picked.ifEmpty { candidates }) to (call.input.bool("conflict") ?: false)
-    }
-
     // ---- writing ------------------------------------------------------------------------
-
-    private suspend fun answer(
-        plan: AnswerPlan,
-        ctx: TurnContext,
-        evidence: List<Evidence>,
-        progress: TurnProgress,
-    ): Reply {
-        val brief = buildString {
-            appendLine(AgentPrompt.Label.REQUIREMENT)
-            appendLine(AgentPrompt.guidanceFor(plan.shape))
-            if (plan.medicalSplit) appendLine(AgentPrompt.MEDICAL_SPLIT)
-            appendLine(AgentPrompt.brevity(plan.maxSentences))
-            if (plan.attributions.isNotEmpty()) {
-                appendLine("${AgentPrompt.Label.ATTRIBUTIONS}${plan.attributions.joinToString("、")}")
-            }
-            if (plan.confirmations.isNotEmpty()) {
-                appendLine("${AgentPrompt.Label.CONFIRM}${plan.confirmations.joinToString("、")}")
-            }
-            val known = remembered.lines()
-            if (known.isNotEmpty()) {
-                appendLine()
-                appendLine(AgentPrompt.Label.KNOWN)
-                known.forEach { appendLine(it) }
-            }
-            if (evidence.isNotEmpty()) {
-                appendLine()
-                appendLine(AgentPrompt.Label.EVIDENCE)
-                evidence.forEachIndexed { i, e ->
-                    appendLine(
-                        AgentPrompt.evidenceLine(
-                            index = i,
-                            name = e.resolution.attribution(),
-                            tier = e.resolution.tier.label,
-                            title = e.hit.title,
-                            snippet = e.hit.snippet,
-                            url = e.hit.url,
-                        ),
-                    )
-                }
-            }
-        }
-        return compose(brief, ctx, plan, evidence, progress)
-    }
-
-    /**
-     * The writing turn, including §25's quote loop.
-     *
-     * The model may call `quote` as often as it likes before calling `answer`. Each span is
-     * checked against the retrieved text and comes back either as the source's own wording or
-     * as a rejection it can act on. There is no branch here that lets an unverified quotation
-     * through — the only thing that reaches [Reply] is what the verifier returned.
-     */
-    private suspend fun compose(
-        brief: String,
-        ctx: TurnContext,
-        plan: AnswerPlan?,
-        evidence: List<Evidence>,
-        progress: TurnProgress,
-    ): Reply {
-        val sources = evidence.map { SourceText(it.hit.url, it.text) }
-        val verified = mutableMapOf<String, String>()
-        // The turn is asked inside the conversation, not on its own. Without this the model
-        // reads every question as the first one it has ever been asked, which is what made
-        // follow-ups like "那它呢" answer about nothing.
-        val messages = priorTurns().toMutableList()
-        messages += withImage(
-            "${AgentPrompt.Label.QUESTION}${ctx.userText}\n\n$brief\n\n${AgentPrompt.COMPOSE}",
-        )
-
-        repeat(MAX_COMPOSE_ROUNDS) { round ->
-            val lastRound = round == MAX_COMPOSE_ROUNDS - 1
-            val result = llm.complete(
-                LlmRequest(
-                    system = systemWithBridge(),
-                    messages = messages,
-                    tools = if (evidence.isEmpty()) listOf(Tools.answer) else listOf(Tools.quote, Tools.answer),
-                    // Free to quote as often as it likes, until the last round - where the
-                    // choice is between a structured answer and no answer at all.
-                    forceTool = if (lastRound) Tools.ANSWER else null,
-                    maxTokens = 2048,
-                    temperature = 0.4,
-                    stream = true,
-                ),
-                progress.forward(answer = true),
-            )
-            if (result !is LlmResult.Ok) {
-                return Reply(
-                    UiCopy.SERVICE_UNAVAILABLE,
-                    detail = (result as? LlmResult.Failed)?.reason,
-                )
-            }
-
-            val answerCall = result.toolCalls.firstOrNull { it.name == Tools.ANSWER }
-            if (answerCall != null) {
-                return Reply(
-                    text = answerCall.input.str("text").orEmpty().ifBlank { result.text },
-                    shape = plan?.shape,
-                    conflict = plan?.shape == AnswerShape.CONFLICT,
-                    sources = cite(evidence, verified),
-                )
-            }
-
-            val quoteCalls = result.toolCalls.filter { it.name == Tools.QUOTE }
-            if (quoteCalls.isEmpty()) {
-                // Prose with no tool call. Take it rather than burning another round — the
-                // model has answered, it just did not use the hatch it was offered. The
-                // citations come along regardless: they were verified before it wrote a word,
-                // and dropping them here would strip the sources off exactly those answers
-                // that took the trouble to quote.
-                return Reply(
-                    text = result.text,
-                    shape = plan?.shape,
-                    conflict = plan?.shape == AnswerShape.CONFLICT,
-                    sources = cite(evidence, verified),
-                )
-            }
-
-            messages += result.raw
-            messages += LlmMessage(
-                LlmMessage.Role.USER,
-                quoteCalls.map { call ->
-                    val url = call.input.str("url").orEmpty()
-                    when (
-                        val outcome = verifier.verify(QuoteRequest(url, call.input.str("text").orEmpty()), sources)
-                    ) {
-                        is QuoteResult.Verified -> {
-                            verified[url] = outcome.quote.exact
-                            LlmContent.ToolResult(call.id, outcome.quote.exact)
-                        }
-
-                        is QuoteResult.Rejected ->
-                            LlmContent.ToolResult(call.id, outcome.feedback, isError = true)
-                    }
-                } + LlmContent.Text(AgentPrompt.SUBMIT_ANSWER),
-            )
-        }
-        return Reply(
-            UiCopy.SERVICE_UNAVAILABLE,
-            detail = "gave up after $MAX_COMPOSE_ROUNDS rounds without an ${Tools.ANSWER} call",
-        )
-    }
-
-    /**
-     * Spec §16 — what to ask before advising, written for this question.
-     *
-     * The engine still decides *whether* a turn like this happens; the list it carries is a
-     * fallback for when the model declines to write one. Empty means it saw nothing worth
-     * asking, and the turn proceeds.
-     */
-    private suspend fun clarifyingQuestions(
-        ctx: TurnContext,
-        fallback: List<String>,
-        progress: TurnProgress,
-    ): List<String> {
-        val result = llm.complete(
-            LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS) +
-                    LlmMessage.user(AgentPrompt.CLARIFY_ASK + "\n\n" + ctx.userText),
-                tools = listOf(Tools.clarify),
-                forceTool = Tools.CLARIFY,
-                maxTokens = 400,
-                stream = true,
-            ),
-            progress.forward(),
-        )
-        val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input ?: return fallback
-        if (input.bool("enough") == true) return emptyList()
-        val written = input["questions"]?.jsonArrayOrNull()
-            ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
-            ?.filter { it.isNotBlank() }
-            .orEmpty()
-        return written.ifEmpty { fallback }
-    }
 
     /**
      * A user turn, with this turn's pictures in front of the words.
@@ -767,6 +559,13 @@ class Conversation(
      * Called when the model changes, as well as on the §8 rollover: a different model has not
      * read any of this, and handing it a transcript written by another one is worse context
      * than a summary of what the two of you actually settled.
+     *
+     * **Not under [SESSION_COMPACT_TOKENS].** That argument is only true of a conversation too
+     * long to hand over whole. A short one fits in any of these models' windows several times
+     * over, and folding it trades everything that was actually said for a paragraph about it -
+     * so switching model three messages in used to cost the three messages. Under the
+     * threshold the transcript goes forward as it stands, which is strictly more than a
+     * summary of it, and the caller is told nothing was folded because nothing was.
      */
     suspend fun compact(): Boolean {
         val open = session ?: store.loadSession() ?: return false
@@ -776,6 +575,9 @@ class Conversation(
         // Switching model twice in a row used to roll a fresh empty session each time and
         // announce a compaction that had not happened.
         if (sofar.isEmpty()) return false
+        if (estimateTokens(sofar.joinToString("\n") { it.text }) < SESSION_COMPACT_TOKENS) {
+            return false
+        }
 
         begin(Session(store.nextId(), now(), bridge = summarise(sofar)))
         return true
@@ -790,6 +592,8 @@ class Conversation(
                 system = AgentPrompt.SYSTEM,
                 messages = listOf(LlmMessage.user("${AgentPrompt.COMPACT}\n\n$transcript")),
                 maxTokens = 1024,
+                model = SYSTEM_MODEL,
+                effort = Effort.HIGH,
             ),
         )
         return (result as? LlmResult.Ok)?.text?.takeIf { it.isNotBlank() }
@@ -874,6 +678,7 @@ class Conversation(
 
         /** Enough for a pronoun to resolve, not so much that routing costs a full transcript. */
         const val CLASSIFY_CONTEXT_TURNS = 6
+
     }
 }
 
@@ -957,6 +762,85 @@ data class SourceRef(
 )
 
 /**
+ * Where the work around the conversation is done.
+ *
+ * The turn itself runs on the model the user chose - that choice is the whole of what the
+ * professional/ordinary switch means to them. Everything else a turn needs done is bookkeeping:
+ * reading which branch of a fork they took, sifting which of ten search results are worth
+ * reading, writing a clarifying question, folding a session into a paragraph, filing what was
+ * said. None of it is what anybody is waiting to read, and none of it should be answered at
+ * conversation prices.
+ *
+ * If the key cannot reach it the call quietly becomes an ordinary one - see
+ * `HydrogenClient.wrongModel`.
+ */
+internal const val SYSTEM_MODEL = "fish-system"
+
+/**
+ * Room for a short answer from a model that thinks first.
+ *
+ * These models put a thinking block in front of every reply, and the budget covers it. A tool
+ * call is a few dozen tokens; the thinking ahead of it is hundreds, and when the budget runs out
+ * mid-thought the block that would have carried the tool call is never written. The turn then
+ * fails with "no classify_turn call in the reply", which reads like the model ignoring its
+ * instructions and is nothing of the kind.
+ *
+ * The classifier ran on 256 and mostly worked, which is the worst way for this to be wrong: an
+ * easy question thinks for ~500 characters and fits, a question worth thinking about does not.
+ * Measured on the live model, streaming, forced to call `classify_turn`: "这张图上写的是什么"
+ * at 256 gave one thinking block and `stop_reason: max_tokens`, and at 1024 gave thinking plus
+ * the call.
+ *
+ * 1024 was then too small for the opposite reason: these calls moved to [SYSTEM_MODEL], which
+ * thinks at length before it answers - measured at over four thousand characters on a question
+ * with no tools at all - and a budget that stops it mid-thought loses the tool call at the end
+ * of it. So this is that model's own ceiling, which it states itself when asked for more:
+ * "field MaxTokens invalid, should be in [1, 65536]".
+ *
+ * A ceiling is not a spend. Unused budget is not billed, and every way of being wrong here
+ * costs a whole turn.
+ */
+internal const val TOOL_BUDGET = 65_536
+
+/**
+ * And the whole window for the turn somebody is waiting on.
+ *
+ * Nothing is saved by capping this. A ceiling is not a spend - it is the point at which the
+ * model is cut off mid-sentence, and every one of the ways that goes wrong here is expensive:
+ * a routing call that runs out before it writes its tool call fails the turn outright, and an
+ * answer that runs out arrives as a paragraph with its last clause missing. Against that, the
+ * cost of a ceiling nobody reaches is zero.
+ *
+ * 131072 is what `fishball-flash` accepts - checked, with thinking on and with a forced tool,
+ * because a limit the service rejects would fail every turn rather than just the long ones. It
+ * is deliberately more than the side calls can have: `fish-system` answers
+ * "field MaxTokens invalid, should be in [1, 65536]", and a service that names its own ceiling
+ * gets taken at its word - see `HydrogenClient.capped`.
+ */
+internal const val MAIN_BUDGET = 131_072
+
+/**
+ * How many times round the loop before the answer is forced.
+ *
+ * Each round is one model call plus whatever tools it asked for, so this is the ceiling on how
+ * long a turn can take.
+ *
+ * Six was too tight, and the way it failed is worth remembering: the turn did not stall, it ran
+ * out of room. Traced round by round it went search, search, quote, quote, search, quote - all
+ * of it useful work - and the answer only appeared because the last round forces one. A turn
+ * that verifies two quotations against three searches is a turn doing its job, and it needs
+ * more than six moves to do it.
+ *
+ * Ten leaves the model room to finish on its own terms, and the forced answer on the last round
+ * still bounds how long anybody waits.
+ */
+private const val MAX_TURN_ROUNDS = 10
+
+/** How much of one search comes back. Enough to choose from, not enough to drown in. */
+private const val HITS_PER_QUERY = 6
+private const val HITS_PER_CALL = 20
+
+/**
  * Bridges the model's deltas onto the turn's progress channels.
  *
  * Thinking is always forwarded; the reply text only where there is a reply being written. The
@@ -997,21 +881,5 @@ private fun kotlinx.serialization.json.JsonElement.jsonArrayOrNull() =
 private fun kotlinx.serialization.json.JsonPrimitive.intOrNull(): Int? =
     runCatching { int }.getOrNull()
 
-private fun turnKind(raw: String?): TurnKind = when (raw) {
-    "advice" -> TurnKind.ADVICE
-    "emotional" -> TurnKind.EMOTIONAL
-    "crisis" -> TurnKind.CRISIS
-    "log_query" -> TurnKind.LOG_QUERY
-    "smalltalk" -> TurnKind.SMALLTALK
-    else -> TurnKind.FACTUAL
-}
-
-private fun topic(raw: String?): Topic = when (raw) {
-    "health" -> Topic.HEALTH
-    "medication" -> Topic.MEDICATION
-    "investment" -> Topic.INVESTMENT
-    "safety" -> Topic.SAFETY
-    else -> Topic.GENERAL
-}
 
 

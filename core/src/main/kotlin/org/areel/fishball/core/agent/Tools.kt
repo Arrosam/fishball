@@ -21,56 +21,12 @@ import org.areel.fishball.core.llm.LlmTool
  */
 object Tools {
 
-    const val CLASSIFY = "classify_turn"
-    const val FORK = "fork_answer"
-    const val SELECT = "select_evidence"
+    const val SEARCH = "search"
     const val QUOTE = "quote"
     const val ANSWER = "answer"
     const val NOTE_USER = "note_user"
     const val NOTE_FACT = "note_fact"
-    const val CLARIFY = "clarify"
     const val RECALL = "recall_terms"
-
-    val classify = LlmTool(
-        name = CLASSIFY,
-        description = "判断这一轮用户说的话属于哪一类，以及可以拿去搜索的主题。",
-        inputSchema = obj {
-            put("type", "object")
-            putJsonObject("properties") {
-                enumProp(
-                    "kind",
-                    listOf("factual", "advice", "emotional", "crisis", "log_query", "smalltalk"),
-                    "这句话的类别。拿不准是不是 crisis 时，选 crisis。",
-                )
-                enumProp(
-                    "topic",
-                    listOf("general", "health", "medication", "investment", "safety"),
-                    "问题涉及的领域。",
-                )
-                stringProp("subject", "适合拿去搜索的短语，不要整句。没有可搜主题时留空。")
-                boolProp(
-                    "diagnostic_self_question",
-                    "他是不是在问「我本人是不是得了某种病」。问病本身是什么不算。",
-                )
-            }
-            putJsonArray("required") {
-                add("kind"); add("topic"); add("subject"); add("diagnostic_self_question")
-            }
-        },
-    )
-
-    /** Spec §15 — the person chose; this only reads which way. */
-    val fork = LlmTool(
-        name = FORK,
-        description = "他刚才被问「想先说说，还是想我帮你分析」。判断他选了哪个。",
-        inputSchema = obj {
-            put("type", "object")
-            putJsonObject("properties") {
-                enumProp("choice", listOf("vent", "advice"), "vent 是想倾诉，advice 是想要建议。")
-            }
-            putJsonArray("required") { add("choice") }
-        },
-    )
 
     /** Spec §10 — what to look memory up by, which is not the question. */
     val recallTerms = LlmTool(
@@ -94,46 +50,52 @@ object Tools {
         },
     )
 
-    /** Spec §16 — bundled into one turn, and only when a turn is actually needed. */
-    val clarify = LlmTool(
-        name = CLARIFY,
-        description = "决定这次要不要先问清楚什么，要问的话问什么。",
-        inputSchema = obj {
-            put("type", "object")
-            putJsonObject("properties") {
-                boolProp("enough", "不用问也能给出有用的建议，直接去查。")
-                putJsonObject("questions") {
-                    put("type", "array")
-                    put("description", "要问的话，最多两句短句。enough 为 true 时留空。")
-                    putJsonObject("items") { put("type", "string") }
-                }
-            }
-            putJsonArray("required") { add("enough") }
-        },
-    )
-
-    val select = LlmTool(
-        name = SELECT,
-        description = "从搜到的结果里挑出跟问题真正相关的几条。",
-        inputSchema = obj {
-            put("type", "object")
-            putJsonObject("properties") {
-                putJsonObject("indices") {
-                    put("type", "array")
-                    put("description", "相关结果的序号。不相关的不要挑，宁可少挑。")
-                    putJsonObject("items") { put("type", "integer") }
-                }
-                boolProp("conflict", "是否有两条权威或机构级别的资料在同一件事上说法相反。")
-            }
-            putJsonArray("required") { add("indices"); add("conflict") }
-        },
-    )
-
     /**
      * Spec §25. The model hands over a span it believes is in the source; the verifier decides
      * whether it is. A rejection comes back as a failed tool result with the reason, so it can
      * pick again inside the same turn.
      */
+    /**
+     * Looking things up, as something the model does rather than something done for it.
+     *
+     * It used to be a step: a classifier decided the turn was factual, the engine ran one
+     * search, a second model sifted the results, and the writer was handed what survived. That
+     * pipeline could only ever ask one question - the one the classifier extracted - and it
+     * asked it before anyone had read a word of the answer.
+     *
+     * As a tool it can ask several at once, read what came back, and ask again in the light of
+     * it, which is what somebody actually does when they look something up. `queries` is a list
+     * because the common case is several angles on one question, and they are run together
+     * rather than one after another.
+     *
+     * Every result comes back with the tier the registry gave it. That judgement stays in code:
+     * the model chooses what to look for and what to make of it, and never what a source is
+     * worth.
+     */
+    val search = LlmTool(
+        name = SEARCH,
+        description = "查资料。一次可以给几条不同的查询，会同时去查；看完结果还可以再查一轮。" +
+            "每条结果都带系统判定的来源等级。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                putJsonObject("queries") {
+                    put("type", "array")
+                    put(
+                        "description",
+                        "要搜的短语，像在搜索框里打的那样，不要整句问话。一次最多 " +
+                            "$MAX_QUERIES 条。",
+                    )
+                    putJsonObject("items") { put("type", "string") }
+                }
+            }
+            putJsonArray("required") { add("queries") }
+        },
+    )
+
+    /** More than this in one call is a scattergun, not a search. */
+    const val MAX_QUERIES = 5
+
     val quote = LlmTool(
         name = QUOTE,
         description = "从某条资料的原文里原样挑一段话。会跟原文逐字核对，对不上会被退回。",

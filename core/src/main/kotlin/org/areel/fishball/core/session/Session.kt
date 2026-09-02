@@ -24,8 +24,12 @@ data class Session(
  * the worst way — you come back after lunch, ask a follow-up, and it has forgotten what you
  * were talking about. So the conversation runs on until it is *both* stale and large enough to
  * be worth compacting. Either condition on its own leaves it exactly where it was.
+ *
+ * 128K is where large starts. It is half a context window on the models behind this proxy, so
+ * a conversation that has not reached it is a conversation the model can still read in full,
+ * and folding it would be throwing away detail nothing was short of.
  */
-const val SESSION_COMPACT_TOKENS = 256_000
+const val SESSION_COMPACT_TOKENS = 128_000
 
 sealed class SessionDecision {
     data class Continue(val session: Session) : SessionDecision()

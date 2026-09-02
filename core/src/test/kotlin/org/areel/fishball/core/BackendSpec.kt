@@ -1,11 +1,5 @@
 package org.areel.fishball.core
 
-import org.areel.fishball.core.agent.ForkAnswer
-import org.areel.fishball.core.agent.Step
-import org.areel.fishball.core.agent.TurnContext
-import org.areel.fishball.core.agent.TurnEngine
-import org.areel.fishball.core.agent.TurnKind
-import org.areel.fishball.core.answer.AnswerPlanner
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.InMemoryStore
@@ -21,7 +15,6 @@ import org.areel.fishball.core.quote.QuoteResult
 import org.areel.fishball.core.quote.QuoteVerifier
 import org.areel.fishball.core.quote.RejectionReason
 import org.areel.fishball.core.quote.SourceText
-import org.areel.fishball.core.search.Disconfirmation
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.session.SessionDecision
 import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
@@ -57,9 +50,6 @@ object BackendSpec {
         ttlChecks(::check)
         storeChecks(::check)
         sessionChecks(::check)
-        disconfirmationChecks(::check)
-        answerChecks(registry, ::check)
-        engineChecks(registry, ::check)
         quoteChecks(::check)
         return failures
     }
@@ -170,7 +160,7 @@ object BackendSpec {
         val staleId = store.nextId()
         store.recordWorldFact(
             WorldFact(staleId, "某只 ETF 今年表现如何", "涨了 3%",
-                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), recordedAt = T0),
+                WorldTtl.ALWAYS_RESEARCH, Tier.HIGH, emptyList(), recordedAt = T0),
         )
         check("§10 time-sensitive fact is never served from cache",
             store.recallWorldFact("某只 ETF 今年表现如何", T0)?.servableWithoutSearch == false, "")
@@ -239,225 +229,4 @@ object BackendSpec {
             estimateTokens("ibuprofen side effects") in 4..7, "")
     }
 
-    // ---------------------------------------------------------------- R6
-
-    private fun disconfirmationChecks(check: (String, Boolean, String) -> Unit) {
-        check("R6 fires on HEALTH even with AUTHORITATIVE support",
-            Disconfirmation.shouldRun(Topic.HEALTH, Tier.AUTHORITATIVE, false), "")
-        check("R6 fires when nothing institutional was found",
-            Disconfirmation.shouldRun(Topic.GENERAL, Tier.PERSONAL, false), "")
-        check("R6 fires on institutional conflict",
-            Disconfirmation.shouldRun(Topic.GENERAL, Tier.AUTHORITATIVE, true), "")
-        check("R6 does not fire on a well-sourced ordinary question",
-            !Disconfirmation.shouldRun(Topic.GENERAL, Tier.INSTITUTIONAL, false), "")
-
-        val health = Disconfirmation.queriesFor("奇亚籽", Topic.HEALTH).map { it.text }
-        check("R6 health queries include the side-effect pattern", health.any { it.contains("副作用") }, health.toString())
-        check("R6 queries include the does-not-work pattern", health.any { it.contains("无效") }, "")
-        val general = Disconfirmation.queriesFor("某手机", Topic.GENERAL).map { it.text }
-        check("R6 general queries omit the side-effect pattern", general.none { it.contains("副作用") }, general.toString())
-        check("R6 empty subject yields no queries",
-            Disconfirmation.queriesFor("  ", Topic.GENERAL).isEmpty(), "")
-
-        check("R6 authoritative counter with weak support = REFUTED",
-            Disconfirmation.interpret(Tier.PERSONAL, Tier.AUTHORITATIVE, true)
-                == Disconfirmation.Outcome.REFUTED, "")
-        check("R6 strong both ways = CONTESTED",
-            Disconfirmation.interpret(Tier.AUTHORITATIVE, Tier.INSTITUTIONAL, true)
-                == Disconfirmation.Outcome.CONTESTED, "")
-        check("R6 nothing either way = BOTH_EMPTY",
-            Disconfirmation.interpret(Tier.LOW, Tier.LOW, false)
-                == Disconfirmation.Outcome.BOTH_EMPTY, "")
-        check("R6 nothing against solid support = NO_COUNTER_EVIDENCE",
-            Disconfirmation.interpret(Tier.AUTHORITATIVE, Tier.LOW, false)
-                == Disconfirmation.Outcome.NO_COUNTER_EVIDENCE, "")
-    }
-
-    // ---------------------------------------------------------------- §6 §7 §23 §24
-
-    private fun evidence(registry: SourceRegistry, url: String, text: String): Evidence {
-        val hit = SearchHit(url, title = text)
-        return Evidence(hit, TrustResolver(registry).resolve(hit))
-    }
-
-    private fun answerChecks(registry: SourceRegistry, check: (String, Boolean, String) -> Unit) {
-        val who = evidence(registry, "https://www.who.int/a", "世卫组织的说明")
-        val reuters = evidence(registry, "https://www.reuters.com/a", "路透社报道")
-        val personal = listOf(
-            "https://www.zhihu.com/a" to "用下来 发烫 明显 一个 小时 就 很 热",
-            "https://www.douban.com/b" to "续航 只能 撑 半天 完全 不 够用",
-            "https://www.v2ex.com/c" to "信号 在 地铁 里 断 得 很 频繁",
-            "https://www.reddit.com/d" to "camera focus hunts badly in low light",
-            "https://www.quora.com/e" to "screen has a green tint at low brightness",
-        ).map { evidence(registry, it.first, it.second) }
-        val junk = listOf(evidence(registry, "https://xuandao.la/x", "某个 不知名 网站 的 说法"))
-
-        val unavailable = AnswerPlanner.plan(
-            support = emptyList(), searchAvailable = false, registry = registry,
-        )
-        check("§23 search down = SEARCH_UNAVAILABLE",
-            unavailable.shape == AnswerShape.SEARCH_UNAVAILABLE, "${unavailable.shape}")
-        check("§23 no sources are cited when search is down", unavailable.sources.isEmpty(), "")
-        check("§23 keeps it to two sentences", unavailable.maxSentences == 2, "")
-
-        val confident = AnswerPlanner.plan(support = listOf(who), registry = registry)
-        check("§6 AUTHORITATIVE support = CONFIDENT", confident.shape == AnswerShape.CONFIDENT, "${confident.shape}")
-        check("R8 attribution carries the foreign-source explanation",
-            confident.attributions.any { it.contains("联合国") }, confident.attributions.toString())
-
-        check("§6 INSTITUTIONAL support = ATTRIBUTED",
-            AnswerPlanner.plan(support = listOf(reuters), registry = registry).shape
-                == AnswerShape.ATTRIBUTED, "")
-
-        val threePersonal = AnswerPlanner.plan(support = personal.take(3), registry = registry)
-        check("R4 three personal-tier sources are not enough on their own",
-            threePersonal.shape == AnswerShape.WEAK_LEAD, "${threePersonal.shape}")
-        val fivePersonal = AnswerPlanner.plan(support = personal, registry = registry)
-        check("R4 five independent personal-tier sources may be stated as a pattern",
-            fivePersonal.shape == AnswerShape.PERSONAL_PATTERN, "${fivePersonal.shape}")
-        val fiveHealth = AnswerPlanner.plan(support = personal, topic = Topic.HEALTH, registry = registry)
-        check("R4 five is not enough on a health question",
-            fiveHealth.shape == AnswerShape.WEAK_LEAD, "${fiveHealth.shape}")
-
-        check("§6 only weak sources = WEAK_LEAD",
-            AnswerPlanner.plan(support = junk, registry = registry).shape == AnswerShape.WEAK_LEAD, "")
-        check("§6 nothing found = NOTHING_FOUND",
-            AnswerPlanner.plan(support = emptyList(), registry = registry).shape
-                == AnswerShape.NOTHING_FOUND, "")
-
-        val refuted = AnswerPlanner.plan(
-            support = junk, counter = listOf(who),
-            counterOutcome = Disconfirmation.Outcome.REFUTED, registry = registry,
-        )
-        check("R6 refutation is a confident answer, not a hedge",
-            refuted.shape == AnswerShape.REFUTED, "${refuted.shape}")
-        check("R6 refutation cites the counter-evidence",
-            refuted.sources.any { it.contains("who.int") }, refuted.sources.toString())
-
-        val conflict = AnswerPlanner.plan(
-            support = listOf(who), counter = listOf(reuters),
-            counterOutcome = Disconfirmation.Outcome.CONTESTED, registry = registry,
-        )
-        check("R7 disagreement is disclosed", conflict.shape == AnswerShape.CONFLICT, "${conflict.shape}")
-        check("R7 cites both sides",
-            conflict.sources.size == 2, conflict.sources.toString())
-
-        val medical = AnswerPlanner.plan(
-            support = listOf(who), topic = Topic.HEALTH,
-            diagnosticSelfQuestion = true, registry = registry,
-        )
-        check("§7 diagnostic question triggers the split", medical.medicalSplit, "")
-        check("§7 medical answers get more room", medical.maxSentences == 6, "${medical.maxSentences}")
-        check("§24 ordinary answers stay short", confident.maxSentences == 3, "")
-        check("§24 markdown is never allowed", !confident.allowMarkdown, "")
-        check("§7 split does not fire on a non-diagnostic health question",
-            !AnswerPlanner.plan(support = listOf(who), topic = Topic.HEALTH, registry = registry)
-                .medicalSplit, "")
-    }
-
-    // ---------------------------------------------------------------- §14–§21 routing
-
-    private fun engineChecks(registry: SourceRegistry, check: (String, Boolean, String) -> Unit) {
-        fun engine(store: InMemoryStore = InMemoryStore()) = TurnEngine(registry, store) to store
-
-        val (e1, _) = engine()
-        check("§18 crisis overrides everything",
-            e1.firstStep(
-                TurnContext("我不想活了", TurnKind.CRISIS, Topic.HEALTH,
-                    diagnosticSelfQuestion = true, now = T0),
-            ) is Step.Crisis, "")
-
-        check("§15 distress opens with comfort and a fork",
-            e1.firstStep(TurnContext("我压力好大", TurnKind.EMOTIONAL, now = T0))
-                is Step.ComfortAndFork, "")
-        check("§15 choosing to vent means listen, not search",
-            e1.firstStep(
-                TurnContext("我压力好大", TurnKind.EMOTIONAL, fork = ForkAnswer.VENT, now = T0),
-            ) === Step.Listen, "")
-
-        val advising = e1.firstStep(
-            TurnContext("要不要辞职", TurnKind.EMOTIONAL, fork = ForkAnswer.WANT_ADVICE, now = T0),
-        )
-        check("§16 advice clarifies before searching", advising is Step.Clarify, "$advising")
-        check("§16 clarifying questions are bundled",
-            (advising as? Step.Clarify)?.questions?.size?.let { it >= 2 } == true, "")
-
-        val afterClarify = e1.firstStep(
-            TurnContext("要不要辞职", TurnKind.ADVICE, subject = "辞职", clarified = true, now = T0),
-        )
-        check("§16 searches after clarification", afterClarify is Step.Search, "$afterClarify")
-
-        check("§14 smalltalk does not search",
-            e1.firstStep(TurnContext("你好", TurnKind.SMALLTALK, now = T0)) === Step.Chat, "")
-        check("§9 log query goes to the log",
-            e1.firstStep(TurnContext("我昨天问你什么了", TurnKind.LOG_QUERY, now = T0))
-                is Step.SearchLog, "")
-
-        // §10 cache serving
-        val (e2, store2) = engine()
-        store2.recordWorldFact(
-            WorldFact(store2.nextId(), "iPhone 17 Pro 电池容量是多少", "3582mAh",
-                WorldTtl.PERMANENT, Tier.AUTHORITATIVE, emptyList(), recordedAt = T0),
-        )
-        check("§10 fresh cache answers without searching",
-            e2.firstStep(
-                TurnContext(
-                    "iPhone 17 Pro 电池容量是多少",
-                    TurnKind.FACTUAL,
-                    now = T0,
-                    // Recall moved out of the engine when it grew a network call. What the
-                    // engine still owns is the rule: fresh answers, and only fresh ones.
-                    recalled = store2.recallWorldFact("iPhone 17 Pro 电池容量是多少", T0),
-                ),
-            ) is Step.ServeFromMemory, "")
-
-        val (e3, store3) = engine()
-        store3.recordWorldFact(
-            WorldFact(store3.nextId(), "某只 ETF 今年表现如何", "涨了 3%",
-                WorldTtl.ALWAYS_RESEARCH, Tier.INSTITUTIONAL, emptyList(), recordedAt = T0),
-        )
-        check("§10 time-sensitive question re-searches",
-            e3.firstStep(
-                TurnContext(
-                    "某只 ETF 今年表现如何",
-                    TurnKind.FACTUAL,
-                    now = T0,
-                    recalled = store3.recallWorldFact("某只 ETF 今年表现如何", T0),
-                ),
-            )
-                is Step.Search, "")
-
-        // §20 confirmation gate
-        val (e4, store4) = engine()
-        store4.recordPreference(
-            PreferenceFact(store4.nextId(), "在吃布洛芬", PreferenceKind.CURRENT_STATE,
-                PreferenceTtl.SIX_MONTHS,
-                recordedAt = T0 - 210 * ONE_DAY_MS, confirmedAt = T0 - 210 * ONE_DAY_MS),
-        )
-        check("§20 stale medical preference is confirmed before use",
-            e4.firstStep(TurnContext("这个药能一起吃吗", TurnKind.FACTUAL, Topic.MEDICATION, now = T0))
-                is Step.ConfirmPreferences, "")
-        check("§20 gate does not fire on a non-medical question",
-            e4.firstStep(TurnContext("今天天气", TurnKind.FACTUAL, Topic.GENERAL, now = T0))
-                !is Step.ConfirmPreferences, "")
-
-        // R6 wiring
-        val (e5, _) = engine()
-        val ctxHealth = TurnContext("奇亚籽能减肥吗", TurnKind.FACTUAL, Topic.HEALTH, subject = "奇亚籽", now = T0)
-        val who = evidence(registry, "https://www.who.int/a", "世卫组织")
-        check("R6 always runs on a health question",
-            e5.afterSupportSearch(ctxHealth, listOf(who), searchFailed = false) is Step.Disconfirm, "")
-
-        val ctxGeneral = TurnContext("某手机电池多大", TurnKind.FACTUAL, Topic.GENERAL, subject = "某手机", now = T0)
-        val reuters = evidence(registry, "https://www.reuters.com/a", "路透社")
-        check("R6 skipped for a well-sourced ordinary question",
-            e5.afterSupportSearch(ctxGeneral, listOf(reuters), searchFailed = false) is Step.Answer, "")
-
-        val failed = e5.afterSupportSearch(ctxGeneral, emptyList(), searchFailed = true)
-        check("§23 failed search never falls back to model knowledge",
-            (failed as? Step.Answer)?.plan?.shape == AnswerShape.SEARCH_UNAVAILABLE, "$failed")
-
-        val done = e5.afterDisconfirmation(ctxHealth, listOf(who), emptyList())
-        check("R6 completing the counter-search produces an answer", done is Step.Answer, "$done")
-    }
 }
