@@ -18,59 +18,59 @@
     "5. Otherwise → LOW (promotable to INSTITUTIONAL with a stated reason, per spec R2)."
   ],
   "tiers": {
-    "AUTHORITATIVE": "Statable as fact with certainty.",
-    "INSTITUTIONAL": "Statable, attributed to the institution.",
-    "PERSONAL": "Pattern only; corroboration thresholds in spec R4.",
-    "LOW": "The answer must lead with the unreliability, per spec section 6."
+    "AUTHORITATIVE": "联合国及其机构、重大学术院所、PubMed、主要学术期刊",
+    "HIGH": "政府部门及其发布、官方媒体、维基百科、厂商说明自家产品参数",
+    "MEDIUM": "主流新闻机构、主流自媒体、百度百科、一般机构与数据库",
+    "LOW": "个人发帖，以及其余一切"
   },
   "publisherPatterns": [
     {
       "match": "*.gov.cn",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "中国政府机构"
     },
     {
       "match": "*.edu.cn",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "中国高校"
     },
     {
       "match": "*.gov",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "美国政府机构",
       "explanation": "美国政府部门"
     },
     {
       "match": "*.gov.hk",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "香港政府机构",
       "explanation": "香港特区政府部门"
     },
     {
       "match": "*.edu.hk",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "香港高校"
     },
     {
       "match": "*.gov.uk",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "英国政府机构",
       "explanation": "英国政府部门"
     },
     {
       "match": "*.go.jp",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "日本政府机构",
       "explanation": "日本政府部门"
     },
     {
       "match": "*.edu",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "美国高校"
     },
     {
       "match": "*.ac.uk",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "displayName": "英国高校"
     },
     {
@@ -83,7 +83,7 @@
     {
       "id": "nhc",
       "displayName": "国家卫生健康委员会",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "nhc.gov.cn"
       ],
@@ -99,7 +99,7 @@
     {
       "id": "nmpa",
       "displayName": "国家药品监督管理局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "nmpa.gov.cn"
       ],
@@ -113,7 +113,7 @@
     {
       "id": "chinacdc",
       "displayName": "中国疾控中心",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "chinacdc.cn"
       ],
@@ -127,7 +127,7 @@
     {
       "id": "stats-cn",
       "displayName": "国家统计局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "stats.gov.cn"
       ],
@@ -140,7 +140,7 @@
     {
       "id": "samr",
       "displayName": "国家市场监督管理总局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "samr.gov.cn"
       ],
@@ -153,7 +153,7 @@
     {
       "id": "pbc",
       "displayName": "中国人民银行",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "pbc.gov.cn"
       ],
@@ -166,7 +166,7 @@
     {
       "id": "csrc",
       "displayName": "中国证监会",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "csrc.gov.cn"
       ],
@@ -179,7 +179,7 @@
     {
       "id": "cma",
       "displayName": "中华医学会",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "domains": [
         "cma.org.cn"
       ],
@@ -274,7 +274,7 @@
     {
       "id": "nih",
       "displayName": "美国国家卫生研究院",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "explanation": "美国政府的医学研究机构",
       "domains": [
         "nih.gov"
@@ -288,7 +288,7 @@
     {
       "id": "cdc-us",
       "displayName": "美国疾控中心",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "explanation": "美国政府的疾病防控机构",
       "domains": [
         "cdc.gov"
@@ -302,7 +302,7 @@
     {
       "id": "fda",
       "displayName": "美国食品药品监督管理局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "explanation": "美国政府的药品与食品监管机构",
       "domains": [
         "fda.gov"
@@ -316,7 +316,7 @@
     {
       "id": "ema",
       "displayName": "欧洲药品管理局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "explanation": "欧盟的药品监管机构",
       "domains": [
         "ema.europa.eu"
@@ -423,7 +423,7 @@
     {
       "id": "xinhua",
       "displayName": "新华社",
-      "tier": "INSTITUTIONAL",
+      "tier": "HIGH",
       "domains": [
         "xinhuanet.com"
       ],
@@ -432,7 +432,7 @@
     {
       "id": "peoples-daily",
       "displayName": "人民日报",
-      "tier": "INSTITUTIONAL",
+      "tier": "HIGH",
       "domains": [
         "people.com.cn"
       ],
@@ -441,7 +441,7 @@
     {
       "id": "cctv",
       "displayName": "央视",
-      "tier": "INSTITUTIONAL",
+      "tier": "HIGH",
       "domains": [
         "cctv.com"
       ],
@@ -452,7 +452,7 @@
     {
       "id": "chinadaily",
       "displayName": "中国日报",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "chinadaily.com.cn"
       ],
@@ -461,7 +461,7 @@
     {
       "id": "thepaper",
       "displayName": "澎湃新闻",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "thepaper.cn"
       ],
@@ -470,7 +470,7 @@
     {
       "id": "caixin",
       "displayName": "财新",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "caixin.com"
       ],
@@ -479,7 +479,7 @@
     {
       "id": "southcn",
       "displayName": "南方报业",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "southcn.com",
         "nfnews.com"
@@ -489,7 +489,7 @@
     {
       "id": "bjnews",
       "displayName": "新京报",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "bjnews.com.cn"
       ],
@@ -498,7 +498,7 @@
     {
       "id": "yicai",
       "displayName": "第一财经",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "yicai.com"
       ],
@@ -511,7 +511,7 @@
     {
       "id": "stcn",
       "displayName": "证券时报",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "stcn.com"
       ],
@@ -523,7 +523,7 @@
     {
       "id": "chinasecurities",
       "displayName": "中国证券报",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "cs.com.cn"
       ],
@@ -535,7 +535,7 @@
     {
       "id": "reuters",
       "displayName": "路透社",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "国际通讯社",
       "domains": [
         "reuters.com"
@@ -545,7 +545,7 @@
     {
       "id": "ap",
       "displayName": "美联社",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "国际通讯社",
       "domains": [
         "apnews.com"
@@ -555,7 +555,7 @@
     {
       "id": "bbc",
       "displayName": "BBC",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "英国公共广播机构",
       "domains": [
         "bbc.com"
@@ -565,7 +565,7 @@
     {
       "id": "bloomberg",
       "displayName": "彭博社",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "国际财经媒体",
       "domains": [
         "bloomberg.com"
@@ -578,7 +578,7 @@
     {
       "id": "ft",
       "displayName": "《金融时报》",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "英国财经媒体",
       "domains": [
         "ft.com"
@@ -591,7 +591,7 @@
     {
       "id": "wsj",
       "displayName": "《华尔街日报》",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "美国财经媒体",
       "domains": [
         "wsj.com"
@@ -604,7 +604,7 @@
     {
       "id": "nikkei",
       "displayName": "日经新闻",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "日本财经媒体",
       "domains": [
         "nikkei.com"
@@ -614,7 +614,7 @@
     {
       "id": "dxy",
       "displayName": "丁香园 / 丁香医生",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "dxy.cn",
         "dxy.com"
@@ -632,7 +632,7 @@
     {
       "id": "medsci",
       "displayName": "梅斯医学",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "medsci.cn"
       ],
@@ -644,7 +644,7 @@
     {
       "id": "gsmarena",
       "displayName": "GSMArena",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "手机参数数据库",
       "domains": [
         "gsmarena.com"
@@ -658,7 +658,7 @@
     {
       "id": "wikipedia",
       "displayName": "维基百科",
-      "tier": "INSTITUTIONAL",
+      "tier": "HIGH",
       "domains": [
         "wikipedia.org"
       ],
@@ -668,7 +668,7 @@
     {
       "id": "baidu-baike",
       "displayName": "百度百科",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "baike.baidu.com"
       ],
@@ -678,7 +678,7 @@
     {
       "id": "pubmed",
       "displayName": "PubMed 文献库",
-      "tier": "INSTITUTIONAL",
+      "tier": "AUTHORITATIVE",
       "explanation": "美国的医学文献检索库",
       "domains": [
         "pubmed.ncbi.nlm.nih.gov",
@@ -690,7 +690,7 @@
     {
       "id": "cnki",
       "displayName": "中国知网",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "cnki.net"
       ],
@@ -700,7 +700,7 @@
     {
       "id": "arxiv",
       "displayName": "arXiv 预印本",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "论文预印本平台，未经同行评审",
       "domains": [
         "arxiv.org"
@@ -711,7 +711,7 @@
     {
       "id": "researchgate",
       "displayName": "ResearchGate",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "domains": [
         "researchgate.net"
       ],
@@ -721,7 +721,7 @@
     {
       "id": "ha-hk",
       "displayName": "香港医院管理局",
-      "tier": "AUTHORITATIVE",
+      "tier": "HIGH",
       "explanation": "香港的公立医院管理机构",
       "domains": [
         "ha.org.hk"
@@ -735,7 +735,7 @@
     {
       "id": "rthk",
       "displayName": "香港电台",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "香港公共广播机构",
       "domains": [
         "rthk.hk"
@@ -745,7 +745,7 @@
     {
       "id": "hk01",
       "displayName": "香港01",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "香港新闻媒体",
       "domains": [
         "hk01.com"
@@ -755,7 +755,7 @@
     {
       "id": "stheadline",
       "displayName": "星岛头条",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "香港报纸",
       "domains": [
         "stheadline.com"
@@ -765,7 +765,7 @@
     {
       "id": "mingpao",
       "displayName": "明报",
-      "tier": "INSTITUTIONAL",
+      "tier": "MEDIUM",
       "explanation": "香港报纸",
       "domains": [
         "mingpao.com"
@@ -840,72 +840,78 @@
     {
       "domain": "zhihu.com",
       "displayName": "知乎",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "Zhihu verification (displayed professional credential)"
     },
     {
       "domain": "weibo.com",
       "displayName": "微博",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "Weibo blue V (institution) / yellow V (verified individual)"
     },
     {
       "domain": "bilibili.com",
       "displayName": "B站",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "Bilibili official account verification"
     },
     {
       "domain": "xiaohongshu.com",
       "displayName": "小红书",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "Xiaohongshu professional account verification"
     },
     {
       "domain": "tieba.baidu.com",
       "displayName": "百度贴吧",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "douban.com",
       "displayName": "豆瓣",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "v2ex.com",
       "displayName": "V2EX",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "reddit.com",
       "displayName": "Reddit",
       "explanation": "国外的论坛",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "quora.com",
       "displayName": "Quora",
       "explanation": "国外的问答网站",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "stackoverflow.com",
       "displayName": "Stack Overflow",
       "explanation": "国外的程序员问答网站",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "none"
     },
     {
       "domain": "xueqiu.com",
       "displayName": "雪球",
-      "defaultTier": "PERSONAL",
+      "defaultTier": "LOW",
       "verification": "Xueqiu account verification",
       "note": "Investment UGC. seller-efficacy applies often — many posters hold the position they are describing."
+    },
+    {
+      "domain": "tousu.sina.com.cn",
+      "displayName": "黑猫投诉",
+      "defaultTier": "LOW",
+      "verification": "Sina complaint board; complainants are ordinary users, merchants reply under their own name"
     }
   ],
   "ownerGroups": {

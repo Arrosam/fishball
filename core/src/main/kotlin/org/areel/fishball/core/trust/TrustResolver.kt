@@ -89,11 +89,11 @@ class TrustResolver(private val registry: SourceRegistry) {
 
         // platform-publisher-cap: a secondary channel is never the primary record.
         return Resolution(
-            tier = known.tier.atMost(Tier.INSTITUTIONAL),
+            tier = known.tier.atMost(Tier.HIGH),
             displayName = known.displayName,
             explanation = known.explanation,
             via = Via.PlatformPublisher(platform.domain, known.id),
-            notes = if (known.tier > Tier.INSTITUTIONAL) {
+            notes = if (known.tier > Tier.HIGH) {
                 listOf("posted on a platform rather than the publisher's own site; capped at INSTITUTIONAL")
             } else {
                 emptyList()
@@ -110,8 +110,11 @@ class TrustResolver(private val registry: SourceRegistry) {
         val name = registrableName(host)
         val brand = ctx.brandsInQuery.firstOrNull { it.equals(name, ignoreCase = true) }
         if (brand != null && name != null) {
+            // 高, not 权威. A manufacturer is the best source alive for what is in its own box
+            // and still a party to the sale; the band above it is for the record - a
+            // government's issuances, the UN, the academies and the journals.
             return Resolution(
-                tier = Tier.AUTHORITATIVE,
+                tier = Tier.HIGH,
                 displayName = brand,
                 via = Via.BrandOfficial(brand),
             )
@@ -138,7 +141,9 @@ class TrustResolver(private val registry: SourceRegistry) {
         // interested about whether that product is any good.
         if (result.via is Via.BrandOfficial && ctx.claimKind != ClaimKind.OBJECTIVE_ATTRIBUTE) {
             result = result.copy(
-                tier = result.tier.atMost(Tier.INSTITUTIONAL),
+                // One band down from what it gets for specifications: still worth reading,
+                // no longer the best source in the room.
+                tier = result.tier.atMost(Tier.MEDIUM),
                 notes = result.notes + "manufacturer making an evaluative claim about its own product",
             )
         }

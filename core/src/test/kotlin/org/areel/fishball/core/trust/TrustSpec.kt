@@ -37,20 +37,26 @@ object TrustSpec {
 
         // ---- step 2: registry publisher by domain ---------------------------------------
         val nhc = r.resolve(SearchHit("https://www.nhc.gov.cn/guide"))
-        check("R1 registry domain grants AUTHORITATIVE", nhc.tier == Tier.AUTHORITATIVE, "got ${nhc.tier}")
+        // 高, not 权威: a ministry publishes decisions, and 权威 is for where findings are
+        // established - the UN, the academies, PubMed and the journals.
+        check("R1 registry domain grants the government band", nhc.tier == Tier.HIGH, "got ${nhc.tier}")
         check("R1 resolves via RegistryDomain", nhc.via is Via.RegistryDomain, "got ${nhc.via}")
         check("registry match is not promotable", !nhc.promotable)
 
         // ---- step 3: patterns, and the .gov.hk bug found by the live check ---------------
         val hk = r.resolve(SearchHit("https://www.drugoffice.gov.hk/eps/drug/x"))
-        check("*.gov.hk grants AUTHORITATIVE", hk.tier == Tier.AUTHORITATIVE, "got ${hk.tier}")
+        check("*.gov.hk grants the government band", hk.tier == Tier.HIGH, "got ${hk.tier}")
         check("*.gov.hk resolves via pattern",
             (hk.via as? Via.PatternMatch)?.pattern == "*.gov.hk", "got ${hk.via}")
 
-        // ---- specificity: an index on an authoritative domain stays an index -------------
+        // ---- specificity: the registry entry wins over the suffix rule -------------------
+        // Both would resolve it, and they now disagree in the other direction: the pattern says
+        // 高 for anything under *.gov, the registry says 权威 for this one index. The entry has
+        // to win, or the literature is graded as though it were a government notice.
         val pubmed = r.resolve(SearchHit("https://pubmed.ncbi.nlm.nih.gov/12345/"))
         check("PubMed beats *.gov by specificity",
-            pubmed.tier == Tier.INSTITUTIONAL, "got ${pubmed.tier} via ${pubmed.via}")
+            pubmed.tier == Tier.AUTHORITATIVE && pubmed.via is Via.RegistryDomain,
+            "got ${pubmed.tier} via ${pubmed.via}")
 
         // ---- step 1: platforms are venues, not sources -----------------------------------
         val bareWeixin = r.resolve(SearchHit("https://mp.weixin.qq.com/s/abc"))
@@ -62,7 +68,7 @@ object TrustSpec {
         check("registry account identifies the publisher",
             realAccount.via is Via.PlatformPublisher, "got ${realAccount.via}")
         check("platform-publisher-cap caps AUTHORITATIVE at INSTITUTIONAL",
-            realAccount.tier == Tier.INSTITUTIONAL, "got ${realAccount.tier}")
+            realAccount.tier == Tier.HIGH, "got ${realAccount.tier}")
 
         // no-promotion-by-name — the security rule
         val impostor = r.resolve(SearchHit("https://mp.weixin.qq.com/s/x", account = "中国卫生健康"))
@@ -77,8 +83,10 @@ object TrustSpec {
             verifiedUnknown.tier == Tier.LOW,
             "verified proves the account is someone, not that it is the health authority; got ${verifiedUnknown.tier}")
 
-        check("UGC platform floor is PERSONAL, not LOW",
-            tierOf("https://www.zhihu.com/question/1") == Tier.PERSONAL)
+        // A venue is not a tier. A post on one is a person talking until the account behind
+        // it is identified, so the floor is 低 and identification is the only way up.
+        check("UGC platform floor is LOW",
+            tierOf("https://www.zhihu.com/question/1") == Tier.LOW)
         check("content-farm platform floor is LOW",
             tierOf("https://baijiahao.baidu.com/s?id=1") == Tier.LOW)
         check("content-farm platform floor is not promotable",
@@ -86,11 +94,11 @@ object TrustSpec {
 
         // ---- step 4: R3 brand heuristic, scoped to the claim -----------------------------
         val brand = ClaimContext(brandsInQuery = listOf("apple"))
-        check("R3 brand official is AUTHORITATIVE for attributes",
-            tierOf("https://www.apple.com/iphone/specs", brand) == Tier.AUTHORITATIVE)
-        check("R3 drops to INSTITUTIONAL for evaluative claims",
+        check("R3 brand official is HIGH for attributes",
+            tierOf("https://www.apple.com/iphone/specs", brand) == Tier.HIGH)
+        check("R3 drops a band for evaluative claims",
             tierOf("https://www.apple.com/iphone/why", brand.copy(claimKind = ClaimKind.EVALUATIVE))
-                == Tier.INSTITUTIONAL)
+                == Tier.MEDIUM)
         check("R3 does not fire without the brand in the query",
             tierOf("https://www.apple.com/iphone/specs") == Tier.LOW)
 

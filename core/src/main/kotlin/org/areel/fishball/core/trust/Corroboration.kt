@@ -40,7 +40,7 @@ object Corroboration {
      * it triggers R7 disclosure instead.
      */
     fun hasUncontestedHighConfidence(supporting: List<Evidence>, contradicting: List<Evidence>): Boolean {
-        val strong = { e: Evidence -> e.resolution.tier >= Tier.INSTITUTIONAL }
+        val strong = { e: Evidence -> e.resolution.tier >= Tier.HIGH }
         return supporting.any(strong) && contradicting.none(strong)
     }
 

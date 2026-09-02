@@ -2,11 +2,27 @@
 
 Data: [`data/source-tiers.json`](../data/source-tiers.json), loaded by `:core`.
 
-**v5** · 60 publishers · 21 platforms · 10 publisher patterns · 4 scope rules
+**v8** · 60 publishers · 22 platforms · 10 publisher patterns · 4 scope rules
 
 Chinese appears in this data only as `displayName`, `explanation` and `accounts` — the text
 the product speaks to the user. Everything structural (topics, verification descriptions,
 notes, tier names) is English.
+
+## The four bands
+
+| band | | what belongs in it |
+|---|---|---|
+| `AUTHORITATIVE` | 权威 | The United Nations and its agencies, the national academies, PubMed, and the major academic journals. Where a finding is established and recorded — not "important organisations". The only band one source can carry an answer on alone, which is why it is kept narrow. |
+| `HIGH` | 高 | Governments and their departments, the state broadcasters and news agencies, Wikipedia, and a major manufacturer describing its own product's specifications. What a ministry publishes is a decision; the band above is for what is known. |
+| `MEDIUM` | 中 | Major news institutions, major self-media, 百度百科, and institutions that are not the record — professional outlets, indexes, preprint servers. Needs corroboration before anything is stated from it. |
+| `LOW` | 低 | Personal posts, and everything else. |
+
+The ordinal positions are load-bearing: every threshold in `:core` is written as
+`>= Tier.HIGH` or `< Tier.HIGH`, so the bands may be renamed but not reordered.
+
+A manufacturer sits at `HIGH` for its own specifications and drops a band for anything
+evaluative. It is the best source alive for what is in the box and a party to the sale;
+`AUTHORITATIVE` is for the record, not for the seller.
 
 ## The model
 
@@ -31,16 +47,15 @@ correct and which domain-counting got wrong.
 ```
 1. Domain is a platform?  → identify the publishing account
                            → verified, or in the registry?
-                              yes → that publisher's tier, capped at INSTITUTIONAL
+                              yes → that publisher's tier, capped at HIGH
                               no  → platform.defaultTier
 2. Domain belongs to a registry publisher?   → that publisher's tier
 3. Domain matches a publisherPattern?        → that pattern's tier
 4. Registrable name matches a brand in the query? → R3-brand-official
-5. Otherwise → LOW   (promotable to INSTITUTIONAL with a stated reason, spec R2)
+5. Otherwise → LOW   (promotable to HIGH with a stated reason, spec R2)
 ```
 
-Step order matters: `pubmed.ncbi.nlm.nih.gov` is a registry publisher (an *index*,
-INSTITUTIONAL) and must resolve at step 2 before `*.gov` promotes it at step 3.
+Step order matters: `pubmed.ncbi.nlm.nih.gov` is a registry publisher (an *index*, HIGH) and must resolve at step 2 before `*.gov` promotes it at step 3.
 
 ## LOW is the complement
 
@@ -65,7 +80,7 @@ Two consequences:
 - **`accounts` lists start near-empty on purpose.** Three are seeded, from publishers whose
   official account names are unambiguous. Populate the rest from *observed* results in Phase 1
   rather than from guesses — a wrong entry here hands AUTHORITATIVE to an impostor.
-- **`platform-publisher-cap`** holds a platform-identified publisher at INSTITUTIONAL even when
+- **`platform-publisher-cap`** holds a platform-identified publisher at HIGH even when
   verified. A secondary channel is never the primary record, and it bounds the damage if
   identification is ever fooled.
 
@@ -73,7 +88,7 @@ Two consequences:
 
 **R3-brand-official** — a domain whose registrable name matches the brand in the query is that
 brand's official site: AUTHORITATIVE for specifications, ingredients, price, availability and
-warranty; INSTITUTIONAL for anything evaluative. Covers unboundedly many manufacturers without
+warranty; HIGH for anything evaluative. Covers unboundedly many manufacturers without
 listing them.
 
 **seller-efficacy** — any publisher that sells, or takes commission on, the thing being asked
@@ -106,7 +121,7 @@ than trusting the snippet — more latency, on a path that already runs two sear
 - **Regional `*.gov.cn` and `*.gov.hk`** all inherit AUTHORITATIVE from the pattern. A county
   page is not a national ministry.
 - **Journal coverage is English-heavy.** Chinese-language core journals are reachable only
-  through CNKI, which sits at INSTITUTIONAL as an index. Per spec R8 Chinese authorities are
+  through CNKI, which sits at HIGH as an index. Per spec R8 Chinese authorities are
   preferred, so this gap bites exactly where it shouldn't.
 
 ## Maintaining it
