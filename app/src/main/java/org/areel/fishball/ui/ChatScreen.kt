@@ -1150,7 +1150,10 @@ private fun CancelBeam(voice: VoiceState) {
         )
 
         // ---- the bin, at the far end of the shaft ------------------------------------
-        Canvas(
+        // [BinMark] now, shared with the deletes on the memory and settings screens. The
+        // slide-to-cancel arm and a two-tap delete are the same promise made twice, so they
+        // are the same drawing rather than two that have to be kept in step by hand.
+        BinMark(
             Modifier
                 .align(Alignment.CenterHorizontally)
                 .size(BIN_PLATE)
@@ -1160,22 +1163,8 @@ private fun CancelBeam(voice: VoiceState) {
                     scaleY = grow
                     alpha = open
                 },
-        ) {
-            val u = size.minDimension / 24f          // a 24-unit grid, like every mark here
-            val plate = if (armed) Areel.Magenta else Areel.Paper
-            val glyph = if (armed) Areel.Paper else Areel.Ink
-
-            drawRect(plate)
-            if (!armed) drawRect(Areel.Ink, style = Stroke(width = 1.dp.toPx()))
-
-            // handle, lid, body - all rectangles, because everything in this app is
-            drawRect(glyph, Offset(9.5f * u, 4f * u), Size(5f * u, 1.6f * u))
-            drawRect(glyph, Offset(5f * u, 6f * u), Size(14f * u, 2f * u))
-            drawRect(glyph, Offset(6.6f * u, 9f * u), Size(10.8f * u, 11f * u))
-            // two slots cut out of the body, in the plate's own colour
-            drawRect(plate, Offset(9.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
-            drawRect(plate, Offset(13.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
-        }
+            armed = armed,
+        )
 
         // ---- the shaft ---------------------------------------------------------------
         Canvas(

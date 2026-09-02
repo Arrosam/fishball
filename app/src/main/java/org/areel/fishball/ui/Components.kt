@@ -17,6 +17,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -70,6 +75,7 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -136,6 +142,115 @@ fun CheckerBand(modifier: Modifier = Modifier, cell: Dp = 8.dp, color: Color = A
                 if ((row + col) % 2 == 0) {
                     drawRect(color, Offset(col * c, row * c), Size(c, c))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The bin's plate. Smaller than the cancel beam's 40dp: that one is a target found in mid-air
+ * with the eyes on a conversation, and this one sits under a finger already on the row.
+ */
+private val BIN_TILE = 26.dp
+
+/**
+ * How long an armed bin stays armed. Long enough to read the prompt and move a thumb onto the
+ * plate, short enough that it never outlives the intent that set it.
+ */
+private const val ARM_MS = 4_000L
+
+/**
+ * Two taps to delete, and the first one says what the second will do.
+ *
+ * The bin arms rather than fires: one tap turns the plate magenta and grows [prompt] out of its
+ * left edge, the next does the thing. Growing out of the plate rather than fading in beside it
+ * matters — it reads as the button explaining itself, where a label appearing alongside reads
+ * as a notice arriving from somewhere else.
+ *
+ * It replaced a word swap (清空 becoming 确认清空). Two words agreeing to look like one control
+ * is the same mistake the source card's quote toggle made, and it costs the same thing: the
+ * control changes width mid-gesture, under the finger that is about to tap it again.
+ *
+ * *Disarming is on a clock.* Tapping elsewhere was the other candidate and was dropped: on the
+ * memory screen "elsewhere" is a scrolling list, and a catcher spread over it would have eaten
+ * the first flick of every scroll to close a prompt nobody was looking at. The clock also gives
+ * the property that actually protects somebody — an armed bin is always something they did a
+ * moment ago. A screen left open on a table disarms itself, so the next tap arms, it does not
+ * delete. Leaving the composition disarms it too, which is free and is why a memory row
+ * scrolled out of the list and back comes home cold.
+ *
+ * [label] is what the control is called at rest, for screen readers; [prompt] doubles as its
+ * name once armed, since that is what it then says.
+ */
+@Composable
+fun ArmedBin(
+    prompt: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onConfirm: () -> Unit,
+) {
+    var armed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(armed, enabled) {
+        if (!armed) return@LaunchedEffect
+        // A bin that goes dead under the finger must not leave its prompt hanging beside it,
+        // promising a second tap that no longer lands.
+        if (enabled) delay(ARM_MS)
+        armed = false
+    }
+
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        AnimatedVisibility(
+            visible = armed,
+            enter = expandHorizontally(tween(150, easing = EaseMech), Alignment.End) +
+                fadeIn(tween(110)),
+            exit = shrinkHorizontally(tween(150, easing = EaseMech), Alignment.End) +
+                fadeOut(tween(110)),
+        ) {
+            Text(
+                prompt,
+                style = MaterialTheme.typography.labelMedium,
+                color = Areel.Magenta,
+                // One line, always. The prompt is short and it is squeezing a row that has
+                // other things in it; wrapped, it would push the row taller than the list it
+                // is in and the whole ledger would shift under the finger.
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.padding(end = 9.dp),
+            )
+        }
+        Box(Modifier.size(BIN_TILE), contentAlignment = Alignment.Center) {
+            // Listens wider than it draws, like the composer's plate. A 26dp square is under
+            // the 48dp a finger actually covers, and the taps that miss a delete are the ones
+            // people notice.
+            Box(
+                Modifier
+                    .requiredSize(BIN_TILE + TOUCH_SLOP * 2)
+                    .pressable(
+                        // CLICKY on the tap that deletes, because that is the irreversible
+                        // one; TOGGLE on the tap that only puts a prompt on screen.
+                        if (armed) Feel.CLICKY else Feel.TOGGLE,
+                        enabled = enabled,
+                    ) {
+                        if (armed) {
+                            armed = false
+                            onConfirm()
+                        } else {
+                            armed = true
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                BinMark(
+                    Modifier
+                        .size(BIN_TILE)
+                        // Faded rather than recoloured. A third colour pairing would be a
+                        // third bin to keep in step, and there is deliberately only one.
+                        .alpha(if (enabled) 1f else 0.3f)
+                        .semantics { contentDescription = if (armed) prompt else label },
+                    armed = armed,
+                )
             }
         }
     }
@@ -774,13 +889,36 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
                         }
                     }
                     if (source.quote != null) {
-                        Text(
-                            stringResource(if (open) R.string.quote_hide else R.string.quote_show),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Areel.Magenta,
+                        // One glyph, turned, like the composer's plus. 看原话 and 收起 were two
+                        // words agreeing to look like one control, and they are not the same
+                        // width - the site's name has the rest of the row on a weight, so it
+                        // gave up a character's width the moment somebody opened a quotation
+                        // and took it back when they closed one. A mark that points down at the
+                        // passage and then back up at the card it folds into is the same button
+                        // doing the thing the words described, and it is one width.
+                        //
+                        // The two strings stay, as what the control is called rather than what
+                        // it says: a triangle has no reading aloud of its own.
+                        val turn by animateFloatAsState(
+                            targetValue = if (open) 180f else 0f,
+                            animationSpec = spring(
+                                dampingRatio = 0.52f,
+                                stiffness = Spring.StiffnessLow,
+                            ),
+                            label = "quote-turn",
+                        )
+                        // A toggle: the quotation it opens stays on screen. See [Feel].
+                        Icon(
+                            painter = painterResource(R.drawable.ic_triangle_down),
+                            contentDescription = stringResource(
+                                if (open) R.string.quote_hide else R.string.quote_show,
+                            ),
+                            tint = Areel.Magenta,
                             modifier = Modifier
-                                .clickable { open = !open }
-                                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
+                                .pressable(Feel.TOGGLE) { open = !open }
+                                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp)
+                                .size(18.dp)
+                                .rotate(turn),
                         )
                     }
                 }

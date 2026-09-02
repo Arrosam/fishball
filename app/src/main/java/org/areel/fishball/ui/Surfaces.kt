@@ -369,6 +369,43 @@ fun FishMark(
 }
 
 /**
+ * The other mark: a bin on a plate, for the two-tap deletes.
+ *
+ * Beside [FishMark] because it is the same kind of object and drawn for the same reason. It
+ * needs two colour pairings, and the slots are cut back out of the body in the plate's own
+ * colour rather than being holes — so a tinted VectorDrawable would recolour the slots along
+ * with the body and fill the bin in solid.
+ *
+ * The plate is part of the mark, not scenery around it. The cut only works against a known
+ * colour, and every surface this lands on is glass over the CAD grid, which is a gradient with
+ * the drawing showing through — there is nothing there to cut *to*.
+ *
+ * [armed] is the second half of a two-tap delete, and it is deliberately the plate that turns
+ * magenta rather than the glyph. Ink on paper going to paper on magenta is a change visible
+ * from the corner of an eye that is busy reading the prompt beside it; a glyph recoloured
+ * inside an unchanged plate is not.
+ */
+@Composable
+fun BinMark(modifier: Modifier, armed: Boolean) {
+    Canvas(modifier) {
+        val u = size.minDimension / 24f          // a 24-unit grid, like every mark here
+        val plate = if (armed) Areel.Magenta else Areel.Paper
+        val glyph = if (armed) Areel.Paper else Areel.Ink
+
+        drawRect(plate)
+        if (!armed) drawRect(Areel.Ink, style = Stroke(width = 1.dp.toPx()))
+
+        // handle, lid, body - all rectangles, because everything in this app is
+        drawRect(glyph, Offset(9.5f * u, 4f * u), Size(5f * u, 1.6f * u))
+        drawRect(glyph, Offset(5f * u, 6f * u), Size(14f * u, 2f * u))
+        drawRect(glyph, Offset(6.6f * u, 9f * u), Size(10.8f * u, 11f * u))
+        // two slots cut out of the body, in the plate's own colour
+        drawRect(plate, Offset(9.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
+        drawRect(plate, Offset(13.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
+    }
+}
+
+/**
  * What the meter shows. Maps from `:core`'s AnswerShape at the wiring layer — CONFIDENT and
  * REFUTED both land on [FULL], because the meter reports *sureness* and the prose reports
  * direction. A confident "no" is a full bar.

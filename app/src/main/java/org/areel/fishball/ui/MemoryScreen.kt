@@ -50,10 +50,12 @@ import org.areel.fishball.ui.theme.Areel
  * deliberately absent — one is *what it believes*, the other is *what was said*, and the log
  * is answered conversationally ("我昨天问你什么了") rather than browsed.
  *
- * Read-and-forget, not read-only. `MemoryStore` already exposes `forget`, and a memory the
- * user cannot delete is not something to put on someone's phone.
+ * Read-and-forget, not read-only. A memory the user cannot delete is not something to put on
+ * someone's phone, and every row now carries the bin that takes it back out.
  *
- * Still a dummy: rows come from [Demo], nothing calls `:core` yet.
+ * The screen owns none of it. Rows arrive as a list and [onForget] goes back out to the view
+ * model, because forgetting a preference and invalidating a world fact are `:core`'s two
+ * different operations and this screen has no business knowing which one it just asked for.
  */
 // Same experimental opt-in as the thread, for the same reason: the platform stretch has to be
 // switched off where the rubber band is switched on, or an edge stretches and translates at once.
@@ -62,6 +64,7 @@ import org.areel.fishball.ui.theme.Areel
 fun MemoryScreen(
     world: List<MemoryRowData>,
     personal: List<MemoryRowData>,
+    onForget: (MemoryRowData) -> Unit,
     onBack: () -> Unit,
 ) {
     var showPersonal by remember { mutableStateOf(false) }
@@ -129,7 +132,10 @@ fun MemoryScreen(
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                items(rows) { row -> MemoryRow(row, showPersonal) }
+                                // Keyed, now that rows can leave. Unkeyed, the slot's state
+                                // stays put while its contents shift up one - so deleting a
+                                // row would hand the next one along the bin it had just armed.
+                                items(rows, key = { it.id }) { row -> MemoryRow(row, onForget) }
                             }
                     }
                 }
@@ -210,15 +216,17 @@ private fun MemoryTab(
  * A ledger line on glass — facts mounted under a pane rather than printed on the drawing.
  *
  * The bullet carries the kind without needing a word: an outline square for something learned
- * from the web, a solid magenta one for something about the user.
+ * from the web, a solid magenta one for something about the user. It reads the kind off the row
+ * rather than off the tab that is open, because the row is also what gets deleted and the two
+ * must not be able to disagree.
  */
 @Composable
-private fun MemoryRow(row: MemoryRowData, personal: Boolean) {
+private fun MemoryRow(row: MemoryRowData, onForget: (MemoryRowData) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .glassSurface(small = true)
-            .padding(horizontal = 13.dp, vertical = 12.dp),
+            .padding(start = 13.dp, end = 9.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Box(
@@ -226,7 +234,7 @@ private fun MemoryRow(row: MemoryRowData, personal: Boolean) {
                 .padding(top = 5.dp)
                 .size(7.dp)
                 .then(
-                    if (personal) Modifier.background(Areel.Magenta)
+                    if (row.personal) Modifier.background(Areel.Magenta)
                     else Modifier.border(1.dp, Areel.Ink),
                 ),
         )
@@ -240,9 +248,30 @@ private fun MemoryRow(row: MemoryRowData, personal: Boolean) {
             row.ttl,
             style = MaterialTheme.typography.labelMedium,
             color = Areel.Ink40,
-            modifier = Modifier.padding(start = 10.dp),
+            modifier = Modifier.padding(start = 10.dp, top = 2.dp),
         )
+        // The promise §9 makes, kept. A memory the user cannot take back out is not something
+        // to put on somebody's phone, and the delete is the same two-tap bin as 清空.
+        ArmedBin(
+            prompt = stringResource(R.string.memory_forget_confirm),
+            label = stringResource(R.string.memory_forget),
+            modifier = Modifier.padding(start = 8.dp),
+        ) { onForget(row) }
     }
 }
 
-data class MemoryRowData(val text: String, val ttl: String)
+data class MemoryRowData(
+    /**
+     * The store's own id. Carried so the row can be deleted; it is also what keys the list, so
+     * the bin a row was left armed with does not travel to whichever row takes its place.
+     */
+    val id: Long,
+    val text: String,
+    val ttl: String,
+    /**
+     * Which ledger this came out of. Deleting is two different operations — a preference is
+     * forgotten outright, a world fact is invalidated — so it cannot be read off whichever tab
+     * happens to be showing; it has to travel with the row that is about to be deleted.
+     */
+    val personal: Boolean,
+)

@@ -197,11 +197,29 @@ class ChatViewModel(
     fun worldMemories(): List<MemoryRowData> = backend.store.worldFacts()
         .filter { it.invalidatedAt == null }
         .sortedByDescending { it.recordedAt }
-        .map { MemoryRowData(it.answer.ifBlank { it.question }, it.ttl.label) }
+        .map {
+            MemoryRowData(it.id, it.answer.ifBlank { it.question }, it.ttl.label, personal = false)
+        }
 
     fun personalMemories(): List<MemoryRowData> = backend.store.preferences()
         .sortedByDescending { it.recordedAt }
-        .map { MemoryRowData(it.text, it.ttl.label) }
+        .map { MemoryRowData(it.id, it.text, it.ttl.label, personal = true) }
+
+    /**
+     * Spec §9 — the delete the memory screen promises, in whichever of the store's two forms
+     * the row actually needs.
+     *
+     * They are not the same operation and must not be made into one. A preference is removed
+     * outright: it is a fact about the person, and if they want it gone the record should stop
+     * existing. A world fact is *invalidated* — §19's own word — and stays on the books with a
+     * date on it, so the next question that would have been answered from the cache goes and
+     * looks the thing up again. Deleting it instead would leave a hole the recall pass reads as
+     * never having been asked, which is how a fact somebody threw away comes straight back.
+     */
+    fun forget(row: MemoryRowData) {
+        if (row.personal) backend.store.forgetPreference(row.id)
+        else backend.store.invalidateWorldFact(row.id, System.currentTimeMillis())
+    }
 }
 
 /**
