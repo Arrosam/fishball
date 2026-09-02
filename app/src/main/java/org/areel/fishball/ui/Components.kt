@@ -68,6 +68,7 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -750,13 +751,36 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
                         }
                     }
                     if (source.quote != null) {
-                        Text(
-                            stringResource(if (open) R.string.quote_hide else R.string.quote_show),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Areel.Magenta,
+                        // One glyph, turned, like the composer's plus. 看原话 and 收起 were two
+                        // words agreeing to look like one control, and they are not the same
+                        // width - the site's name has the rest of the row on a weight, so it
+                        // gave up a character's width the moment somebody opened a quotation
+                        // and took it back when they closed one. A mark that points down at the
+                        // passage and then back up at the card it folds into is the same button
+                        // doing the thing the words described, and it is one width.
+                        //
+                        // The two strings stay, as what the control is called rather than what
+                        // it says: a triangle has no reading aloud of its own.
+                        val turn by animateFloatAsState(
+                            targetValue = if (open) 180f else 0f,
+                            animationSpec = spring(
+                                dampingRatio = 0.52f,
+                                stiffness = Spring.StiffnessLow,
+                            ),
+                            label = "quote-turn",
+                        )
+                        // A toggle: the quotation it opens stays on screen. See [Feel].
+                        Icon(
+                            painter = painterResource(R.drawable.ic_triangle_down),
+                            contentDescription = stringResource(
+                                if (open) R.string.quote_hide else R.string.quote_show,
+                            ),
+                            tint = Areel.Magenta,
                             modifier = Modifier
-                                .clickable { open = !open }
-                                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
+                                .pressable(Feel.TOGGLE) { open = !open }
+                                .padding(start = 10.dp, top = 6.dp, bottom = 6.dp)
+                                .size(18.dp)
+                                .rotate(turn),
                         )
                     }
                 }
