@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.requiredSize
@@ -74,10 +76,12 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.draw.shadow
@@ -177,15 +181,23 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
     // instant it is dismissed cannot animate its way out.
     var mounted by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf(false) }
-    // The tap that dismisses also lands on the button underneath, so a naive toggle closed and
-    // immediately reopened. The popup reports the dismissal first; this ignores a press that
-    // arrives on its heels.
-    var dismissedAt by remember { mutableLongStateOf(0L) }
+    /*
+     * There is no guard here any more, because there is nothing left to guard against.
+     *
+     * Two attempts came before this one and both were the same mistake: let the tap reach the
+     * button *and* the popup, then try to work out afterwards whether the two were the same
+     * gesture. A 250ms window failed on a long press, which outlives any window. Comparing
+     * press timestamps failed because the press arrives through a coroutine and the click does
+     * not, so the click can read a timestamp that has not been written yet.
+     *
+     * While the menu is open the popup covers the whole screen, so the button is not reachable
+     * and cannot be tapped twice. A tap anywhere - over the button, over the thread, over the
+     * masthead - lands on the popup and closes it. The button's only job is to open.
+     */
     val scope = rememberCoroutineScope()
 
     fun retract() {
         open = false
-        dismissedAt = SystemClock.uptimeMillis()
         scope.launch {
             delay(MENU_EXIT_MS)
             mounted = false
@@ -206,12 +218,11 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
             Modifier
                 .requiredSize(44.dp + TOUCH_SLOP * 2)
                 .clickable(interactionSource = interaction, indication = null) {
-                    when {
-                        open -> retract()
-                        SystemClock.uptimeMillis() - dismissedAt > MENU_REOPEN_GUARD_MS -> {
-                            mounted = true
-                            open = true
-                        }
+                    // Opens, and only opens. Closing belongs to the sheet that is covering
+                    // this button while it is open.
+                    if (!mounted) {
+                        mounted = true
+                        open = true
                     }
                 },
             contentAlignment = Alignment.Center,
@@ -238,10 +249,37 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
             // to clear both — otherwise the first gap is smaller than the second and the stack
             // reads as slightly broken rather than deliberately spaced.
             val drop = with(LocalDensity.current) { (44.dp + MENU_GAP).roundToPx() }
+            /*
+             * Two windows, and the order matters.
+             *
+             * The first is the whole screen and does nothing but close the menu, which is what
+             * replaced the platform's dismiss-on-outside-click: that fires on the way down and
+             * leaves the same tap to land on the button underneath, and no amount of guarding
+             * afterwards can tell that tap apart from a deliberate reopen. Covering the button
+             * means it cannot be tapped twice, so there is nothing to tell apart.
+             *
+             * The second carries the plates and is anchored to the button, which is the part
+             * that had to be a separate window: a full-screen popup aligns to the *screen*, so
+             * hanging the plates in it put them a fixed distance from the top of the display
+             * rather than under the button, and the first gap stopped matching the second.
+             */
+            Popup(
+                properties = PopupProperties(
+                    focusable = false,
+                    dismissOnClickOutside = false,
+                    usePlatformDefaultWidth = false,
+                ),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { detectTapGestures { retract() } },
+                )
+            }
             Popup(
                 alignment = Alignment.TopEnd,
                 offset = IntOffset(0, drop),
-                onDismissRequest = { retract() },
+                properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
             ) {
                 // The plates themselves drop out of the button. 记忆 keeps the design it always
                 // had - 44dp plate, magenta glyph, ink label - because it was not a list item
@@ -431,8 +469,6 @@ private fun MenuPlate(icon: Int, label: String, order: Int, open: Boolean, onCli
     }
 }
 
-/** Long enough to swallow the dismissing tap, short enough not to eat a deliberate reopen. */
-private const val MENU_REOPEN_GUARD_MS = 250L
 
 /** One spacing, used between the button and the first plate and between the plates. */
 private val MENU_GAP = 8.dp

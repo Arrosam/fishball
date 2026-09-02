@@ -116,29 +116,21 @@ fun MemoryScreen(
                         )
                     }
                 } else {
-                    // The ledger drags and springs back exactly like the thread does. It is the same
-                    // gesture on the same kind of surface, and a short list that refused to move while
-                    // the thread bounced read as this screen being half-finished.
-                    val bounce = rememberBounceState()
+                    // The ledger scrolls exactly like the thread does - which is now to say,
+                    // like every other list on the phone.
                     Box(
                         Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            // As in the thread: unclipped, the pulled list draws over the band above it.
-                            .clipToBounds()
-                            .bounce(bounce),
+                            .clipToBounds(),
                     ) {
-                        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
                             LazyColumn(
-                                Modifier
-                                    .fillMaxSize()
-                                    .offset { IntOffset(0, bounce.translation) },
+                                Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 items(rows) { row -> MemoryRow(row, showPersonal) }
                             }
-                        }
                     }
                 }
                 Spacer(Modifier.navigationBarsPadding())

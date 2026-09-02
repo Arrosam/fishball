@@ -232,6 +232,11 @@ fun Modifier.userRule(): Modifier = this.drawBehind {
  *
  * It starts empty. The lines are a queue, not a standing pattern, so pressing the button emits
  * the first at the rule and the field fills from there.
+ *
+ * And it does not end with the press. Letting go stops new lines leaving the rule; the ones
+ * already out keep travelling and fading on their own time. Clearing them on release cut the
+ * field to nothing in a single frame, which read as the app dropping what had just been said
+ * rather than as the end of saying it.
  */
 fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed {
     // A plain list plus a frame counter, rather than a snapshot list: these change every frame
@@ -240,27 +245,31 @@ fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed
     var tick by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(active) {
-        pulses.clear()
+        // Only a fresh press starts from nothing. Coming the other way the queue is left alone,
+        // and this pass exists to walk it the rest of the way out.
+        if (active) pulses.clear()
         tick++
-        if (!active) return@LaunchedEffect
         var last = withFrameNanos { it }
         var since = EMIT_MS                       // emit at once, so the press is answered
-        while (true) {
+        while (active || pulses.isNotEmpty()) {
             val now = withFrameNanos { it }
             val dt = ((now - last) / 1_000_000L).toFloat()
             last = now
 
-            since += dt
-            if (since >= EMIT_MS) {
-                since = 0f
-                // The level is read here and kept, so the bar carries the moment it left
-                // rather than being restyled by whatever is said after it.
-                pulses.add(Pulse(0f, level().coerceIn(0f, 1f)))
+            if (active) {
+                since += dt
+                if (since >= EMIT_MS) {
+                    since = 0f
+                    // The level is read here and kept, so the bar carries the moment it left
+                    // rather than being restyled by whatever is said after it.
+                    pulses.add(Pulse(0f, level().coerceIn(0f, 1f)))
+                }
             }
             pulses.forEach { it.travelled += dt / LIFE_MS }
             while (pulses.isNotEmpty() && pulses.first().travelled >= 1f) pulses.removeAt(0)
             tick++
         }
+        tick++
     }
 
     drawBehind {

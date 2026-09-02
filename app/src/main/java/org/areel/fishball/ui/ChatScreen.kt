@@ -78,7 +78,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.math.PI
+import kotlin.math.sin
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
@@ -131,7 +148,19 @@ fun ChatScreen(
     // Rows that have already played their entrance. A LazyColumn discards and rebuilds an
     // item when it scrolls out and back, so without this an old message re-animates every
     // time it returns to view.
-    val entered = remember { mutableSetOf<Int>() }
+    /*
+     * How many messages were already on screen when this screen was opened.
+     *
+     * Everything at or past it arrived while somebody was watching, and only those animate.
+     * The rest - a conversation restored from the log, or the same conversation coming back
+     * from the memory screen - is simply *there*, because it was there before.
+     *
+     * This used to be a set of indices that had been drawn once, which made every message its
+     * own little animation to run and re-run: the set is emptied when the screen is rebuilt, so
+     * coming back from Settings replayed the entire conversation, and dragging through a long
+     * thread animated rows as they were recycled. That is the cost the drag was paying.
+     */
+    val alreadyThere = remember { messages.size }
 
     // The pending bubble is a list item, so it counts toward the scroll target.
     val itemCount = messages.size + if (pending) 1 else 0
@@ -185,10 +214,21 @@ fun ChatScreen(
 
     LaunchedEffect(itemCount) { if (following) toEnd(smooth = true) }
 
-    // While it writes. Keyed on coarse buckets of length rather than on the text itself, so a
-    // hundred tokens cost a handful of scrolls instead of a hundred animations.
-    LaunchedEffect(vm.streamed.length / 48, vm.thinking.length / 240) {
-        if (following && busy) toEnd(smooth = false)
+    /*
+     * While it writes: the bottom of the growing message stays on the bottom of the screen.
+     *
+     * One collector rather than an effect keyed on the text, and it reads the length on every
+     * change instead of in coarse buckets of forty-eight characters. The buckets were there to
+     * keep a hundred tokens from costing a hundred animations - but [toEnd] is a jump, not an
+     * animation, and the buckets bought nothing except a message that grew four or five lines
+     * past the bottom of the screen before the view caught up with it.
+     *
+     * `collect` on a suspending body conflates for free: while one scroll is in flight the
+     * lengths in between are dropped, so this costs one scroll per frame at worst.
+     */
+    LaunchedEffect(Unit) {
+        snapshotFlow { vm.streamed.length + vm.thinking.length }
+            .collect { if (following && busy) toEnd(smooth = false) }
     }
 
     // The viewport changing size, from any cause. The keyboard is the one that prompted this,
@@ -226,35 +266,33 @@ fun ChatScreen(
         // top of the thread below, so the thread genuinely runs underneath it.
         TopBand(onMemoryClick = onMemoryClick, onSettingsClick = onSettingsClick)
 
-        val bounce = rememberBounceState()
+
         // In dp, so the overrun is the same distance on every screen rather than the same
         // number of pixels.
-        val arrivalPeak = with(LocalDensity.current) { 22.dp.toPx() }
         // clipToBounds is load-bearing, not tidiness: the bounce translates the whole list
         // past its own edges, and unclipped that content drew straight over the masthead. The
         // band and the composer own their strips of the screen; the thread stays inside its.
+        /*
+         * Coming back to the conversation, from Memory or Settings.
+         *
+         * The whole thread fades in once, together. Individually the bubbles do nothing - they
+         * were there before and they are there now - but the screen arriving all at once, at
+         * full contrast, reads as a jump cut. One shared fade is also one animation for the
+         * whole list rather than one per row.
+         */
+        val settle = remember { Animatable(0f) }
+        LaunchedEffect(Unit) { settle.animateTo(1f, tween(RETURN_FADE_MS)) }
+
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .clipToBounds()
-                // The list is asked where it is rather than inferred from what it declined to
-                // scroll. See Bounce.kt: a LazyColumn declines mid-drag while it composes the
-                // row above, which is not the top of anything.
-                .bounce(
-                    state = bounce,
-                    atStart = { !listState.canScrollBackward },
-                    atEnd = { !listState.canScrollForward },
-                ),
+                .graphicsLayer { alpha = settle.value }
+                .clipToBounds(),
         ) {
-            // The platform stretch is turned off: with the rubber band below it, an edge would
-            // stretch and translate at once, which reads as two effects arguing.
-            CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .offset { IntOffset(0, bounce.translation) },
+                modifier = Modifier.fillMaxSize(),
                 // 32dp of top padding, not 16: the checker is an overlay now rather than a
                 // row in the Column above, so the list has to leave its height clear or the
                 // first message would start life half-hidden under it.
@@ -262,8 +300,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 itemsIndexed(messages) { index, message ->
-                    val firstShowing = remember(index) { entered.add(index) }
-                    EnterFromCorner(fromUser = message.fromUser, animate = firstShowing) {
+                    Arriving(animate = index >= alreadyThere) {
                         if (message.fromUser) {
                             UserBubble(message.text)
                         } else {
@@ -282,7 +319,7 @@ fun ChatScreen(
                 // §21 inline: the placeholder sits where the answer will, and is replaced in place.
                 if (pending) {
                     item {
-                        EnterFromCorner(fromUser = false, animate = true) {
+                        Arriving(animate = true) {
                             PendingBubble(
                                 steps = narration.toList(),
                                 thinking = vm.thinking,
@@ -291,7 +328,6 @@ fun ChatScreen(
                         }
                     }
                 }
-            }
             }
 
             // Nothing said yet. It lives in the thread's box rather than in the list, so it
@@ -369,10 +405,6 @@ fun ChatScreen(
                         // And one firmer one on arrival. The texture stops, something solid
                         // happens: that is the end of the conversation, felt.
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        // After the list has actually stopped, not alongside it: run the two
-                        // together and the overshoot is spent while the thread is still moving,
-                        // so nothing arrives anywhere.
-                        bounce.arrive(arrivalPeak)
                     }
                 },
             )
@@ -394,7 +426,16 @@ fun ChatScreen(
 
         Composer(
             value = draft,
-            onValueChange = { draft = it },
+            onValueChange = {
+                // The first keystroke answers the microphone's last word. Without this the
+                // line sat there through the whole conversation that followed: it shows in an
+                // empty field, and the field empties again the moment anything is sent.
+                //
+                // On the keystroke rather than on the send, so it goes at the moment somebody
+                // has plainly decided to type instead - not one message later.
+                voice.dismissNotice()
+                draft = it
+            },
             enabled = !busy,
             onSend = {
                 send(draft)
@@ -487,8 +528,14 @@ private fun Composer(
      *
      * Holding the microphone made it grow too, for a plainer reason: two lines of indicator are
      * taller than one line of text. So the outer height is fixed here rather than left to the
-     * content, and the recording state buys the room for its second line by giving back its own
-     * padding instead of by pushing the bar up.
+     * content.
+     *
+     * And so is the ruled block inside it. That started as a way of finding room for the second
+     * line - shrink the padding while recording and the block gets taller - which worked, and
+     * lengthened the magenta rule along with it: hold the button and the mark that means *your
+     * words* grew by a third, on a field nobody was typing in. The rule is one line of text
+     * tall, always. The indicator is allowed to overflow it instead, which costs nothing on a
+     * shell with 12dp of clear space above and below the block.
      */
     val fieldStyle = MaterialTheme.typography.bodyLarge.copy(
         color = Areel.Ink,
@@ -500,8 +547,20 @@ private fun Composer(
     )
     val lineBox = with(LocalDensity.current) { fieldStyle.lineHeight.toDp() }
     // 12 above and below on the shell, 2 above and below on the ruled block inside it.
-    val fieldHeight = lineBox + 28.dp
-    val inset = if (recording) 4.dp else 12.dp
+    /*
+     * How many lines the field is showing, which is what its height is made of.
+     *
+     * Reported by the text's own layout rather than counted from the string: a line here is a
+     * line as laid out, and Chinese wraps mid-sentence with no spaces to count. Clamped at
+     * [COMPOSER_MAX_LINES] - past that the field stops growing and the text scrolls inside it,
+     * because a composer that keeps growing eventually is the screen.
+     */
+    var typedLines by remember { mutableIntStateOf(1) }
+    val shownLines = if (recording) 1 else typedLines.coerceIn(1, COMPOSER_MAX_LINES)
+    val fieldHeight = lineBox * shownLines + 28.dp
+
+    // The ruled block: one line of text plus its own 2dp above and below, whatever is in it.
+    val ruleHeight = lineBox * shownLines + 4.dp
     Column(
         Modifier
             .fillMaxWidth()
@@ -613,23 +672,30 @@ private fun Composer(
                     .weight(1f)
                     .height(fieldHeight)
                     .glassSurface()
-                    .padding(start = 14.dp, top = inset, bottom = inset),
+                    .padding(start = 14.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
               Box(
                 Modifier
                     .fillMaxWidth()
+                    // Fixed, so the rule is the same length in every state of the composer.
+                    .height(ruleHeight)
                     // Under the rule, so the lines come out from behind it rather than over it.
                     .voiceWave(active = recording) { voice.level }
                     .userRule()
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
+                contentAlignment = Alignment.CenterStart,
               ) {
                 // While the button is held the field is where the state is reported, because
                 // that is the one place already in view and a finger is covering the plate.
                 when (voice.phase) {
                     // Both lines carry their own line height, so what fits is arithmetic
                     // rather than whatever the font happens to want.
-                    VoicePhase.RECORDING -> Column {
+                    // Taller than the block it sits in, and allowed to be: the rule keeps
+                    // its length and the second line overflows into the shell's own margin.
+                    VoicePhase.RECORDING -> Column(
+                        Modifier.wrapContentHeight(unbounded = true),
+                    ) {
                         Text(
                             stringResource(R.string.voice_recording),
                             style = MaterialTheme.typography.bodyLarge.copy(
@@ -661,17 +727,40 @@ private fun Composer(
                     // the line was to type, and there was nothing left to type into.
                     VoicePhase.IDLE -> {
                         if (speaking && voice.notice != null) {
-                            Text(
-                                voice.notice.orEmpty(),
-                                style = fieldStyle,
-                                color = Areel.Ink40,
-                            )
+                            // Two lines when there is a code, the same shape the recording
+                            // state uses, and allowed to overflow the ruled block for the
+                            // same reason: the rule stays one line of text long.
+                            Column(Modifier.wrapContentHeight(unbounded = true)) {
+                                Text(
+                                    voice.notice.orEmpty(),
+                                    style = fieldStyle,
+                                    color = Areel.Ink40,
+                                    maxLines = 1,
+                                )
+                                voice.noticeCode?.let { code ->
+                                    Text(
+                                        code,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            lineHeight = 13.sp,
+                                            platformStyle =
+                                                PlatformTextStyle(includeFontPadding = false),
+                                        ),
+                                        color = Areel.Ink40,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
                         }
                         BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     enabled = enabled,
-                    singleLine = true,
+                    // Not single-line any more, but still capped: at the cap the field holds
+                    // its height and BasicTextField scrolls the text within it, which is the
+                    // behaviour wanted - the last line typed stays in view.
+                    maxLines = COMPOSER_MAX_LINES,
+                    onTextLayout = { typedLines = it.lineCount },
                     textStyle = fieldStyle,
                     cursorBrush = SolidColor(Areel.Magenta),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -690,10 +779,15 @@ private fun Composer(
             if (!speaking) tapFeedback(sendPress)
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
+            val working = voice.phase == VoicePhase.TRANSCRIBING
             Box(
                 Modifier.padding(start = 10.dp).size(48.dp),
                 contentAlignment = Alignment.Center,
             ) {
+            // Drawn from inside the composer so it can leave the button it belongs to. The bar
+            // is the last thing the screen draws, and nothing here clips, so a child that
+            // overflows upward lands over the conversation - which is where the light goes.
+            CancelBeam(voice)
             Box(
                 Modifier
                     .requiredSize(48.dp + TOUCH_SLOP * 2)
@@ -706,13 +800,23 @@ private fun Composer(
                             // off the button still ends the recording rather than orphaning it.
                             Modifier.pointerInput(enabled) {
                                 if (!enabled) return@pointerInput
-                                detectTapGestures(
-                                    onPress = {
-                                        voice.onHold()
-                                        tryAwaitRelease()
-                                        voice.onRelease()
-                                    },
-                                )
+                                val reach = CANCEL_REACH.toPx()
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    voice.onHold()
+                                    var up = false
+                                    // Followed by hand rather than with a drag detector: a drag
+                                    // detector waits for slop before it reports anything, and
+                                    // this gesture starts the moment the finger lands.
+                                    while (true) {
+                                        val touch = awaitPointerEvent().changes
+                                            .firstOrNull { it.id == down.id } ?: break
+                                        if (!touch.pressed) break
+                                        up = down.position.y - touch.position.y > reach
+                                        voice.aim(up)
+                                    }
+                                    if (up) voice.onCancel() else voice.onRelease()
+                                }
                             }
                         } else {
                             Modifier.clickable(
@@ -740,23 +844,50 @@ private fun Composer(
                                 !enabled -> Areel.Ink20
                                 // Held: inverted, so the control that is doing something looks
                                 // pressed rather than merely coloured.
-                                held -> Areel.Ink
+                                // Busy for the same reason as held: it is doing something,
+                                // and it cannot be pressed again until it stops.
+                                held || working -> Areel.Ink
                                 else -> Areel.Magenta
                             },
                             RectangleShape,
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        painter = painterResource(
-                            if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
-                        ),
-                        contentDescription = stringResource(
-                            if (speaking) R.string.voice_hold else R.string.send,
-                        ),
-                        tint = if (enabled) Areel.Paper else Areel.Ink40,
-                        modifier = Modifier.size(24.dp),
-                    )
+                    if (working) {
+                        // Turning over, the way a fish does. The plate is not a control for as
+                        // long as this runs - a second recording started here would take the
+                        // microphone from under the words still being fetched - and something
+                        // that is plainly busy says so better than a greyed-out square.
+                        val turning = rememberInfiniteTransition(label = "fish")
+                        val face by turning.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(FLIP_MS, easing = LinearEasing),
+                            ),
+                            label = "flip",
+                        )
+                        FishMark(
+                            // The eye is dropped: past a quarter turn the mark is mirrored,
+                            // and an eye that swaps ends reads as a fault rather than a fish.
+                            modifier = Modifier
+                                .size(24.dp)
+                                .graphicsLayer { rotationY = face },
+                            body = Areel.Paper,
+                            eye = null,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(
+                                if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
+                            ),
+                            contentDescription = stringResource(
+                                if (speaking) R.string.voice_hold else R.string.send,
+                            ),
+                            tint = if (enabled) Areel.Paper else Areel.Ink40,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
             }
             }
@@ -771,6 +902,243 @@ private fun Composer(
  * The list clamps this to whatever scroll is actually left.
  */
 private const val FAR_ENOUGH = 100_000f
+
+
+/**
+ * The way out of a voice message, while the finger is still holding the button down.
+ *
+ * A narrow lens of light standing on the microphone plate, chevrons climbing inside it, and one
+ * line above it saying what to do with them. Every other affordance in the app can be looked at
+ * before it is used. This one cannot - the finger that would point at it is the finger holding
+ * the button - so it has to be read from the corner of an eye, which is why it is a moving arrow
+ * and not a word.
+ *
+ * It grows out of the button rather than hovering over it: the foot of the shape is the middle
+ * of the plate, so what is lit is plainly lit *by* the thing under the finger. That is also why
+ * it is drawn here, inside the composer, instead of over the thread - the bar is the last thing
+ * the screen paints, so a child of it that overflows upward passes over the conversation, while
+ * one placed in the thread could never reach down over the bar.
+ *
+ * The light is the one soft edge in the app, deliberately. Everything else here is cut, and a
+ * hard-edged beam would read as a shape rather than as a glow.
+ *
+ * Armed, it brightens and the line changes. Somebody has to be able to tell without looking
+ * away from a conversation whether letting go now sends or discards, and the tick that comes
+ * with [VoiceState.aim] is felt at the moment this changes rather than somewhere along the way.
+ */
+@Composable
+private fun CancelBeam(voice: VoiceState) {
+    val on = voice.phase == VoicePhase.RECORDING
+
+    // How far open the shaft is. It grows out of the plate rather than appearing over it.
+    val open by animateFloatAsState(
+        targetValue = if (on) 1f else 0f,
+        animationSpec = tween(BEAM_OPEN_MS, easing = FastOutSlowInEasing),
+        label = "beam",
+    )
+    if (open < 0.01f) return
+    val armed = voice.cancelling
+
+    // The bin swells when letting go would use it. One thing moves, and it is the thing that
+    // would happen - which is the whole reason this is a bin and not a beam of light.
+    val bin by animateFloatAsState(
+        targetValue = if (armed) 1f else 0f,
+        animationSpec = tween(BIN_ARM_MS, easing = FastOutSlowInEasing),
+        label = "bin",
+    )
+
+    /*
+     * The chevrons work the way the voice lines do: emitted at the plate on a fixed interval,
+     * travelling away at a constant speed, fading evenly the whole trip. They point at the bin
+     * now, which is what stops them reading as "send".
+     */
+    val arrows = remember { mutableListOf<Float>() }
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(on) {
+        if (on) arrows.clear()
+        tick++
+        var last = withFrameNanos { it }
+        var since = ARROW_EMIT_MS
+        while (on || arrows.isNotEmpty()) {
+            val now = withFrameNanos { it }
+            val dt = ((now - last) / 1_000_000L).toFloat()
+            last = now
+            if (on) {
+                since += dt
+                if (since >= ARROW_EMIT_MS) {
+                    since = 0f
+                    arrows.add(0f)
+                }
+            }
+            for (i in arrows.indices) arrows[i] = arrows[i] + dt / ARROW_LIFE_MS
+            while (arrows.isNotEmpty() && arrows.first() >= 1f) arrows.removeAt(0)
+            tick++
+        }
+    }
+
+    val tall = BEAM_HEIGHT + BIN_PLATE + BEAM_HINT
+    Column(
+        Modifier
+            // requiredSize, so none of this is measured into the bar: the composer keeps its
+            // one height and all of this is overflow above it. Lifted by half, which puts the
+            // foot of the column on the middle of the plate.
+            .requiredSize(width = BEAM_SPAN, height = tall)
+            .offset(y = -tall / 2),
+        horizontalAlignment = Alignment.End,
+    ) {
+        Text(
+            stringResource(if (armed) R.string.voice_cancel_armed else R.string.voice_cancel),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 11.sp,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+            ),
+            color = if (armed) Areel.Magenta else Areel.Ink40,
+            modifier = Modifier
+                // Ends 12dp from the edge of the screen, like everything else in the bar.
+                .padding(end = BEAM_SPAN / 2 - PLATE_CENTRE + 12.dp)
+                .height(BEAM_HINT)
+                .graphicsLayer { alpha = open },
+        )
+
+        // ---- the bin, at the far end of the shaft ------------------------------------
+        Canvas(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .size(BIN_PLATE)
+                .graphicsLayer {
+                    val grow = 1f + BIN_SWELL * bin
+                    scaleX = grow
+                    scaleY = grow
+                    alpha = open
+                },
+        ) {
+            val u = size.minDimension / 24f          // a 24-unit grid, like every mark here
+            val plate = if (armed) Areel.Magenta else Areel.Paper
+            val glyph = if (armed) Areel.Paper else Areel.Ink
+
+            drawRect(plate)
+            if (!armed) drawRect(Areel.Ink, style = Stroke(width = 1.dp.toPx()))
+
+            // handle, lid, body - all rectangles, because everything in this app is
+            drawRect(glyph, Offset(9.5f * u, 4f * u), Size(5f * u, 1.6f * u))
+            drawRect(glyph, Offset(5f * u, 6f * u), Size(14f * u, 2f * u))
+            drawRect(glyph, Offset(6.6f * u, 9f * u), Size(10.8f * u, 11f * u))
+            // two slots cut out of the body, in the plate's own colour
+            drawRect(plate, Offset(9.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
+            drawRect(plate, Offset(13.2f * u, 11.4f * u), Size(1.6f * u, 6.2f * u))
+        }
+
+        // ---- the shaft ---------------------------------------------------------------
+        Canvas(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(BEAM_BODY)
+                .height(BEAM_HEIGHT),
+        ) {
+            @Suppress("UNUSED_EXPRESSION") tick      // subscribe: this repaints every frame
+            val foot = size.height                   // the plate, where the shaft stands
+            val reach = size.height * open           // how much of it is open right now
+            val head = foot - reach
+
+            /*
+             * A rectangle, not a cone.
+             *
+             * It was a lens of light widening upward, and the shape said nothing: an upward
+             * glow with arrows in it reads as *send*, and somebody who did not stop to read
+             * 上滑取消语音 would learn what it did by losing a message. A shaft with a bin on
+             * the end of it can only mean one thing.
+             */
+            val step = (if (armed) 0.20f else 0.10f) * open
+            drawRect(
+                brush = Brush.verticalGradient(
+                    listOf(Color.Transparent, Areel.Magenta.copy(alpha = step)),
+                    startY = head,
+                    endY = foot,
+                ),
+                topLeft = Offset(0f, head),
+                size = Size(size.width, reach),
+            )
+
+            val arm = size.width * 0.26f * open
+            val drop = size.height * 0.05f
+            val edge = Stroke(width = 2.dp.toPx())
+            val mid = size.width / 2f
+            arrows.forEach { travelled ->
+                // Inside the shaft however far open it is, so nothing climbs out ahead of it.
+                val y = foot - reach * (0.10f + 0.78f * travelled)
+                drawPath(
+                    Path().apply {
+                        moveTo(mid - arm, y + drop)
+                        lineTo(mid, y)
+                        lineTo(mid + arm, y + drop)
+                    },
+                    Areel.Magenta.copy(
+                        alpha = ((if (armed) 0.95f else 0.62f) * (1f - travelled) * open)
+                            .coerceIn(0f, 1f),
+                    ),
+                    style = edge,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * How tall the composer is allowed to get.
+ *
+ * Four lines, then the text scrolls inside it. One line was the whole field: anything longer
+ * than a short question scrolled sideways a word at a time, and what somebody had written was
+ * unreadable while they were writing it. Four is where the bar still leaves most of the
+ * conversation on screen on the phone this is for.
+ */
+private const val COMPOSER_MAX_LINES = 4
+
+/**
+ * The thread fading up when the screen is opened.
+ *
+ * Long enough to read as arriving, short enough that somebody coming back from Settings is not
+ * kept waiting for their own conversation.
+ */
+private const val RETURN_FADE_MS = 220
+
+/** How far up the finger has to travel before letting go discards instead of sends. */
+private val CANCEL_REACH = 56.dp
+
+/**
+ * Where the microphone plate's middle is, measured in from the right edge of the screen.
+ *
+ * The bar is inset 12 and the plate is 48 wide, so 36. The light is centred on this and the
+ * line above it is placed off it.
+ */
+private val PLATE_CENTRE = 36.dp
+
+/** The shaft: how wide it stands and how far up it reaches. */
+private val BEAM_BODY = 56.dp
+private val BEAM_HEIGHT = 132.dp
+
+/** The bin at the top of it, and how much bigger it gets when letting go would use it. */
+private val BIN_PLATE = 40.dp
+private const val BIN_SWELL = 0.34f
+private const val BIN_ARM_MS = 160
+
+/** The line above it, and the room the pair of them are allowed to take. */
+private val BEAM_HINT = 20.dp
+private val BEAM_SPAN = 220.dp
+
+/**
+ * How often a chevron leaves the plate, and how long it takes to climb the light and fade.
+ *
+ * The same shape of numbers as the voice lines in Surfaces.kt, spread further apart: these are
+ * read one at a time as a direction, where the lines are read together as a waveform.
+ */
+private const val ARROW_EMIT_MS = 300f
+private const val ARROW_LIFE_MS = 1150f
+
+/** How long the light takes to open out of the button, and to close back into it. */
+private const val BEAM_OPEN_MS = 260
+
+/** One turn of the fish, while it is fetching the words. */
+private const val FLIP_MS = 1400
 
 /**
  * The choices, floating over the thread.

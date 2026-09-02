@@ -84,3 +84,41 @@ fun EnterFromCorner(
     val pivot = if (fromUser) 1f else 0f
     EnterFrom(pivotX = pivot, pivotY = pivot, animate = animate, content = content)
 }
+
+/**
+ * A message that has just arrived.
+ *
+ * The only motion left in the thread, and it runs once per message: the turn somebody just sent
+ * and the answer that comes back for it. Everything already on screen is drawn plainly, with no
+ * wrapper and no layer, because a conversation that was already there has not arrived.
+ *
+ * When it is not animating there is no [androidx.compose.ui.graphics.graphicsLayer] and no
+ * [Animatable] at all - not a layer sitting at alpha 1. That distinction is the point of
+ * rewriting this: the old version wrapped every row in a graphics layer whether or not it had
+ * anything to animate, and a long thread paid for it on every frame of every drag.
+ *
+ * A fade and a short rise, no scale. Scaling a plate of dense Chinese reflows the text as it
+ * grows, which is more distracting than no animation at all.
+ */
+@Composable
+fun Arriving(animate: Boolean, content: @Composable () -> Unit) {
+    if (!animate) {
+        content()
+        return
+    }
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(1f, tween(durationMillis = ARRIVE_MS, easing = EaseMech))
+    }
+    androidx.compose.foundation.layout.Box(
+        Modifier.graphicsLayer {
+            alpha = progress.value
+            translationY = (1f - progress.value) * 12.dp.toPx()
+        },
+    ) {
+        content()
+    }
+}
+
+/** One message arriving. Shorter than the old entrance: it is a fade, not a flight. */
+private const val ARRIVE_MS = 200
