@@ -9,6 +9,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import java.net.URI
+import org.areel.fishball.core.notCancellation
 
 /** A link on a page, so the agent can carry on from where it landed. */
 data class PageLink(val text: String, val url: String)
@@ -69,6 +70,7 @@ class HttpPageReader(
             )
         }
     } catch (e: Exception) {
+        e.notCancellation()
         PageContent(url, failed = true, reason = e::class.simpleName ?: "unreadable")
     }
 

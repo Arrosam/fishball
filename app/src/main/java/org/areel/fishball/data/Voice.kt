@@ -16,6 +16,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.http.contentType
+import org.areel.fishball.core.catching
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -316,7 +317,9 @@ class Voice(private val context: Context) {
      */
     suspend fun transcribe(file: File, apiKey: String): String? = withContext(Dispatchers.IO) {
         lastFailure = null
-        runCatching {
+        // `catching`, not `runCatching`: somebody who tapped the fish to stop this told the app
+        // to stop, and swallowing that would land 「没听清，再说一遍吧」 under their own decision.
+        catching {
             val audio = file.readBytes()
             // Only has to not appear in the payload; nanoTime is plenty and costs nothing.
             val boundary = "fishball" + System.nanoTime().toString(16)

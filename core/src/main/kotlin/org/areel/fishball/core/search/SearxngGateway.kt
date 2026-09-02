@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import org.areel.fishball.core.notCancellation
 import org.areel.fishball.core.trust.SearchHit
 
 /**
@@ -55,6 +56,7 @@ class SearxngGateway(
             unresponsiveEngines = dto.unresponsiveEngines.engineNames(),
         )
     } catch (e: Exception) {
+        e.notCancellation()
         // Spec §23 depends on this being reported honestly: a failed search must never be
         // mistaken for "nothing found", or the model may answer from its own knowledge.
         SearchResponse(

@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import org.areel.fishball.core.catching
 import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.llm.LlmClient
 import org.areel.fishball.core.llm.LlmMessage
@@ -84,7 +85,7 @@ class MemoryBus(
         context: List<LlmMessage>,
         progress: TurnProgress,
     ): Pair<List<String>, List<String>> {
-        val result = runCatching {
+        val result = catching {
             llm.complete(
                 LlmRequest(
                     system = AgentPrompt.SYSTEM,
@@ -112,7 +113,7 @@ class MemoryBus(
     fun noteUser(userText: String) {
         if (userText.isBlank()) return
         scope.launch {
-            runCatching {
+            catching {
                 gate.withLock {
                     // What is already known that this could contradict. Similarity alone: a
                     // correction names the thing it corrects, so there is nothing here a
@@ -143,7 +144,7 @@ class MemoryBus(
     fun noteAnswer(question: String, answer: String, tier: Tier, sources: List<String>) {
         if (question.isBlank() || answer.isBlank()) return
         scope.launch {
-            runCatching {
+            catching {
                 gate.withLock {
                     val held = nearby(question, personal = false)
                     val input = ask(

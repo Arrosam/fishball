@@ -31,6 +31,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import org.areel.fishball.core.notCancellation
 
 /**
  * The user's own Hydrogen proxy (llm.areel.org), over the Anthropic Messages shape.
@@ -120,6 +121,7 @@ class HydrogenClient(
             }
         }
     } catch (e: Exception) {
+        e.notCancellation()
         // Class name as well as message. Half of what goes wrong here throws with a null or
         // one-word message - UnknownHostException, SSLHandshakeException, SocketTimeoutException
         // - and the type is the part that says which of those it was.
@@ -150,6 +152,7 @@ class HydrogenClient(
             // and a memory recalled against the wrong vector is worse than one not recalled.
             if (vectors.size == texts.size) vectors else emptyList()
         } catch (e: Exception) {
+            e.notCancellation()
             emptyList()
         }
     }
@@ -180,6 +183,7 @@ class HydrogenClient(
                 Scored(index, score)
             }.ifEmpty { untouched }
         } catch (e: Exception) {
+            e.notCancellation()
             untouched
         }
     }
@@ -227,6 +231,7 @@ class HydrogenClient(
         }
         response.status.value to response.bodyAsText()
     } catch (e: Exception) {
+        e.notCancellation()
         0 to "${e::class.simpleName}: ${e.message ?: "no detail"}"
     }
 
@@ -370,6 +375,9 @@ class HydrogenClient(
                 }
             }
         } catch (e: Exception) {
+            // The one that mattered: a stopped turn came back as
+            // 「这会儿连不上」 rather than as a turn somebody stopped.
+            e.notCancellation()
             return LlmResult.Failed(
                 "${e::class.simpleName}: ${e.message ?: "no detail"}",
                 retryable = true,
