@@ -123,6 +123,12 @@ class Conversation(
      * before every block and the thinking rides along in the assistant turn, so the reasoning
      * behind the routing is in front of the model while it writes - which is the whole point.
      *
+     * That last part was an assumption for a while and it was wrong: the thinking block went out
+     * on the wire and the proxy dropped it before the model saw a word of it, so every round after
+     * the first was reasoning from the tool results alone. `HydrogenClient` now hands it back as
+     * text. Nothing here changed - what goes in this list is still whatever came out - but the
+     * sentence above is only true because of that.
+     *
      * A field rather than a parameter because a turn is one call to [ask] at a time and half a
      * dozen functions sit between the two ends of it. It is rebuilt from the log at the top of
      * every turn, so nothing survives a turn that should not.
