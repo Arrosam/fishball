@@ -6,10 +6,12 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.areel.fishball.core.answer.AnswerShape
+import org.areel.fishball.core.catching
 import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.copy.UiCopy
 import org.areel.fishball.core.llm.LlmClient
@@ -102,9 +104,6 @@ class Conversation(
      */
     private var lastFailure: String? = null
 
-    /** What memory offered for this turn. Read by the writing step. */
-    private var remembered: Remembered = Remembered.NOTHING
-
     /** The pictures on this turn. Replaced by the next [ask], so they never carry over. */
     private var attached: List<LlmContent.Image> = emptyList()
 
@@ -141,7 +140,7 @@ class Conversation(
          * classifier left to keep them from.
          */
         images: List<LlmContent.Image> = emptyList(),
-    ): Reply {
+    ): Reply = coroutineScope {
         val at = now()
         rollSession(at)
 
@@ -158,12 +157,43 @@ class Conversation(
         lastFailure = null
         // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
         thread = priorTurns().toMutableList()
-        // What is already known, before anything is looked up. It used to be gated on the
-        // classifier calling the turn factual; there is no classifier now, and a conversation
-        // that forgets what it was told because somebody asked casually is worse than one bus
-        // call nobody was waiting on.
-        remembered = recall(userText, at)
-        val reply = converse(userText, progress)
+
+        /*
+         * §10 — what is already known, started here and read later.
+         *
+         * [recall] is three network round trips in series: the bus asks what the question needs,
+         * the terms are embedded, and what comes back is reranked. Awaited here, all of it landed
+         * in front of the turn, and the screen stayed empty for the whole of it. Measured live on
+         * 「医生给我开了阿莫西林胶囊，吃之前我要注意什么？」, time to the first narration line:
+         * 27s and 74s awaited, 5s and 2s alongside. The 74 is not an outlier to be explained
+         * away - `fish-system` is a shared deployment and it is sometimes just slow, and awaiting
+         * it meant the app was as slow as it was on a question it could have started on at once.
+         *
+         * It is not fire-and-forget, and it must not become that. Recall exists so that what is
+         * known is in front of the model *before* it answers; a turn that answered without
+         * waiting could tell somebody to take amoxicillin without ever seeing that they are
+         * allergic to penicillin, which is the failure the whole memory system was built to
+         * prevent. So the turn starts at once and the facts are folded in at the first seam
+         * between rounds, and [converse] will not let an answer out until they have landed. In
+         * the ordinary case the first round is spent searching and they are in place long
+         * before anything is written.
+         *
+         * Wrapped so it cannot fail the turn. As a bare `async` child, a throw from `embed` or
+         * `rerank` would cancel this scope from the side at an unpredictable moment; a memory
+         * lookup that did not work is a worse answer, never a broken turn.
+         */
+        val recalled = async {
+            catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
+                .getOrDefault(Remembered.NOTHING)
+        }
+        val reply = try {
+            converse(userText, progress, recalled)
+        } finally {
+            // Whatever is left of it is work nobody is waiting for: the turn is over, and this
+            // scope would otherwise sit here until a lookup for an answer already on screen
+            // finished. A completed one ignores this.
+            recalled.cancel()
+        }
 
         // §10 — and the answer, once there is one. Launched, not awaited: the reply is
         // already on its way to the screen. The caller no longer has to remember to file.
@@ -186,7 +216,7 @@ class Conversation(
                 },
             ),
         )
-        return reply
+        reply
     }
 
     // ---- the turn ------------------------------------------------------------------------
@@ -209,22 +239,27 @@ class Conversation(
      * every quotation goes through. It picks what to look for and what to make of it, and never
      * what a source is worth or whether it really says what it is quoted as saying.
      */
-    private suspend fun converse(userText: String, progress: TurnProgress): Reply {
+    private suspend fun converse(
+        userText: String,
+        progress: TurnProgress,
+        /**
+         * What memory is finding, still in flight. See [ask] for why it is not awaited there.
+         *
+         * Read at two places and no others: the seam between rounds takes it if it happens to
+         * be finished, and the guard on writing waits for it if it is not. Between them, the
+         * facts are in front of the model before a single word of the answer is served.
+         */
+        recalled: Deferred<Remembered>,
+    ): Reply {
         // Insertion-ordered, so the numbering the model sees is stable across rounds - [3] in
         // round two is the same page it was in round one.
         val seen = LinkedHashMap<String, Evidence>()
         val verified = mutableMapOf<String, String>()
 
-        val known = remembered.lines()
+        // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
             buildString {
                 append(AgentPrompt.Label.QUESTION).append(userText)
-                if (known.isNotEmpty()) {
-                    appendLine()
-                    appendLine()
-                    appendLine(AgentPrompt.Label.KNOWN)
-                    known.forEach { appendLine(it) }
-                }
                 appendLine()
                 append(AgentPrompt.WORK)
             },
@@ -235,6 +270,10 @@ class Conversation(
         // nothing - the only way out is to stop counting on it.
         var idle = 0
         var round = 0
+        // What memory offered, once it is in front of the model, and null until then. It is the
+        // difference between "memory found nothing" and "memory has not answered yet", and the
+        // guard below turns on exactly that distinction.
+        var known: Remembered? = null
         while (true) {
             // Three states, and the model is never told to stop - only offered less to do with
             // the turn. Given no tools at all it writes prose, and prose is an answer.
@@ -273,6 +312,37 @@ class Conversation(
             val written = answered?.input?.str("text").orEmpty()
                 .ifBlank { if (result.toolCalls.isEmpty()) result.text else "" }
             if (written.isNotBlank()) {
+                /*
+                 * The guard, and the reason recall may run alongside the turn at all.
+                 *
+                 * An answer written before memory came back is an answer written without it, and
+                 * on the questions that matter that is the difference between 阿莫西林 being
+                 * fine and it being the thing this person is allergic to. So a turn that got
+                 * here first waits - once, and only if it beat the lookup - and then answers
+                 * again with the facts in front of it.
+                 *
+                 * Nothing is held back when memory found nothing, which is most turns: there is
+                 * no second call and the reply goes straight out.
+                 */
+                if (known == null) {
+                    val late = recalled.await()
+                    known = late
+                    val lines = late.lines()
+                    if (lines.isNotEmpty()) {
+                        thread += result.raw
+                        thread += LlmMessage(
+                            LlmMessage.Role.USER,
+                            // Every call in that turn gets an answer, including the `answer` it
+                            // is being asked to make again - a tool_use with no tool_result is
+                            // a malformed thread, whatever the reason for holding it back.
+                            result.toolCalls.map {
+                                LlmContent.ToolResult(it.id, AgentPrompt.HOLD_FOR_MEMORY)
+                            } + LlmContent.Text(knownBlock(lines)),
+                        )
+                        round++
+                        continue
+                    }
+                }
                 val sources = cite(seen.values.toList(), verified)
                 return Reply(text = written, shape = shapeOf(sources), sources = sources)
             }
@@ -292,16 +362,40 @@ class Conversation(
             idle = 0
 
             thread += result.raw
+            val results = result.toolCalls.map { call ->
+                when (call.name) {
+                    Tools.SEARCH -> lookUp(call, seen, progress)
+                    Tools.READ -> openPage(call, seen, progress)
+                    Tools.QUOTE -> checkQuote(call, seen, verified)
+                    else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
+                }
+            }
+
+            /*
+             * The seam. Memory rides in on the back of the tool results, in the same user turn.
+             *
+             * Only if it has already finished - this is the round the turn saved by not waiting,
+             * and reclaiming it here would give it straight back. In practice the round the model
+             * spends searching is longer than the lookup, so it is almost always ready by the
+             * first one of these. If it is not, the guard above catches it before anything is
+             * written.
+             *
+             * Attached to the tool-result turn rather than sent as a message of its own, because
+             * a user turn between an assistant's tool_use and its tool_result is a thread the
+             * provider is entitled to reject. Tool results first, then the text - that order is
+             * the contract.
+             */
+            val late = if (known == null && recalled.isCompleted) {
+                val arrived = recalled.await()
+                known = arrived
+                arrived.lines().takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
+
             thread += LlmMessage(
                 LlmMessage.Role.USER,
-                result.toolCalls.map { call ->
-                    when (call.name) {
-                        Tools.SEARCH -> lookUp(call, seen, progress)
-                        Tools.READ -> openPage(call, seen, progress)
-                        Tools.QUOTE -> checkQuote(call, seen, verified)
-                        else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
-                    }
-                },
+                results + listOfNotNull(late?.let { LlmContent.Text(knownBlock(it)) }),
             )
             round++
         }
@@ -460,6 +554,19 @@ class Conversation(
     }
 
     /**
+     * What memory found, as the model reads it mid-turn.
+     *
+     * Labelled as having just arrived rather than as something that was always there. The model
+     * has by this point written a round or two on the assumption that nothing was known, and a
+     * block that reads as though it had been in front of it the whole time invites it to explain
+     * why it ignored it. This one says what happened: the lookup finished, here is the result.
+     */
+    private fun knownBlock(lines: List<String>): String = buildString {
+        appendLine(AgentPrompt.Label.KNOWN_LATE)
+        lines.forEach { appendLine(it) }
+    }
+
+    /**
      * The slice of a page the model is shown, centred on what it asked for.
      *
      * Backed up a little from the match rather than started at it, because the sentence that
@@ -536,7 +643,7 @@ class Conversation(
      * Serving a stale near-miss as though it were the answer is the failure all of this guards
      * against, and it is worse than searching again.
      */
-    private suspend fun recall(question: String, at: Long): Remembered {
+    private suspend fun recall(question: String, at: Long, hasPicture: Boolean): Remembered {
         // No embedding model reachable: fall back to word overlap, which finds a cached answer
         // only when the question is asked in nearly the same words. A floor, not a search.
         val engine = retrieval ?: return Remembered(listOfNotNull(store.recallWorldFact(question, at)))
@@ -544,10 +651,12 @@ class Conversation(
         // What the question needs known, rather than the question itself. On the fast model,
         // like everything else about memory - which is why the pictures are named rather than
         // sent; see [MemoryBus.terms].
+        // Passed in rather than read off [attached], because this now runs on its own coroutine
+        // alongside the turn and a field is the one thing a later turn could change underneath it.
         val wanted = memory.terms(
             question,
             priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS),
-            hasPicture = attached.isNotEmpty(),
+            hasPicture = hasPicture,
         )
         val facts = wanted.first.ifEmpty { listOf(question) }
         val personal = wanted.second

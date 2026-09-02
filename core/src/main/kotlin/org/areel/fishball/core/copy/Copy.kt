@@ -426,9 +426,37 @@ about_user 里写关于他本人的、会影响这个答案的事。
         const val NOTHING_LOGGED = "（没有找到相关的记录）"
         const val BRIDGE = "你们之前聊过的："
         const val KNOWN = "你已经知道的（不用再查；跟这次问题有关的，回答里要照顾到）："
+
+        /**
+         * The same list, handed over after the turn has already started.
+         *
+         * Memory is looked up alongside the turn now rather than in front of it, so what it
+         * finds arrives a round or two in. Said out loud as having just come back, because by
+         * then the model has written on the assumption that nothing was known and a block
+         * phrased as though it had been there all along only invites it to apologise.
+         */
+        const val KNOWN_LATE = "记忆刚查完，补上——你已经知道的（不用再查；" +
+            "跟这次问题有关的，回答里要照顾到）："
         const val KNOWN_USER = "关于他"
         const val KNOWN_FACT = "查过"
     }
+
+    /**
+     * Sent back in place of a tool result when the answer arrived before memory did.
+     *
+     * The turn no longer waits on recall before it starts, so on a question the model can answer
+     * without looking anything up it can reach `answer` while the lookup is still in the air.
+     * That answer is not served: this comes back instead, with what memory found underneath it,
+     * and the model answers again having seen it.
+     *
+     * Worded so that re-submitting unchanged is an option it is allowed to take. Most of what
+     * memory returns is irrelevant to most questions, and a model told only 「重写」 will rewrite
+     * a perfectly good answer to prove it read the note.
+     */
+    val HOLD_FOR_MEMORY = """
+先别急——记忆那边刚查完，下面这几件事你写答案的时候还没看到。
+看一眼再交一次：用得上就照顾进去，用不上就把刚才那版原样再交一遍，不用重写。
+""".trim()
 
     /** One search result, as the model sees it. The index is what `select_evidence` reports back. */
     fun evidenceLine(
