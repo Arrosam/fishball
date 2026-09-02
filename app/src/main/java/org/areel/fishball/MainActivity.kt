@@ -188,11 +188,25 @@ private fun FishBallApp() {
             onSettingsClick = { screen = Screen.SETTINGS },
         )
 
-        Screen.MEMORY -> MemoryScreen(
-            world = remember { vm.worldMemories() },
-            personal = remember { vm.personalMemories() },
-            onBack = { screen = Screen.THREAD },
-        )
+        Screen.MEMORY -> {
+            // State now, not a bare `remember`: a deleted row has to leave the list it was
+            // read into, and the ledgers are re-read from the store rather than edited here.
+            // The store decides what a delete did - a preference goes, a world fact stays with
+            // a date on it and drops out of the filter - and this is not the place to guess.
+            var world by remember { mutableStateOf(vm.worldMemories()) }
+            var personal by remember { mutableStateOf(vm.personalMemories()) }
+
+            MemoryScreen(
+                world = world,
+                personal = personal,
+                onForget = { row ->
+                    vm.forget(row)
+                    world = vm.worldMemories()
+                    personal = vm.personalMemories()
+                },
+                onBack = { screen = Screen.THREAD },
+            )
+        }
 
         Screen.SETTINGS -> {
             var mode by remember { mutableStateOf(if (backend.modelId == Backend.PRO) Mode.PRO else Mode.FAST) }

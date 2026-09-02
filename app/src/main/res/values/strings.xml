@@ -38,8 +38,14 @@
     -->
     <string name="settings_history">对话记录</string>
     <string name="history_summary">%1$d 条 · %2$s</string>
+    <!--
+      The bin's two states. 清空 is now only the control's name — what a screen reader reads out
+      — because the button itself is a drawing rather than a word. The prompt is what the second
+      tap answers, and it names what is about to go: there are two of these bins in the app now,
+      one per screen, and "清空" alone would be the same sentence in both.
+    -->
     <string name="history_clear">清空</string>
-    <string name="history_confirm">确认清空</string>
+    <string name="history_clear_confirm">再次点击清空会话</string>
     <string name="settings_change">更改</string>
     <string name="settings_save">保存</string>
     <string name="settings_cancel">取消</string>
@@ -133,7 +139,13 @@
     <string name="memory_tab_personal">关于你的</string>
     <string name="memory_empty_world">还没有从网上记下什么。</string>
     <string name="memory_empty_personal">还没有记下关于你的事。</string>
+    <!--
+      The row's bin, at rest and armed. 删除 rather than 忘掉 in the prompt: 忘掉 is what the
+      app does to a memory over time on its own, and the tap being confirmed here is the user
+      taking it out, which is a different and more final thing to be told about.
+    -->
     <string name="memory_forget">忘掉</string>
+    <string name="memory_forget_confirm">再次点击删除</string>
 
     <!--
       The update notice. It interrupts, so it says the whole thing in four short lines: what

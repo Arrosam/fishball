@@ -80,7 +80,6 @@ fun SettingsScreen(
 ) {
     var editingKey by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
-    var confirmingClear by remember { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -236,22 +235,16 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                     )
                     // Two taps, not one. Deleting a conversation is the only irreversible thing
-                    // on this screen, and the second tap is where the word changes from "清空"
-                    // to something that says it is about to happen.
-                    Text(
-                        stringResource(
-                            if (confirmingClear) R.string.history_confirm else R.string.history_clear,
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Areel.Magenta,
-                        modifier = Modifier.pressable(enabled = turns > 0) {
-                            if (confirmingClear) {
-                                onClearHistory()
-                                confirmingClear = false
-                            } else {
-                                confirmingClear = true
-                            }
-                        },
+                    // on this screen. It used to be a word that changed to another word; it is
+                    // now [ArmedBin], the same control the memory screen deletes a row with,
+                    // because these are the same promise and somebody who has learned one has
+                    // learned the other.
+                    ArmedBin(
+                        prompt = stringResource(R.string.history_clear_confirm),
+                        label = stringResource(R.string.history_clear),
+                        modifier = Modifier.padding(start = 10.dp),
+                        enabled = turns > 0,
+                        onConfirm = onClearHistory,
                     )
                 }
 
