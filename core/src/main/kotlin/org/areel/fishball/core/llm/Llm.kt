@@ -127,6 +127,12 @@ sealed class LlmContent {
      * a block on the way in and the turn that goes back out is not the turn that came in - which
      * providers are entitled to reject, and which would corrupt the model's own record of what
      * it just decided. Round-tripping unknown blocks costs nothing and keeps that honest.
+     *
+     * "Kept exactly as it arrived" describes this side of the boundary, not the wire. Handing a
+     * block back in the shape it came in is not the same as the model being shown it, and for
+     * `thinking` on this proxy the two came apart: it is accepted and stripped. The client
+     * rewrites that one on the way out - see `HydrogenClient.block`. Nothing above this line
+     * needs to know, which is the reason the rewrite lives down there.
      */
     data class Opaque(val raw: JsonObject) : LlmContent()
 }
