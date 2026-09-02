@@ -469,8 +469,13 @@ class HydrogenClient(
                     val input = runCatching {
                         Json.parseToJsonElement(block.json.toString()).jsonObject
                     }.getOrDefault(JsonObject(emptyMap()))
-                    val call = LlmContent.ToolUse(block.id, block.name, input)
+                    val call = LlmContent.ToolUse(block.id, block.name, unwrap(input))
                     calls += call
+                    // The *unwrapped* call goes into the replayed turn as well, and that is the
+                    // half that matters. A model reading its own wrapped call back out of the
+                    // thread takes it for the house style and wraps the next one too - traced
+                    // live, one envelope in round 2 became a double envelope by round 24 and
+                    // twenty rounds of 「工具调用格式有问题」 in between.
                     raw += call
                 }
 
@@ -488,6 +493,32 @@ class HydrogenClient(
             toolCalls = calls,
             raw = LlmMessage(LlmMessage.Role.ASSISTANT, raw),
         )
+    }
+
+    /**
+     * The tool input, with the envelope taken off if the model put one on.
+     *
+     * Some models on this proxy hand back `{"arguments": {"url": "..."}}` where the schema asked
+     * for `{"url": "..."}` - inconsistently, the same model doing it on one call and not the
+     * next. Whether that is the model or the route in front of it does not matter here: what
+     * arrives has to be read, and the alternative is every tool handler in `:core` learning the
+     * same trick separately.
+     *
+     * Left alone unless the object is a single key that is one of the known envelope names
+     * wrapping another object. No tool in [org.areel.fishball.core.agent.Tools] takes a
+     * parameter by any of those names, so a real argument cannot be mistaken for a wrapper -
+     * and if one ever does, it will be a single-parameter tool called `arguments`, which is
+     * reason enough to rename the parameter.
+     */
+    private fun unwrap(input: JsonObject): JsonObject {
+        var out = input
+        repeat(UNWRAP_DEPTH) {
+            if (out.size != 1) return out
+            val (key, value) = out.entries.first()
+            if (key !in ENVELOPES) return out
+            out = value as? JsonObject ?: return out
+        }
+        return out
     }
 
     private class Block(
@@ -675,6 +706,12 @@ class HydrogenClient(
         const val RERANK_MODEL = "reranker"
 
         private const val ANTHROPIC_VERSION = "2023-06-01"
+
+        /** What a tool input gets wrapped in when it gets wrapped. See `unwrap`. */
+        private val ENVELOPES = setOf("arguments", "input", "parameters", "args")
+
+        /** Live, it reached two. Three is room to be wrong about that without unpacking forever. */
+        private const val UNWRAP_DEPTH = 3
 
         /**
          * Both dialects list models as `data[].id`, so this parses either without caring which
