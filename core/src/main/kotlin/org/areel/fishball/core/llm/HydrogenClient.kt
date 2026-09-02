@@ -200,6 +200,9 @@ class HydrogenClient(
             setBody(
                 buildJsonObject {
                     put("model", candidate)
+                    // Streamed like everything else: a model that answers this and nothing
+                    // else is a model this app cannot use, whatever the entitlement says.
+                    put("stream", true)
                     // Not 1. These models emit a thinking block before anything else, and a
                     // budget that cannot fit one fails for a reason that has nothing to do
                     // with entitlement.
@@ -246,31 +249,64 @@ class HydrogenClient(
         if (model.isBlank()) {
             return LlmResult.Failed("no model selected; validate() first", retryable = false)
         }
-        if (request.stream) return streamed(request, onDelta, recover)
-        return try {
-            val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/messages") {
-                authHeaders()
-                contentType(ContentType.Application.Json)
-                setBody(body(request).toString())
-            }
-            if (!response.status.isSuccess()) {
-                val text = response.bodyAsText()
-                if (recover && refused(response.status.value, text) && repick()) {
-                    return complete(request, onDelta, recover = false)
-                }
-                return LlmResult.Failed(
-                    "HTTP ${response.status.value}: ${text.take(200)}",
-                    // 429 and 5xx are worth another go; a 400 will fail identically forever.
-                    retryable = response.status.value == 429 || response.status.value >= 500,
-                )
-            }
-            parse(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
-        } catch (e: Exception) {
-            LlmResult.Failed("${e::class.simpleName}: ${e.message ?: "no detail"}", retryable = true)
-        }
+        /*
+         * Streamed, always, whatever the caller asked for.
+         *
+         * Not a preference. The plain path is where the endpoints behind this proxy go quiet:
+         * `fish-system` answers a perfectly ordinary non-streamed request with a 200 and zero
+         * content blocks, and that is how the memory harvest was silently filing nothing - it
+         * was one of only two calls in the app that did not stream. The models are stable when
+         * asked to stream and unreliable when not, so there is one way of asking.
+         */
+        return streamed(request, onDelta, recover)
     }
 
     private fun refused(status: Int, body: String) = status == 403 && body.contains("permission")
+
+    /**
+     * Whether it was the *override* the service objected to, rather than the request.
+     *
+     * A side call asking for a model the key cannot reach should quietly become an ordinary
+     * call, not a failed one. `fish-system` is listed by the catalogue and answers 404 "model
+     * route not found" - listed but not wired - and an unentitled id answers 403; either way
+     * the work still needs doing and the conversation's own model can do it.
+     *
+     * Deliberately not [repick]: that changes what the whole app runs on and writes the new id
+     * down. One bookkeeping call finding a door locked is not a reason to move house.
+     */
+    /**
+     * The model saying it cannot think.
+     *
+     * Which model each name points at is not ours, and it moves - a route was re-pointed twice
+     * in one afternoon while this was being written. A turn should not die of that, so a model
+     * that will not think is asked again without the request to, and answers the way it always
+     * could.
+     */
+    private fun cannotThink(request: LlmRequest, body: String): Boolean =
+        request.effort != null && body.contains("not supported")
+
+    /**
+     * The service naming a ceiling lower than what was asked for.
+     *
+     * `max_tokens` is set for the model the conversation runs on, and the models here disagree
+     * about how high it may go - one takes 131072, another answers
+     * "field MaxTokens invalid, should be in [1, 65536]". Rather than keeping a table of limits
+     * that goes stale the next time a route is re-pointed, the refusal is read: it states the
+     * ceiling, so the call is made again at exactly that. Once only - the retry asks for the
+     * number the service itself named, so a second refusal is a different complaint.
+     */
+    private fun capped(request: LlmRequest, body: String): LlmRequest? {
+        val limit = ceiling.find(body)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        if (limit <= 0 || limit >= request.maxTokens) return null
+        return request.copy(maxTokens = limit)
+    }
+
+    private val ceiling = Regex("""should be in \[\s*\d+\s*,\s*(\d+)\s*]""")
+
+    private fun wrongModel(request: LlmRequest, status: Int, body: String): Boolean {
+        if (request.model == null) return false
+        return status == 404 || status == 403 || (status == 400 && body.contains("model"))
+    }
 
     /** Re-runs discovery after a refusal. True when it landed somewhere new worth trying. */
     private suspend fun repick(): Boolean {
@@ -298,6 +334,9 @@ class HydrogenClient(
         val blocks = sortedMapOf<Int, Block>()
         var failure: LlmResult.Failed? = null
         var refusedModel = false
+        var wrongOverride = false
+        var overLimit: LlmRequest? = null
+        var thoughtless = false
 
         try {
             http.preparePost("${baseUrl.trimEnd('/')}/v1/messages") {
@@ -308,6 +347,9 @@ class HydrogenClient(
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     val text = response.bodyAsText()
+                    wrongOverride = wrongModel(request, response.status.value, text)
+                    overLimit = capped(request, text)
+                    thoughtless = cannotThink(request, text)
                     refusedModel = refused(response.status.value, text)
                     failure = LlmResult.Failed(
                         "HTTP ${response.status.value}: ${text.take(200)}",
@@ -334,10 +376,35 @@ class HydrogenClient(
             )
         }
 
+        if (wrongOverride) {
+            return complete(request.copy(model = null), onDelta, recover)
+        }
+        overLimit?.let { return complete(it, onDelta, recover) }
+        if (thoughtless) return complete(request.copy(effort = null), onDelta, recover)
         if (recover && refusedModel && repick()) {
             return complete(request, onDelta, recover = false)
         }
         failure?.let { return it }
+
+        /*
+         * A stream that succeeded and carried nothing.
+         *
+         * Not a shape the protocol has a name for: HTTP 200, a clean `message_stop`, and not one
+         * content block in between. It is how this proxy reports a request the model refused -
+         * a picture sent to a model without vision, thinking asked of a model that has none.
+         *
+         * It used to be retried without streaming, where the refusal comes back as a readable
+         * 400. That recovery is gone: the plain path is not trustworthy enough to fall back to,
+         * and pointing at it turned one empty answer into two. Reported instead, so the turn
+         * says it failed rather than showing an empty bubble - and so the reason reaches the
+         * log, which is the only place it can be seen at all.
+         */
+        if (blocks.isEmpty()) {
+            return LlmResult.Failed(
+                "the service returned an empty stream - a refusal it did not report",
+                retryable = true,
+            )
+        }
         return assemble(blocks)
     }
 
@@ -493,10 +560,35 @@ class HydrogenClient(
     // ---- request ------------------------------------------------------------------------
 
     private fun body(request: LlmRequest, stream: Boolean = false): JsonObject = buildJsonObject {
-        put("model", model)
+        put("model", request.model ?: model)
         if (stream) put("stream", true)
         put("max_tokens", request.maxTokens)
+        /*
+         * Temperature goes with thinking, on this proxy.
+         *
+         * Anthropic's contract says otherwise - a thinking model samples its own reasoning, so
+         * the caller is meant to stop steering and leave temperature at 1. The models here are
+         * not Anthropic's, this proxy accepts the pair and honours both halves, and the
+         * classifier is a decision that wants 0. So the rule is noted and not followed. Worth
+         * revisiting the day a strict upstream sits behind the same endpoint.
+         */
         put("temperature", request.temperature)
+        /*
+         * `output_config: {effort: ...}` - and none of the other three spellings.
+         *
+         * A top-level `reasoning_effort` is accepted and silently ignored, which is the worst of
+         * them: the call succeeds and the model simply does not think. `thinking: {type:
+         * enabled}` is Anthropic's own, and the models here are not Anthropic's - it comes back
+         * 400, "not supported for this model", and on the streamed path that 400 is swallowed
+         * into a well-formed empty message with no error in it at all. Measured across both
+         * models, streamed and plain, with tools and forced tools: this is the one that works
+         * everywhere.
+         */
+        request.effort?.let {
+            putJsonObject("output_config") {
+                put("effort", it.wire)
+            }
+        }
         put("system", request.system)
         putJsonArray("messages") {
             request.messages.forEach { add(message(it)) }
@@ -566,43 +658,6 @@ class HydrogenClient(
     }
 
     // ---- response -----------------------------------------------------------------------
-
-    private fun parse(root: JsonObject): LlmResult {
-        val blocks = root["content"]?.jsonArray ?: JsonArray(emptyList())
-        val text = StringBuilder()
-        val calls = mutableListOf<LlmContent.ToolUse>()
-        val raw = mutableListOf<LlmContent>()
-
-        for (element in blocks) {
-            val block = element.jsonObject
-            when (block["type"]?.jsonPrimitive?.content) {
-                "text" -> {
-                    val t = block["text"]?.jsonPrimitive?.content.orEmpty()
-                    text.append(t)
-                    raw += LlmContent.Text(t)
-                }
-
-                "tool_use" -> {
-                    val call = LlmContent.ToolUse(
-                        id = block["id"]?.jsonPrimitive?.content.orEmpty(),
-                        name = block["name"]?.jsonPrimitive?.content.orEmpty(),
-                        input = block["input"] as? JsonObject ?: JsonObject(emptyMap()),
-                    )
-                    calls += call
-                    raw += call
-                }
-
-                // thinking, redacted_thinking, and whatever comes next. Not read, not shown,
-                // and handed back untouched.
-                else -> raw += LlmContent.Opaque(block)
-            }
-        }
-        return LlmResult.Ok(
-            text = text.toString().trim(),
-            toolCalls = calls,
-            raw = LlmMessage(LlmMessage.Role.ASSISTANT, raw),
-        )
-    }
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders() {
         header("x-api-key", apiKey)

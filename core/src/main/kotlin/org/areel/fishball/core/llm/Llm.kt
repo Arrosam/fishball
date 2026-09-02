@@ -43,15 +43,41 @@ data class LlmRequest(
     /** Zero for decisions, warmer for prose. A classifier that improvises is a bug. */
     val temperature: Double = 0.0,
     /**
-     * Ask for the reply in pieces.
+     * Which model answers this one call, when it should not be the one the client is pointed at.
      *
-     * Worth it for more than the impatience it treats. These models think before they answer,
-     * and a turn here makes several calls in a row — so without streaming the app has nothing
-     * true to show for most of a minute, and the choice is between a spinner that says nothing
-     * and a spinner that lies about progress.
+     * The conversation runs on the model the user chose. The work around it - reading a fork,
+     * sifting search results, writing a clarifying question, filing a memory - is bookkeeping,
+     * and there is no reason for it to be answered by whichever model the user is paying
+     * conversation prices for. Null leaves the client's own model alone.
+     *
+     * An override that the key cannot use falls back to that model rather than failing the
+     * call, and never re-points it: a side call is not a reason to change what the whole app
+     * runs on. See `HydrogenClient`.
      */
-    val stream: Boolean = false,
+    val model: String? = null,
+    /**
+     * How long to think before answering, when the model takes direction on it.
+     *
+     * Not a knob for its own sake. The model behind this proxy stopped thinking by default and
+     * now wants asking, and the difference is visible: the same question answered with one
+     * block of text, or with the reasoning in front of it. Null sends nothing and takes
+     * whatever the model does on its own.
+     */
+    val effort: Effort? = null,
 )
+
+/**
+ * How hard to think first.
+ *
+ * Two levels because there are two kinds of call here: the turn the user is waiting on, and
+ * everything done around it. [MAX] is for the conversation itself, where the whole point of the
+ * app is getting the answer right. [HIGH] is for the bookkeeping, which still wants a model that
+ * reasons but is not what anybody is waiting to read.
+ */
+enum class Effort(val wire: String) {
+    HIGH("high"),
+    MAX("max"),
+}
 
 /** A piece of a reply, as it arrives. */
 sealed class LlmDelta {
