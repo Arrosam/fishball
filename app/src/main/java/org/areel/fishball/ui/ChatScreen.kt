@@ -226,7 +226,16 @@ fun ChatScreen(
     // starts at its beginning is showing the user the least useful end of it.
     LaunchedEffect(Unit) { toEnd(smooth = false) }
 
-    LaunchedEffect(itemCount) { if (following) toEnd(smooth = true) }
+    /*
+     * A message arriving. Keyed on both halves of the count rather than on the sum, because the
+     * sum does not move at the one moment that matters most: when a turn lands, the placeholder
+     * leaves in the same frame the answer arrives, so `messages.size + 1` becomes
+     * `messages.size` and [itemCount] is the number it already was. This effect never fired for
+     * the finished answer - the single message anybody is actually waiting for - which is the
+     * other half of "the page is stuck": the reply lands off the bottom of the screen and, with
+     * [atTail] mismeasured as it was, nothing offered to take you to it.
+     */
+    LaunchedEffect(messages.size, pending) { if (following) toEnd(smooth = true) }
 
     /*
      * While it works: the bottom of the last block stays on the bottom of the screen.
