@@ -399,6 +399,21 @@ about_user 里写关于他本人的、会影响这个答案的事。
 两边各最多三条，短语，不要解释。
 """.trim()
 
+    /**
+     * Added to [RECALL_TERMS] when the question came with a picture the side model cannot see.
+     *
+     * Two jobs. It stops the model deciding the question is unanswerable — asked 「这是什么」 with
+     * no picture in front of it, it worked out that there was no picture and then said so over and
+     * over, which is the loop that showed up in the thinking block. And it points it at the half
+     * of the job it can still do: what is worth remembering about the person comes out of the
+     * sentence, not the photograph.
+     */
+    val RECALL_UNSEEN_PICTURE = """
+他这次还附了图片，你看不到那张图，别去猜图上是什么，也别因为看不到就说答不了。
+就按他说的这句话来写：图里的东西交给会看图的那一边，你只管写出跟他本人有关的、会影响这个答案的事。
+真想不出来就两边都留空。
+""".trim()
+
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："

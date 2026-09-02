@@ -162,7 +162,7 @@ class Conversation(
         // classifier calling the turn factual; there is no classifier now, and a conversation
         // that forgets what it was told because somebody asked casually is worse than one bus
         // call nobody was waiting on.
-        remembered = recall(userText, at, progress)
+        remembered = recall(userText, at)
         val reply = converse(userText, progress)
 
         // §10 — and the answer, once there is one. Launched, not awaited: the reply is
@@ -256,7 +256,9 @@ class Conversation(
                     effort = Effort.MAX,
                     temperature = 0.4,
                 ),
-                progress.forward(answer = true),
+                // The one call on the screen's two channels. Everything else a turn does runs
+                // silent - see [forward].
+                progress.forward(answer = true, thinking = true),
             )
             if (result !is LlmResult.Ok) {
                 return Reply(
@@ -534,14 +536,19 @@ class Conversation(
      * Serving a stale near-miss as though it were the answer is the failure all of this guards
      * against, and it is worse than searching again.
      */
-    private suspend fun recall(question: String, at: Long, progress: TurnProgress): Remembered {
+    private suspend fun recall(question: String, at: Long): Remembered {
         // No embedding model reachable: fall back to word overlap, which finds a cached answer
         // only when the question is asked in nearly the same words. A floor, not a search.
         val engine = retrieval ?: return Remembered(listOfNotNull(store.recallWorldFact(question, at)))
 
         // What the question needs known, rather than the question itself. On the fast model,
-        // like everything else about memory.
-        val wanted = memory.terms(question, priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS), progress)
+        // like everything else about memory - which is why the pictures are named rather than
+        // sent; see [MemoryBus.terms].
+        val wanted = memory.terms(
+            question,
+            priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS),
+            hasPicture = attached.isNotEmpty(),
+        )
         val facts = wanted.first.ifEmpty { listOf(question) }
         val personal = wanted.second
 
@@ -1005,13 +1012,28 @@ private const val HITS_PER_CALL = 20
 /**
  * Bridges the model's deltas onto the turn's progress channels.
  *
- * Thinking is always forwarded; the reply text only where there is a reply being written. The
- * classifier and the evidence filter also produce text, and streaming a half-formed decision
- * into the answer slot would show the user working notes as though they were the answer.
+ * Both channels are opt-in and both default off, because the screen has one of each and a turn
+ * makes more than one call. Streaming a half-formed decision into the answer slot would show
+ * working notes as though they were the answer - that was always guarded.
+ *
+ * Thinking was not, and it produced the same bug one channel over. `MemoryBus.terms` runs on
+ * the side model before the turn starts and it thinks out loud like everything else here, so its
+ * reasoning streamed into the same field the main loop appends to, and the block under the
+ * answer opened with the bus's working notes and only then reached the agent's own. Measured, on
+ * a picture question: the block began 「用户问"这是什么"，但没提供具体的图片或上下文…… 让我用
+ * recall_terms 工具来列出需要知道的事实」 - in Chinese, naming the tool - and the agent's actual
+ * reasoning, in English, followed it. Confirmed again on a device with a text-only question, so
+ * the leak was on every turn; a picture only made it conspicuous, because a recall call told
+ * about a picture it cannot see goes round in circles about the picture not being there.
+ *
+ * So: the main loop opts into both, and every side call gets neither.
  */
-internal fun TurnProgress.forward(answer: Boolean = false): (LlmDelta) -> Unit = { delta ->
+internal fun TurnProgress.forward(
+    answer: Boolean = false,
+    thinking: Boolean = false,
+): (LlmDelta) -> Unit = { delta ->
     when (delta) {
-        is LlmDelta.Thinking -> thinking(delta.text)
+        is LlmDelta.Thinking -> if (thinking) thinking(delta.text)
         is LlmDelta.Text -> if (answer) answer(delta.text)
     }
 }

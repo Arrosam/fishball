@@ -76,27 +76,52 @@ class MemoryBus(
     /**
      * Spec §10 — the facts a question needs, asked for before anything is looked up.
      *
-     * The one call here the turn waits on, because what comes back decides what memory is
-     * searched with and therefore what the answer knows. It is small and it is on the fast
-     * model; empty lists on any failure, which costs a search rather than a wrong answer.
+     * What comes back decides what memory is searched with and therefore what the answer knows,
+     * so the turn will not write its reply until this has landed - but it no longer waits here
+     * before starting. See `Conversation.ask`. Empty lists on any failure, which costs a search
+     * rather than a wrong answer.
+     *
+     * No progress channel, deliberately. This used to be handed the turn's, and the only thing
+     * that ever came back down it was this call's own reasoning, which then rendered under the
+     * answer as though the agent had thought it. Nothing the bus does is anybody's to watch.
      */
     suspend fun terms(
         question: String,
         context: List<LlmMessage>,
-        progress: TurnProgress,
+        /**
+         * Whether the question came with a picture — as a fact, not as the picture.
+         *
+         * The bytes are not sent, and that is measured rather than chosen: `fish-system` handed
+         * an image block does not refuse it, it hangs, and the call dies on the 120-second client
+         * timeout with nothing to show for it. Twice, plainly and with the tool forced; the same
+         * picture on the conversation's own model answers in 11s. Moving this call to that model
+         * to buy vision would put memory work back on the model the user is paying conversation
+         * prices for, which is the one thing this class exists to prevent.
+         *
+         * So it is told, in words, that there is a picture it cannot see. That keeps the half of
+         * recall that does not need eyes - what to remember about *this person* comes out of the
+         * sentence, not the photograph, and 「这个我能吃吗」 over a box of pills still has to find
+         * 对青霉素过敏. And it stops the spiral: told there is a picture, the model no longer
+         * concludes there is nothing to work with and say so four times over.
+         */
+        hasPicture: Boolean = false,
     ): Pair<List<String>, List<String>> {
+        val ask = buildString {
+            append(AgentPrompt.RECALL_TERMS)
+            if (hasPicture) append("\n\n").append(AgentPrompt.RECALL_UNSEEN_PICTURE)
+            append("\n\n").append(question)
+        }
         val result = catching {
             llm.complete(
                 LlmRequest(
                     system = AgentPrompt.SYSTEM,
-                    messages = context + LlmMessage.user(AgentPrompt.RECALL_TERMS + "\n\n" + question),
+                    messages = context + LlmMessage.user(ask),
                     tools = listOf(Tools.recallTerms),
                     forceTool = Tools.RECALL,
                     maxTokens = TOOL_BUDGET,
                     model = SYSTEM_MODEL,
                     effort = Effort.HIGH,
                 ),
-                progress.forward(),
             )
         }.getOrNull()
         val input = (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input
