@@ -1,6 +1,8 @@
 package org.areel.fishball.core.agent
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -221,6 +223,7 @@ class Conversation(
                 speaker = Speaker.ASSISTANT,
                 text = reply.text,
                 shape = reply.shape,
+                reasoning = reply.thinking,
                 sources = reply.sources.map {
                     CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
                 },
@@ -354,7 +357,12 @@ class Conversation(
                     }
                 }
                 val sources = cite(seen.values.toList(), verified)
-                return Reply(text = written, shape = shapeOf(sources), sources = sources)
+                return Reply(
+                    text = written,
+                    shape = shapeOf(sources),
+                    sources = sources,
+                    thinking = thoughtIn(result.raw),
+                )
             }
             // Nothing said and nothing asked for. On the closing round that is a model that has
             // run out of anything to say, and there is no further round that would change it.
@@ -588,6 +596,23 @@ class Conversation(
         val start = ((at ?: 0) - PAGE_LEAD_IN).coerceIn(0, text.length - PAGE_WINDOW)
         return text.substring(start, start + PAGE_WINDOW)
     }
+
+    /**
+     * The reasoning out of an assistant turn, as the client parsed it.
+     *
+     * A thinking block arrives as [LlmContent.Opaque] because `:core` has no opinion about
+     * blocks it did not ask for - the shape is the provider's, and reading it here rather than
+     * teaching the whole codebase about it keeps that true everywhere else.
+     */
+    private fun thoughtIn(message: LlmMessage): String = message.content
+        .filterIsInstance<LlmContent.Opaque>()
+        .mapNotNull { block ->
+            block.raw["type"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                ?.takeIf { it == THINKING }
+                ?.let { block.raw[THINKING]?.let { v -> runCatching { v.jsonPrimitive.content }.getOrNull() } }
+        }
+        .joinToString("\n")
+        .trim()
 
     /** One `quote` call, checked word for word against the page it claims to come from. */
     private fun checkQuote(
@@ -868,8 +893,41 @@ class Conversation(
             .dropLast(1)
             .map {
                 if (it.speaker == Speaker.USER) LlmMessage.user(it.text)
-                else LlmMessage.assistant(it.text)
+                else recalled(it)
             }
+    }
+
+    /**
+     * One assistant turn from the log, with the reasoning that produced it back in front of it.
+     *
+     * These models write an answer *after* a thinking block and as a continuation of one, so a
+     * turn replayed as bare prose asks the next question to carry on from a conclusion whose
+     * working has been thrown away. Live, that is the difference between a follow-up that knows
+     * why something was ruled out last time and one that rules it out again from scratch.
+     *
+     * The block goes back in the shape it arrived in - `Opaque`, holding the provider's own
+     * JSON - so this replays what was received rather than a translation of it. That is not a
+     * free choice: the app tried rewriting reasoning into labelled *text* once, and the model
+     * read its own replayed turn as a template and began emitting the label, the reasoning and
+     * a `</think>` tag into answers the user could see. Anything put in an assistant turn is
+     * something the model may imitate; a thinking block is the one shape it should imitate.
+     *
+     * Turns logged before reasoning was kept carry none, and come back as they always did.
+     */
+    private fun recalled(turn: ConversationTurn): LlmMessage {
+        if (turn.reasoning.isBlank()) return LlmMessage.assistant(turn.text)
+        return LlmMessage(
+            LlmMessage.Role.ASSISTANT,
+            listOf(
+                LlmContent.Opaque(
+                    buildJsonObject {
+                        put("type", THINKING)
+                        put(THINKING, turn.reasoning)
+                    },
+                ),
+                LlmContent.Text(turn.text),
+            ),
+        )
     }
 
     private fun failure(): Reply = Reply(UiCopy.SERVICE_UNAVAILABLE, detail = lastFailure)
@@ -1012,6 +1070,15 @@ data class Reply(
      * being invented later from a description of the symptom.
      */
     val detail: String? = null,
+    /**
+     * The reasoning behind this answer, for the log to keep and the next turn to replay.
+     *
+     * Taken from the round that actually produced the answer rather than accumulated over the
+     * whole turn: a long-horizon turn thinks before all hundred of its rounds, and what the
+     * next question needs is the thinking that arrived at the conclusion, not a transcript of
+     * every search that preceded it.
+     */
+    val thinking: String = "",
 )
 
 data class SourceRef(
@@ -1103,8 +1170,8 @@ internal const val MAIN_BUDGET = 131_072
  * ordinary question finishes in three or four rounds and never comes near them. A hard one is
  * allowed to take thirty.
  */
-private const val WIND_DOWN_AT = 24
-private const val LAST_ROUND = 30
+private const val WIND_DOWN_AT = 80
+private const val LAST_ROUND = 100
 
 /** Rounds in a row that said nothing and asked for nothing. See the loop for why. */
 private const val IDLE_LIMIT = 3
@@ -1123,6 +1190,14 @@ private const val PAGE_LEAD_IN = 600
 
 /** Links off one page. Enough to find the way on, not the whole navigation bar. */
 private const val LINKS_SHOWN = 25
+
+/**
+ * The provider's name for a reasoning block, in the one dialect this client speaks.
+ *
+ * A literal in two files was a literal that could disagree with itself; the reader and the
+ * writer of these blocks now spell it the same way by construction.
+ */
+private const val THINKING = "thinking"
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6

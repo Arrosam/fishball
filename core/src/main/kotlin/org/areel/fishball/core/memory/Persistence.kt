@@ -77,6 +77,9 @@ data class TurnDto(
     // Defaulted, so a file written before answers were recorded still reads.
     val shape: String? = null,
     val sources: List<CitedSourceDto> = emptyList(),
+    // Same reason, one version later: a log written before reasoning was kept still reads,
+    // and its turns simply carry none.
+    val reasoning: String = "",
 )
 
 @Serializable
@@ -234,6 +237,7 @@ internal fun PreferenceFactDto.toDomain(): PreferenceFact {
 internal fun ConversationTurn.toDto() = TurnDto(
     id, sessionId, at, speaker.name, text, shape?.name,
     sources.map { CitedSourceDto(it.url, it.displayName, it.explanation, it.tier.name, it.quote) },
+    reasoning,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -243,6 +247,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     speaker = enumOrNull<Speaker>(speaker) ?: Speaker.USER,
     text = text,
     shape = shape?.let { enumOrNull<AnswerShape>(it) },
+    reasoning = reasoning,
     sources = sources.map {
         CitedSource(
             url = it.url,

@@ -152,6 +152,18 @@ data class ConversationTurn(
      */
     val shape: AnswerShape? = null,
     val sources: List<CitedSource> = emptyList(),
+    /**
+     * The reasoning that produced this answer, on assistant turns that had any.
+     *
+     * Kept because the models this app runs on want it back. A reply written after a thinking
+     * block is a reply that *continues* one, and handing the next turn only the conclusion asks
+     * the model to carry on from a sentence it has forgotten arriving at - which is also why
+     * DeepSeek's own guidance is to send the thinking back rather than drop it.
+     *
+     * Empty on user turns, and on assistant turns the model answered without thinking. Never
+     * shown to anybody: §9 keeps what was said, and this is how it was worked out.
+     */
+    val reasoning: String = "",
 )
 
 /** A remembered fact about the user, and how well it matched what was being looked for. */
