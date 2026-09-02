@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,6 +69,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
@@ -85,6 +87,8 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,6 +138,8 @@ fun CheckerBand(modifier: Modifier = Modifier, cell: Dp = 8.dp, color: Color = A
 /** Near-black band: the mark and wordmark locked up left, the memory plate right. */
 @Composable
 fun TopBand(
+    menuOpen: Boolean,
+    onMenuToggle: () -> Unit,
     onMemoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -159,7 +165,12 @@ fun TopBand(
                     color = Areel.Paper,
                 )
             }
-            MorePlate(onMemory = onMemoryClick, onSettings = onSettingsClick)
+            MorePlate(
+                open = menuOpen,
+                onToggle = onMenuToggle,
+                onMemory = onMemoryClick,
+                onSettings = onSettingsClick,
+            )
         }
     }
 }
@@ -175,116 +186,104 @@ fun TopBand(
  * tonal elevation that belong to a different design.
  */
 @Composable
-private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
-    // Two flags, not one. `mounted` is whether the popup exists; `open` is what the plates are
-    // animating towards. They differ for the length of the retraction — a popup torn down the
-    // instant it is dismissed cannot animate its way out.
-    var mounted by remember { mutableStateOf(false) }
-    var open by remember { mutableStateOf(false) }
+private fun MorePlate(
+    open: Boolean,
+    onToggle: () -> Unit,
+    onMemory: () -> Unit,
+    onSettings: () -> Unit,
+) {
     /*
-     * There is no guard here any more, because there is nothing left to guard against.
+     * A toggle with no window in the way of it, which is the third and last shape this took.
      *
-     * Two attempts came before this one and both were the same mistake: let the tap reach the
-     * button *and* the popup, then try to work out afterwards whether the two were the same
-     * gesture. A 250ms window failed on a long press, which outlives any window. Comparing
-     * press timestamps failed because the press arrives through a coroutine and the click does
-     * not, so the click can read a timestamp that has not been written yet.
+     * The first two both let one tap reach the button *and* a popup, then tried to work out
+     * afterwards whether they were the same gesture - a 250ms window, outlived by a long press;
+     * then press timestamps, which race, because a press arrives through a coroutine and the
+     * click does not. The third covered the button with a full-screen sheet so it could not be
+     * tapped twice, and that worked until it was tapped quickly: taking a window away is not
+     * instant, so a tap 120ms after a close still landed on a sheet on its way out. Measured,
+     * eight taps at 120ms produced three state changes.
      *
-     * While the menu is open the popup covers the whole screen, so the button is not reachable
-     * and cannot be tapped twice. A tap anywhere - over the button, over the thread, over the
-     * masthead - lands on the popup and closes it. The button's only job is to open.
+     * So there is no sheet. The button toggles, exactly as + does, and closing from outside is
+     * a box in the layout rather than a window - see the catcher in ChatScreen. The plates keep
+     * their popup because they have to draw over the thread, but nothing in the touch path is a
+     * window any more, and a window is the only thing here that was ever slow.
+     *
+     * [mounted] outlives [open] by the length of the retraction, because a popup torn down the
+     * instant it closes cannot animate its way out. Reopening cancels that teardown.
      */
+    var mounted by remember { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun retract() {
-        open = false
-        scope.launch {
-            delay(MENU_EXIT_MS)
-            mounted = false
+    LaunchedEffect(open) {
+        if (open) {
+            leaving?.cancel()
+            leaving = null
+            mounted = true
+        } else if (mounted) {
+            leaving?.cancel()
+            leaving = scope.launch {
+                delay(MENU_EXIT_MS)
+                mounted = false
+                leaving = null
+            }
         }
     }
+
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     // Read here: a Canvas is not a composable scope, so the label cannot be fetched inside it.
     val moreLabel = stringResource(R.string.more)
-    // On the way down, not the way up. A tap is felt when the finger lands - that is when the
-    // person has committed to it - and a tick on release would arrive after the thing it is
-    // meant to confirm has already happened on screen.
-    tapFeedback(interaction)
+    // A toggle: firm going down, a lighter note coming up. See [Feel].
+    feel(interaction, Feel.TOGGLE)
 
     Box {
         Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .requiredSize(44.dp + TOUCH_SLOP * 2)
-                .clickable(interactionSource = interaction, indication = null) {
-                    // Opens, and only opens. Closing belongs to the sheet that is covering
-                    // this button while it is open.
-                    if (!mounted) {
-                        mounted = true
-                        open = true
-                    }
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-        Box(
-            Modifier
-                .size(44.dp)
-                .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
-                .background(if (pressed || open) Areel.Concrete2 else Areel.Paper, RectangleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            MoreMark(
-                open = open,
-                modifier = Modifier
-                    .size(20.dp)
-                    .semantics { contentDescription = moreLabel },
-            )
-        }
-        }
+            Box(
+                Modifier
+                    .requiredSize(44.dp + TOUCH_SLOP * 2)
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onToggle,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(44.dp)
+                        .offset(x = if (pressed) 1.dp else 0.dp, y = if (pressed) 1.dp else 0.dp)
+                        .background(
+                            if (pressed || open) Areel.Concrete2 else Areel.Paper,
+                            RectangleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MoreMark(
+                        open = open,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .semantics { contentDescription = moreLabel },
+                    )
+                }
+            }
         }
 
         if (mounted) {
             // The button is 44dp tall and the plates are spaced MENU_GAP apart, so the drop has
-            // to clear both — otherwise the first gap is smaller than the second and the stack
+            // to clear both - otherwise the first gap is smaller than the second and the stack
             // reads as slightly broken rather than deliberately spaced.
             val drop = with(LocalDensity.current) { (44.dp + MENU_GAP).roundToPx() }
-            /*
-             * Two windows, and the order matters.
-             *
-             * The first is the whole screen and does nothing but close the menu, which is what
-             * replaced the platform's dismiss-on-outside-click: that fires on the way down and
-             * leaves the same tap to land on the button underneath, and no amount of guarding
-             * afterwards can tell that tap apart from a deliberate reopen. Covering the button
-             * means it cannot be tapped twice, so there is nothing to tell apart.
-             *
-             * The second carries the plates and is anchored to the button, which is the part
-             * that had to be a separate window: a full-screen popup aligns to the *screen*, so
-             * hanging the plates in it put them a fixed distance from the top of the display
-             * rather than under the button, and the first gap stopped matching the second.
-             */
-            Popup(
-                properties = PopupProperties(
-                    focusable = false,
-                    dismissOnClickOutside = false,
-                    usePlatformDefaultWidth = false,
-                ),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) { detectTapGestures { retract() } },
-                )
-            }
             Popup(
                 alignment = Alignment.TopEnd,
                 offset = IntOffset(0, drop),
+                // Draws only. It takes no focus and dismisses nothing, so it is never in the
+                // way of the next tap.
                 properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
             ) {
-                // The plates themselves drop out of the button. 记忆 keeps the design it always
-                // had - 44dp plate, magenta glyph, ink label - because it was not a list item
-                // before and turning it into one to fit a menu would have been the menu
-                // deciding what the app looks like.
+                // 记忆 keeps the design it always had - 44dp plate, magenta glyph, ink label -
+                // because it was not a list item before and turning it into one to fit a menu
+                // would have been the menu deciding what the app looks like.
                 Column(horizontalAlignment = Alignment.End) {
                     MenuPlate(
                         R.drawable.ic_brain,
@@ -292,7 +291,7 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                         order = 0,
                         open = open,
                     ) {
-                        retract()
+                        onToggle()
                         onMemory()
                     }
                     Spacer(Modifier.height(MENU_GAP))
@@ -302,7 +301,7 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
                         order = 1,
                         open = open,
                     ) {
-                        retract()
+                        onToggle()
                         onSettings()
                     }
                 }
@@ -326,36 +325,6 @@ private fun MorePlate(onMemory: () -> Unit, onSettings: () -> Unit) {
  * that cancels itself.
  */
 internal val TOUCH_SLOP = 6.dp
-
-/**
- * The tick a button gives when a finger lands on it.
- *
- * Keyed on the press rather than the click: `clickable` fires on release, and a confirmation
- * that arrives after the screen has already changed is not a confirmation.
- *
- * It collects the press *events* rather than watching a pressed flag, and that is the whole
- * point of it. A flag is a value sampled between recompositions, so a quick tap - down and up
- * inside one frame - could set it and clear it without any composition ever observing `true`,
- * and the tap went unanswered. Which taps those were felt arbitrary from the outside: the same
- * button, tapped the same way, buzzing or not depending on where the frame boundary fell.
- * Every Press lands in this flow whether or not a frame happened to sit between it and its
- * release.
- *
- * LongPress, the same as the microphone. TextHandleMove was the light one and on a real phone
- * it is close enough to nothing that a tap felt unanswered - a haptic too faint to notice is
- * worse than none, because it spends the vibrator on a signal nobody receives.
- */
-@Composable
-internal fun tapFeedback(interaction: InteractionSource) {
-    val haptics = LocalHapticFeedback.current
-    LaunchedEffect(interaction) {
-        interaction.interactions.collect { event ->
-            if (event is PressInteraction.Press) {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            }
-        }
-    }
-}
 
 /**
  * 三 becoming 一.

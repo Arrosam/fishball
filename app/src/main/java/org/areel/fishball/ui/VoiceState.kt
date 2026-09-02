@@ -12,9 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -37,7 +34,7 @@ enum class VoicePhase { IDLE, RECORDING, TRANSCRIBING }
 class VoiceState internal constructor(
     private val backend: Backend,
     private val scope: CoroutineScope,
-    private val haptics: HapticFeedback,
+    private val buzzer: Buzzer,
     private val onGranted: () -> Unit,
     private val onText: (String) -> Unit,
     private val emptyNotice: String,
@@ -110,7 +107,7 @@ class VoiceState internal constructor(
     fun aim(up: Boolean) {
         if (phase != VoicePhase.RECORDING || up == cancelling) return
         cancelling = up
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        buzzer.tick()
     }
 
     /**
@@ -123,7 +120,7 @@ class VoiceState internal constructor(
     fun onCancel() {
         cancelling = false
         if (phase != VoicePhase.RECORDING) return
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        buzzer.up(Feel.CLICKY)
         backend.voice.cancel()
         phase = VoicePhase.IDLE
     }
@@ -152,7 +149,7 @@ class VoiceState internal constructor(
         // The press is felt before anything is heard. This is the only confirmation that the
         // hold registered, and without it a button that looks the same pressed or not gives
         // nothing back until the first word is already lost.
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        buzzer.down(Feel.CLICKY)
         if (!backend.voice.start()) return
         phase = VoicePhase.RECORDING
         level = 0f
@@ -174,7 +171,7 @@ class VoiceState internal constructor(
         // Felt on the way up too. Holding to speak is the one gesture in the app with no visible
         // moment of completion - the finger is over the button - so the end of it is told by
         // touch, the same way the beginning was.
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        buzzer.up(Feel.CLICKY)
         val heard = backend.voice.stop()
         if (heard !is Recording.Ready) {
             // It used to say nothing here, on the grounds that a mis-tap does not deserve a
@@ -237,7 +234,7 @@ class VoiceState internal constructor(
 @Composable
 fun rememberVoiceState(backend: Backend, onText: (String) -> Unit): VoiceState {
     val scope = rememberCoroutineScope()
-    val haptics = LocalHapticFeedback.current
+    val buzzer = rememberBuzzer()
     val empty = stringResource(R.string.voice_empty)
     val short = stringResource(R.string.voice_too_short)
     val denied = stringResource(R.string.voice_no_permission)
@@ -250,7 +247,7 @@ fun rememberVoiceState(backend: Backend, onText: (String) -> Unit): VoiceState {
         VoiceState(
             backend = backend,
             scope = scope,
-            haptics = haptics,
+            buzzer = buzzer,
             onGranted = { ask[0]?.invoke() },
             onText = onText,
             emptyNotice = empty,

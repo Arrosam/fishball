@@ -239,6 +239,14 @@ fun ChatScreen(
 
     val attach = rememberAttachState(vm.backend.attachments)
 
+    /*
+     * The masthead menu's state, held here rather than inside the button.
+     *
+     * Only so the catcher below can exist: closing on a tap outside is a box in this layout,
+     * the same way the + row's is, and a box cannot reach into the masthead to read a flag.
+     */
+    var menuOpen by remember { mutableStateOf(false) }
+
     fun send(text: String) {
         // Whatever was attached rides this message and only this one - typed or spoken, the
         // picture goes with the next thing said and is then let go of, so it cannot silently
@@ -264,7 +272,12 @@ fun ChatScreen(
     ) {
         // The ink row only. Its checker is not part of this Column - it is painted over the
         // top of the thread below, so the thread genuinely runs underneath it.
-        TopBand(onMemoryClick = onMemoryClick, onSettingsClick = onSettingsClick)
+        TopBand(
+            menuOpen = menuOpen,
+            onMenuToggle = { menuOpen = !menuOpen },
+            onMemoryClick = onMemoryClick,
+            onSettingsClick = onSettingsClick,
+        )
 
 
         // In dp, so the overrun is the same distance on every screen rather than the same
@@ -365,6 +378,16 @@ fun ChatScreen(
                     Modifier
                         .matchParentSize()
                         .pointerInput(Unit) { detectTapGestures { attach.close() } },
+                )
+            }
+
+            // The same catcher for the masthead menu, and the same reason: a tap on the
+            // conversation closes it, and it takes that tap rather than passing it on.
+            if (menuOpen) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) { detectTapGestures { menuOpen = false } },
                 )
             }
 
@@ -595,7 +618,8 @@ private fun Composer(
             // grey it darkens to is the bar's own colour though, so on its own the plate
             // vanishes into the bar the moment it is doing something - hence the ink edge,
             // which is the only thing keeping it a button while its menu is out.
-            tapFeedback(plusPress)
+            // A toggle, like the menu: the row it opens stays on screen. See [Feel].
+            feel(plusPress, Feel.TOGGLE)
             val dim = plusDown || attach.open
             // The edge arrives rather than appearing. Snapped on, it read as a second button
             // replacing the first; faded in over the same beat as the glyph's turn, it reads as
@@ -776,7 +800,8 @@ private fun Composer(
             // not contain anywhere.
             val sendPress = remember { MutableInteractionSource() }
             val sendDown by sendPress.collectIsPressedAsState()
-            if (!speaking) tapFeedback(sendPress)
+            // Clicky: the release is the send, so it is felt as hard as the press.
+            if (!speaking) feel(sendPress, Feel.CLICKY)
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
             val working = voice.phase == VoicePhase.TRANSCRIBING
@@ -824,10 +849,8 @@ private fun Composer(
                                 indication = null,
                                 enabled = enabled,
                             ) {
-                                // And again as it leaves. The other buttons only open
-                                // something; this one has posted a message by now, and the
-                                // second beat is the receipt for that.
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                // The buzz on release is [Feel.CLICKY]'s own, so there
+                                // is nothing to add here beyond doing the thing.
                                 onSend()
                             }
                         },
