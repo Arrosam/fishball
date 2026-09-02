@@ -37,7 +37,12 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -474,6 +479,16 @@ fun ChatScreen(
             },
             voice = voice,
             attach = attach,
+            // Anything that has the app waiting on a service, which from the outside is one
+            // state however many kinds of request are behind it.
+            working = busy,
+            onStop = {
+                // Both, without asking which is running. They are mutually exclusive in
+                // practice and cancelling a job that is not there costs nothing, which is a
+                // better trade than a control that has to be told what it is stopping.
+                vm.stop()
+                voice.abandon()
+            },
         )
     }
 
@@ -543,11 +558,24 @@ private fun Composer(
     onSend: () -> Unit,
     voice: VoiceState,
     attach: AttachState,
+    /** A turn is running. Distinct from `!enabled`, which is also true while a picture loads. */
+    working: Boolean,
+    onStop: () -> Unit,
 ) {
     // With nothing typed there is nothing to send, so the plate is a microphone instead. One
     // control, two jobs, and never both at once - which is why it can be the same square.
     val speaking = value.isEmpty()
     val recording = voice.phase == VoicePhase.RECORDING
+
+    /*
+     * Something is in flight and the app is waiting on it.
+     *
+     * One flag for two things - a turn being answered and a recording being turned into words -
+     * because from the outside they are the same situation: nothing to type, nothing to do but
+     * wait, and one way to call it off. Keeping them apart in the UI would mean two spinners
+     * that look identical and one stop button that works on Tuesdays.
+     */
+    val waiting = working || voice.phase == VoicePhase.TRANSCRIBING
 
     /*
      * The bar is one height, always, and two separate things were moving it.
@@ -720,7 +748,12 @@ private fun Composer(
               ) {
                 // While the button is held the field is where the state is reported, because
                 // that is the one place already in view and a finger is covering the plate.
-                when (voice.phase) {
+                //
+                // Waiting outranks the voice phase, and covers the transcribing case it used
+                // to draw as a line of text: there is nothing to type into while a service is
+                // being waited on, and a disabled cursor blinking in an empty box says the app
+                // has stopped, which is the one thing that is not true.
+                if (waiting) BubbleField() else when (voice.phase) {
                     // Both lines carry their own line height, so what fits is arithmetic
                     // rather than whatever the font happens to want.
                     // Taller than the block it sits in, and allowed to be: the rule keeps
@@ -808,7 +841,21 @@ private fun Composer(
             // not contain anywhere.
             val haptics = LocalHapticFeedback.current
             val held = voice.phase == VoicePhase.RECORDING
-            val working = voice.phase == VoicePhase.TRANSCRIBING
+            // Read here: neither a Canvas nor a semantics block is a composable scope.
+            val stopLabel = stringResource(R.string.stop_turn)
+
+            /*
+             * The fish somebody has already killed.
+             *
+             * A list rather than one, because the animation outlives the state that started it:
+             * the plate stops turning the instant the turn is cancelled, and the fish that was
+             * turning still has a second of falling to do. Keyed by a counter so a second kill
+             * during the first one's fall is its own corpse rather than a restart of it, and
+             * each drops itself out of the list once it is past the bottom of the screen -
+             * which is the whole of the recycling.
+             */
+            val dead = remember { mutableStateListOf<Int>() }
+            var kills by remember { mutableIntStateOf(0) }
             Box(
                 Modifier.padding(start = 10.dp).size(48.dp),
                 contentAlignment = Alignment.Center,
@@ -817,11 +864,26 @@ private fun Composer(
             // is the last thing the screen draws, and nothing here clips, so a child that
             // overflows upward lands over the conversation - which is where the light goes.
             CancelBeam(voice)
+            // Drawn from inside the plate and allowed to leave it, the same as the beam above.
+            // Each removes itself once it is past the bottom of the screen.
+            dead.forEach { id ->
+                key(id) { DyingFish(seed = id, onGone = { dead.remove(id) }) }
+            }
             Box(
                 Modifier
                     .requiredSize(48.dp + TOUCH_SLOP * 2)
                     .then(
-                        if (speaking) {
+                        if (waiting) {
+                            // Clicky, and deliberately the same weight as sending: stopping a
+                            // turn is the other irreversible thing this plate does.
+                            //
+                            // Not gated on [enabled] - it is false for the whole of a running
+                            // turn, which is precisely when this has a job.
+                            Modifier.pressable(Feel.CLICKY, indication = null) {
+                                dead += kills++
+                                onStop()
+                            }
+                        } else if (speaking) {
                             // Held, not tapped - the second line of the indicator promises
                             // that releasing sends, and only a press gesture can keep that
                             // promise. tryAwaitRelease returns on a lifted finger and on a
@@ -867,19 +929,19 @@ private fun Composer(
                         .size(48.dp)
                         .background(
                             when {
-                                !enabled -> Areel.Ink20
                                 // Held: inverted, so the control that is doing something looks
-                                // pressed rather than merely coloured.
-                                // Busy for the same reason as held: it is doing something,
-                                // and it cannot be pressed again until it stops.
-                                held || working -> Areel.Ink
+                                // pressed rather than merely coloured. Waiting for the same
+                                // reason, and it outranks the disabled grey: the plate is not
+                                // dead while a turn runs, it is the way to stop one.
+                                held || waiting -> Areel.Ink
+                                !enabled -> Areel.Ink20
                                 else -> Areel.Magenta
                             },
                             RectangleShape,
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (working) {
+                    if (waiting) {
                         // Turning over, the way a fish does. The plate is not a control for as
                         // long as this runs - a second recording started here would take the
                         // microphone from under the words still being fetched - and something
@@ -898,7 +960,11 @@ private fun Composer(
                             // and an eye that swaps ends reads as a fault rather than a fish.
                             modifier = Modifier
                                 .size(24.dp)
-                                .graphicsLayer { rotationY = face },
+                                .graphicsLayer { rotationY = face }
+                                .semantics {
+                                    contentDescription = stopLabel
+                                    role = Role.Button
+                                },
                             body = Areel.Paper,
                             eye = null,
                         )

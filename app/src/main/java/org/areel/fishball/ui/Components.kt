@@ -48,6 +48,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -1119,3 +1123,202 @@ private val MARK_NUDGE = MARK * (1.5f / 24f)
  * long quotation starts reading as a container round it, and this is a margin mark.
  */
 private val quoteRuleHeight = 18.dp
+
+/**
+ * The field, filling with bubbles while something is being waited on.
+ *
+ * The same three-square vocabulary as [Bubbling], spread across the width of the composer
+ * instead of stacked over the mark. It is the field's whole content for as long as it runs:
+ * there is nothing to type into while a turn is in flight, and a disabled text cursor blinking
+ * in an empty box says only that the app has stopped, which is the one thing that is not true.
+ *
+ * Frame-driven rather than a set of infinite transitions, for the same reason the voice lines
+ * and the cancel chevrons are: a fixed number of animators produces a fixed rhythm, and three
+ * squares rising on the same loop forever reads as a progress bar someone drew badly. These are
+ * emitted on an interval, drift as they climb, and pop at the top - so the field looks like
+ * water rather than like a widget.
+ */
+@Composable
+fun BubbleField(modifier: Modifier = Modifier) {
+    // A plain list, not a snapshot one. Every particle is rewritten every frame, and putting
+    // that through the snapshot system would cost a write per bubble per frame to observe a
+    // value nothing reads - the redraw is driven by [frame] instead, once.
+    val bubbles = remember { mutableListOf<Bubble>() }
+    var frame by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        bubbles.clear()
+        // Already full when it appears. Starting from empty left the first second of every wait
+        // as a blank box, which is exactly the moment a wait most needs explaining.
+        repeat(FIELD_SEEDED) { i ->
+            bubbles += bubble(i).also { it.age = it.rise * (FIELD_SEEDED - i) / FIELD_SEEDED }
+        }
+        var last = withFrameNanos { it }
+        var since = 0f
+        var n = FIELD_SEEDED
+        while (true) {
+            val now = withFrameNanos { it }
+            // Clamped: a frame dropped while the keyboard opens should not teleport every
+            // bubble to the top of the field at once.
+            val dt = ((now - last) / 1_000_000L).toFloat().coerceAtMost(64f)
+            last = now
+            since += dt
+            if (since >= FIELD_EMIT_MS) {
+                since = 0f
+                bubbles += bubble(n++)
+            }
+            bubbles.forEach { it.age += dt }
+            // Oldest first, so this only ever inspects the front of the list.
+            while (bubbles.isNotEmpty() && bubbles.first().done) bubbles.removeAt(0)
+            frame++
+        }
+    }
+
+    Canvas(modifier.fillMaxWidth().height(FIELD_HEIGHT)) {
+        // Read inside the draw, which is what makes the draw depend on it.
+        @Suppress("UNUSED_EXPRESSION") frame
+        bubbles.forEach { b ->
+            val p = (b.age / b.rise).coerceIn(0f, 1f)
+            val side = b.size.dp.toPx()
+            drawRect(
+                color = Areel.Magenta,
+                topLeft = Offset(
+                    // Drifting right as it climbs, so a column of squares does not read as one
+                    // square stuttering upward.
+                    x = b.x * (size.width - side) + p * FIELD_DRIFT.dp.toPx(),
+                    y = (1f - p) * (size.height - side),
+                ),
+                size = Size(side, side),
+                // In fast, out slow. A bubble that vanishes at full strength reads as a
+                // dropped frame rather than as something that popped.
+                alpha = ((1f - p) * (p * 5f).coerceAtMost(1f)).coerceIn(0f, 1f),
+            )
+        }
+    }
+}
+
+/**
+ * The nth bubble, placed by a cheap hash of n.
+ *
+ * A counter rather than a Random, because the only requirement is that consecutive bubbles do
+ * not line up - and a remembered generator is a piece of state that can fall out of step with
+ * the composition it belongs to, for a property nobody can tell apart from this.
+ */
+private fun bubble(n: Int) = Bubble(
+    x = (n * 37 % 101) / 101f,
+    size = 3f + (n * 17 % 3),
+    rise = FIELD_RISE_MS * (0.8f + (n * 13 % 5) / 10f),
+)
+
+/** One square on its way up. A plain class: these are written every frame and never observed. */
+private class Bubble(val x: Float, val size: Float, val rise: Float) {
+    var age = 0f
+    val done: Boolean get() = age >= rise
+}
+
+/** Often enough to read as water, seldom enough that the field is not a wall of squares. */
+private const val FIELD_EMIT_MS = 110f
+private const val FIELD_RISE_MS = 1500f
+
+/** How many are already climbing on the first frame. About one field's worth. */
+private const val FIELD_SEEDED = 9
+
+/** Sideways travel over a whole climb. Enough to be a drift, not enough to be a diagonal. */
+private const val FIELD_DRIFT = 7f
+
+/** The rule's own height, so the water sits exactly where the words would have. */
+private val FIELD_HEIGHT = 22.dp
+
+/**
+ * The fish, killed, thrown up and dropped.
+ *
+ * What happens when somebody stops a running turn by tapping the fish that was doing it. It
+ * leaves the plate on an arc - up hard, over, and down past the bottom of the screen - turning
+ * as it goes, with a cross where its eye was.
+ *
+ * A real arc rather than an animation curve, because the two do not look alike. `tween` up
+ * followed by `tween` down has a stationary moment at the top and identical speed on both
+ * halves, which reads as a lift rather than as a throw. One initial velocity and one constant
+ * downward pull is fewer numbers and the only version that looks thrown.
+ *
+ * It is drawn inside the send plate and allowed to overflow it, the same way the cancel beam
+ * is: the composer is the last thing the screen paints and nothing in it clips, so a child that
+ * leaves the plate passes over the conversation on its way up and off the screen on its way
+ * down. [onGone] fires when it is past the bottom, and the caller drops it - which is what
+ * keeps a session of angry tapping from accumulating fish nobody can see.
+ */
+@Composable
+fun DyingFish(seed: Int, onGone: () -> Unit) {
+    var t by remember { mutableFloatStateOf(0f) }
+
+    /*
+     * The throw, in pixels, converted once.
+     *
+     * Written in dp and converted here rather than used raw, because `graphicsLayer` translates
+     * in pixels and a constant that means one thing on a phone and another on a tablet is not a
+     * constant. Measured before this was true: 1400 raw pixels threw the fish about 120dp on a
+     * 2.75-density screen, which is a hop rather than a throw and looked like a bug.
+     */
+    val screen = LocalConfiguration.current.screenHeightDp
+    val (launch, gravity, fall) = with(LocalDensity.current) {
+        Triple(KILL_LAUNCH.dp.toPx(), KILL_GRAVITY.dp.toPx(), screen.dp.toPx())
+    }
+
+    // Two taps in a row should not produce two identical corpses, and this is the whole of the
+    // difference between them: which way it tumbles, and how far it wanders on the way down.
+    val spin = if (seed % 2 == 0) 1f else -1f
+
+    /*
+     * Always leftward, and that is not a coin toss.
+     *
+     * The plate lives in the bottom-right corner, so there is no room to its right - measured,
+     * a rightward drift carried the fish off the side of the screen while it was still near the
+     * top of its arc, which ends the animation early and reads as it vanishing rather than
+     * falling. Away from the edge is the only direction with a screen in it.
+     */
+    val drift = -KILL_DRIFT * (1f + (seed % 3) * 0.4f)
+
+    LaunchedEffect(seed) {
+        var last = withFrameNanos { it }
+        while (true) {
+            val now = withFrameNanos { it }
+            t += ((now - last) / 1_000_000L).toFloat().coerceAtMost(64f) / 1000f
+            last = now
+            if (gravity * t * t / 2f - launch * t > fall) break
+        }
+        onGone()
+    }
+
+    FishMark(
+        modifier = Modifier
+            .size(24.dp)
+            .graphicsLayer {
+                // Screen coordinates, so up is negative: thrown against gravity, then carried
+                // by it.
+                translationY = gravity * t * t / 2f - launch * t
+                translationX = drift.dp.toPx() * t
+                // Slowing as it goes, like something tumbling rather than something driven.
+                rotationZ = spin * KILL_SPIN * t * (2f - t.coerceAtMost(1.6f))
+            },
+        // Ink, not the Paper it wore on the plate. It spends the whole arc over the
+        // conversation - concrete ground and white message plates - and a white fish crossing
+        // those is a fish nobody sees die.
+        body = Areel.Ink,
+        eye = Areel.Magenta,
+        dead = true,
+    )
+}
+
+/*
+ * Dp per second, and dp per second squared. Together they put the top of the arc about 300dp
+ * above the plate and the whole trip a little over a second - long enough to be watched, short
+ * enough that nobody is waiting for it to finish before they can type again.
+ */
+private const val KILL_LAUNCH = 1333f
+private const val KILL_GRAVITY = 2963f
+
+/** Sideways, in dp, so it does not fall back down the line it went up. */
+private const val KILL_DRIFT = 40f
+
+/** Degrees per second at the throw. */
+private const val KILL_SPIN = 420f

@@ -7,7 +7,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.areel.fishball.core.agent.Reply
@@ -58,6 +60,8 @@ class ChatViewModel(
     /** Also read by the screen, which needs it for the microphone. */
     val backend: Backend,
     private val compactedNotice: String,
+    /** What goes in the thread when somebody stops a turn themselves. */
+    private val stoppedNotice: String,
 ) : ViewModel() {
 
     val messages = mutableStateListOf<ChatMessage>()
@@ -75,6 +79,15 @@ class ChatViewModel(
 
     var busy by mutableStateOf(false)
         private set
+
+    /**
+     * The turn in flight, so it can be called off.
+     *
+     * Held rather than launched and forgotten. A turn is now allowed to run for as long as it
+     * needs - which is the right default and also means the only person who can say it has gone
+     * on long enough is the one waiting for it, and they need something to say it with.
+     */
+    private var turn: Job? = null
 
     /** The model's reasoning for the turn in flight. Cleared when it lands; never persisted. */
     var thinking by mutableStateOf("")
@@ -115,28 +128,52 @@ class ChatViewModel(
             }
         }
 
-        viewModelScope.launch {
-            val conversation = backend.conversation
-            val reply = if (conversation == null) {
-                Reply(UiCopy.SERVICE_UNAVAILABLE)
-            } else {
-                // The driver blocks on network and writes the memory file; neither belongs on
-                // the frame thread. Narration hops back to the main thread to be shown.
-                withContext(Dispatchers.IO) { conversation.ask(question, progress, images) }
+        turn = viewModelScope.launch {
+            try {
+                val conversation = backend.conversation
+                val reply = if (conversation == null) {
+                    Reply(UiCopy.SERVICE_UNAVAILABLE)
+                } else {
+                    // The driver blocks on network and writes the memory file; neither belongs
+                    // on the frame thread. Narration hops back to the main thread to be shown.
+                    withContext(Dispatchers.IO) { conversation.ask(question, progress, images) }
+                }
+                // Also to logcat. The tap-to-expand is for whoever is holding the phone; this
+                // is for whoever is holding a laptop, and it costs one line.
+                reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
+                messages += reply.toMessage()
+                    .copy(steps = narration.toList(), thinking = thinking)
+            } catch (stopped: CancellationException) {
+                // Said out loud, because the alternative is a question sitting in the thread
+                // with nothing under it and no way to tell a stopped turn from a lost one.
+                // The user's own message stays: they did ask it, and §9 has already filed it.
+                messages += ChatMessage(fromUser = false, text = stoppedNotice)
+                throw stopped
+            } finally {
+                // In `finally` so a stopped turn cleans up exactly like a finished one. The
+                // placeholder is driven by [busy], and a cancelled coroutine that left it true
+                // would strand a bubble on screen with nothing behind it.
+                narration.clear()
+                thinking = ""
+                streamed = ""
+                busy = false
+                turn = null
             }
-            val workedOut = narration.toList()
-            val reasoning = thinking
-            narration.clear()
-            thinking = ""
-            streamed = ""
-            // Also to logcat. The tap-to-expand is for whoever is holding the phone; this is
-            // for whoever is holding a laptop, and it costs one line.
-            reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
-            messages += reply.toMessage().copy(steps = workedOut, thinking = reasoning)
-            busy = false
             // Nothing about memory here any more. The bus files on its own, off the fast model,
             // and a screen should not have to remember to remember.
         }
+    }
+
+    /**
+     * Enough. Stop.
+     *
+     * Cancelling the job unwinds the driver wherever it happens to be - Ktor's calls are
+     * cancellable, so an HTTP read in flight comes back as a cancellation rather than being
+     * waited out. What has already been written to memory stays written: those are things that
+     * were true before anybody got impatient.
+     */
+    fun stop() {
+        turn?.cancel()
     }
 
     /**

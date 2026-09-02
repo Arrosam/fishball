@@ -19,6 +19,9 @@
     -->
     <!-- Shown in the thread when the session was folded, so the change is visible rather than felt. -->
     <string name="session_compacted">好，我把刚才聊的整理了一下，接着聊。</string>
+    <!-- Left in the thread when the user stops a turn themselves, so a stopped question
+         does not look like one that failed. -->
+    <string name="turn_stopped">好，那就先不查了。想问别的随时说。</string>
 
     <string name="settings_mode">模式</string>
     <string name="mode_fast">快速模式</string>
@@ -46,6 +49,8 @@
 
     <!-- Composer: no placeholder by design. The field and the send control carry it. -->
     <string name="send">发送</string>
+    <!-- The plate while a turn or a transcription is running. Tapping it calls the work off. -->
+    <string name="stop_turn">别查了</string>
 
     <!--
       Attaching a picture. Two ways in, named for what the person does rather than for where

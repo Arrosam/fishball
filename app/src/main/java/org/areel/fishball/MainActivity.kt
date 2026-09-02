@@ -141,11 +141,12 @@ private fun FishBallApp() {
     }
 
     val compacted = stringResource(R.string.session_compacted)
+    val stopped = stringResource(R.string.turn_stopped)
     val vm: ChatViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ChatViewModel(backend, compacted) as T
+                ChatViewModel(backend, compacted, stopped) as T
         },
     )
 

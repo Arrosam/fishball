@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.areel.fishball.R
 import org.areel.fishball.data.Backend
@@ -43,6 +44,15 @@ class VoiceState internal constructor(
 ) {
     var phase by mutableStateOf(VoicePhase.IDLE)
         private set
+
+    /**
+     * The transcription in flight, so it can be called off.
+     *
+     * The plate shows the same turning fish for this as it does for a running turn, and a
+     * control that means "stop" for one of two identical-looking states and nothing for the
+     * other is worse than one that never worked.
+     */
+    private var listening: Job? = null
 
     /** One line where the field's text would be. Cleared the moment they press again. */
     var notice: String? by mutableStateOf(null)
@@ -184,10 +194,16 @@ class VoiceState internal constructor(
             return
         }
         phase = VoicePhase.TRANSCRIBING
-        scope.launch {
-            val text = backend.transcribe(heard.file)
-            heard.file.delete()
-            phase = VoicePhase.IDLE
+        listening = scope.launch {
+            val text = try {
+                backend.transcribe(heard.file)
+            } finally {
+                // Deleted whichever way this ends. A recording abandoned halfway would
+                // otherwise sit in the cache until the app was uninstalled.
+                heard.file.delete()
+                phase = VoicePhase.IDLE
+                listening = null
+            }
             if (text.isNullOrBlank()) {
                 // The plain sentence, and under it the code when the service gave one. A
                 // reachable service that heard silence carries nothing extra; 503 is worth
@@ -202,6 +218,16 @@ class VoiceState internal constructor(
                 onText(text)
             }
         }
+    }
+
+    /**
+     * Stop turning what was just said into words, and say nothing about it.
+     *
+     * Silent for the same reason [onCancel] is: somebody who stopped it knows they stopped it,
+     * and 「没听清」 would be the app blaming the microphone for a decision the user made.
+     */
+    fun abandon() {
+        listening?.cancel()
     }
 
     internal fun refused() {

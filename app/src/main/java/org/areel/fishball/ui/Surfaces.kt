@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.runtime.Composable
@@ -326,6 +327,12 @@ fun FishMark(
     modifier: Modifier,
     body: Color,
     eye: Color? = Areel.Magenta,
+    /**
+     * The eye as a cross instead of a square: the oldest shorthand there is for a fish that has
+     * stopped. Two bars on the diagonal rather than a rotated square, because at this size a
+     * square turned 45 degrees is a diamond and a diamond is just a different eye.
+     */
+    dead: Boolean = false,
 ) {
     Canvas(modifier) {
         val s = size.minDimension / 24f
@@ -346,7 +353,17 @@ fun FishMark(
         }
         drawPath(path, body)
         eye?.let {
-            drawRect(it, topLeft = Offset(14.6f * s, 7.4f * s), size = Size(2f * s, 2f * s))
+            if (!dead) {
+                drawRect(it, topLeft = Offset(14.6f * s, 7.4f * s), size = Size(2f * s, 2f * s))
+                return@let
+            }
+            // Drawn a shade wider than the eye it replaces. A cross made of two hairlines
+            // reads as damage to the mark rather than as a face at 24dp.
+            val stroke = Stroke(width = 0.9f * s, cap = StrokeCap.Square)
+            val a = Offset(14.1f * s, 6.9f * s)
+            val b = Offset(17.1f * s, 9.9f * s)
+            drawLine(it, a, b, stroke.width, stroke.cap)
+            drawLine(it, Offset(b.x, a.y), Offset(a.x, b.y), stroke.width, stroke.cap)
         }
     }
 }
