@@ -22,6 +22,7 @@ import org.areel.fishball.core.llm.LlmTool
 object Tools {
 
     const val SEARCH = "search"
+    const val READ = "read_page"
     const val QUOTE = "quote"
     const val ANSWER = "answer"
     const val NOTE_USER = "note_user"
@@ -95,6 +96,35 @@ object Tools {
 
     /** More than this in one call is a scattergun, not a search. */
     const val MAX_QUERIES = 5
+
+    /**
+     * Opening one of the results and reading it.
+     *
+     * A search result is a title and two lines a search engine chose to make the page look
+     * relevant, and the gap between that and the page is where most of the wrong answers live:
+     * the summary says a drug is safe in pregnancy, the page says it is safe in the first two
+     * trimesters. Until this existed the model could only ever read the advertisement.
+     *
+     * `find` and the link list are what make it navigation rather than a single fetch. A long
+     * page comes back a window at a time and `find` moves the window; the links let it carry on
+     * to the notice the page is quoting rather than stopping at the page that mentions it.
+     */
+    val read = LlmTool(
+        name = READ,
+        description = "打开一条资料，看它的正文。搜索结果只有两行摘要，摘要和原文常常不是一回事；" +
+            "重要的结论要点开原文看过再说。页面里的链接也会列出来，可以接着点进去。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                stringProp("url", "要打开的网址。可以是搜索结果里的，也可以是别的页面上列出的链接。")
+                stringProp(
+                    "find",
+                    "想在这一页里找的词。页面很长时，会从这个词附近开始给你看。不填就从头看。",
+                )
+            }
+            putJsonArray("required") { add("url") }
+        },
+    )
 
     val quote = LlmTool(
         name = QUOTE,

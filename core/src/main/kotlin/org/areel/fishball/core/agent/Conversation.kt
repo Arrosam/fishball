@@ -30,6 +30,8 @@ import org.areel.fishball.core.quote.QuoteRequest
 import org.areel.fishball.core.quote.QuoteResult
 import org.areel.fishball.core.quote.QuoteVerifier
 import org.areel.fishball.core.quote.SourceText
+import org.areel.fishball.core.search.HttpPageReader
+import org.areel.fishball.core.search.PageGateway
 import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.session.Session
@@ -61,6 +63,12 @@ class Conversation(
      */
     private val retrieval: Retrieval? = null,
     private val search: SearchGateway,
+    /**
+     * Opening a result and reading it, as opposed to reading what a search engine said about
+     * it. Defaults to a plain HTTP reader because there is nothing to configure about fetching
+     * a page; a test hands in one that answers from a string.
+     */
+    private val pages: PageGateway = HttpPageReader(),
     private val registry: SourceRegistry,
     private val store: MemoryStore,
     private val now: () -> Long = { System.currentTimeMillis() },
@@ -242,7 +250,7 @@ class Conversation(
                         // to say still has to. Taking quote away here would mean the last thing
                         // it wrote before the deadline could not be cited.
                         winding -> listOf(Tools.quote, Tools.answer)
-                        else -> listOf(Tools.search, Tools.quote, Tools.answer)
+                        else -> listOf(Tools.search, Tools.read, Tools.quote, Tools.answer)
                     },
                     maxTokens = MAIN_BUDGET,
                     effort = Effort.MAX,
@@ -287,6 +295,7 @@ class Conversation(
                 result.toolCalls.map { call ->
                     when (call.name) {
                         Tools.SEARCH -> lookUp(call, seen, progress)
+                        Tools.READ -> openPage(call, seen, progress)
                         Tools.QUOTE -> checkQuote(call, seen, verified)
                         else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
                     }
@@ -369,6 +378,96 @@ class Conversation(
             }
         }
         LlmContent.ToolResult(call.id, body)
+    }
+
+    /**
+     * One `read_page` call: the page, and what leads off it.
+     *
+     * The whole text is kept so a later `quote` is checked against the page rather than against
+     * a search engine's summary of it, but only a window of it is handed back - a long article
+     * would otherwise cost more of the window than every search in the turn put together, and
+     * `find` moves that window, which is cheaper than reading the article to look for one line.
+     *
+     * A URL nobody searched for is allowed. Following a link off a page is the point of having
+     * links, and the tier comes from the registry either way: a page reached by clicking through
+     * is worth exactly what its domain is worth, same as one that arrived in a result list.
+     */
+    private suspend fun openPage(
+        call: LlmContent.ToolUse,
+        seen: LinkedHashMap<String, Evidence>,
+        progress: TurnProgress,
+    ): LlmContent.ToolResult {
+        val url = call.input.str("url").orEmpty().trim()
+        if (url.isEmpty() || !url.startsWith("http")) {
+            return LlmContent.ToolResult(
+                call.id,
+                AgentPrompt.badCall(Tools.READ, "{\"url\": \"https://……\"}", call.input.toString()),
+                isError = true,
+            )
+        }
+        progress.step(UiCopy.Narration.READING)
+
+        val page = pages.read(url)
+        if (page.failed || page.text.isBlank()) {
+            progress.searched(UiCopy.Narration.unread(url))
+            return LlmContent.ToolResult(
+                call.id,
+                "这一页打不开（" + (page.reason ?: "没有正文") + "）。换一条资料看看。",
+                isError = true,
+            )
+        }
+
+        // Already-seen keeps its slot in the numbering and gains the page; a followed link joins
+        // the list as its own piece of evidence, which is what it is.
+        val existing = seen[url]
+        val evidence = existing?.copy(page = page.text) ?: Evidence(
+            hit = org.areel.fishball.core.trust.SearchHit(url = url, title = page.title),
+            resolution = resolver.resolve(
+                org.areel.fishball.core.trust.SearchHit(url = url, title = page.title),
+            ),
+            page = page.text,
+        )
+        seen[url] = evidence
+
+        val find = call.input.str("find")?.trim()?.takeIf { it.isNotEmpty() }
+        val at = find?.let { page.text.indexOf(it) }?.takeIf { it >= 0 }
+        val body = window(page.text, at)
+        progress.step(UiCopy.Narration.looked(evidence.resolution.displayName))
+        progress.searched(
+            UiCopy.Narration.read(
+                evidence.resolution.displayName,
+                evidence.resolution.tier.label,
+                page.title,
+            ),
+        )
+
+        return LlmContent.ToolResult(
+            call.id,
+            AgentPrompt.pageLine(
+                name = evidence.resolution.attribution(),
+                tier = evidence.resolution.tier.label,
+                title = page.title,
+                url = url,
+                body = body,
+                length = page.text.length,
+                windowed = page.text.length > body.length,
+                found = if (find == null) null else at != null,
+                links = page.links.take(LINKS_SHOWN).map { it.text to it.url },
+            ),
+        )
+    }
+
+    /**
+     * The slice of a page the model is shown, centred on what it asked for.
+     *
+     * Backed up a little from the match rather than started at it, because the sentence that
+     * qualifies a claim usually comes before the words being searched for - "除孕晚期外" sits in
+     * front of the drug name, not after it.
+     */
+    private fun window(text: String, at: Int?): String {
+        if (text.length <= PAGE_WINDOW) return text
+        val start = ((at ?: 0) - PAGE_LEAD_IN).coerceIn(0, text.length - PAGE_WINDOW)
+        return text.substring(start, start + PAGE_WINDOW)
     }
 
     /** One `quote` call, checked word for word against the page it claims to come from. */
@@ -883,6 +982,21 @@ private const val LAST_ROUND = 30
 
 /** Rounds in a row that said nothing and asked for nothing. See the loop for why. */
 private const val IDLE_LIMIT = 3
+
+/**
+ * How much of one page goes back to the model, and how far in front of a `find` match it starts.
+ *
+ * Four thousand characters is a long article's worth of the part that matters. Whole pages were
+ * the obvious alternative and are unaffordable: reading six of them would cost more window than
+ * every search in the turn, and most of what is in them is navigation. The quote verifier still
+ * gets the whole thing, so a window narrows what the model can quote, never what a quote is
+ * checked against.
+ */
+private const val PAGE_WINDOW = 4_000
+private const val PAGE_LEAD_IN = 600
+
+/** Links off one page. Enough to find the way on, not the whole navigation bar. */
+private const val LINKS_SHOWN = 25
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6

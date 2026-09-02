@@ -6,8 +6,17 @@ import org.areel.fishball.core.text.Similarity
 data class Evidence(
     val hit: SearchHit,
     val resolution: Resolution,
+    /**
+     * The page itself, once somebody has opened it. Null while all there is is the summary a
+     * search engine wrote to make the result look relevant.
+     *
+     * This is what a quotation gets checked against, so the difference between null and not is
+     * the difference between verifying a quote against the source and verifying it against an
+     * advertisement for the source.
+     */
+    val page: String? = null,
 ) {
-    val text: String get() = (hit.title + " " + hit.snippet).trim()
+    val text: String get() = page ?: (hit.title + " " + hit.snippet).trim()
 }
 
 /**

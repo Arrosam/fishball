@@ -7,6 +7,7 @@ import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.core.memory.PersistentStore
 import org.areel.fishball.core.memory.SnapshotIo
+import org.areel.fishball.core.search.HttpPageReader
 import org.areel.fishball.core.search.SearxngGateway
 import org.areel.fishball.core.trust.loadBundledRegistry
 import java.io.File
@@ -26,6 +27,16 @@ class Backend private constructor(
     private val registry by lazy { loadBundledRegistry() }
 
     private val search by lazy { SearxngGateway(baseUrl = SEARCH_URL) }
+
+    /**
+     * One reader for the life of the app, not one per conversation.
+     *
+     * [talk] builds a fresh Conversation every time the model changes, and the reader owns an
+     * OkHttp client with its own connection pool and dispatcher threads. Letting the default
+     * argument construct one each time would leave a pool behind on every switch, none of them
+     * reachable to close.
+     */
+    private val pages by lazy { HttpPageReader() }
 
     /**
      * Null until the gate has a working key. Its absence is what "not signed in" means, so
@@ -108,6 +119,7 @@ class Backend private constructor(
             llm = client,
             retrieval = client,
             search = search,
+            pages = pages,
             registry = registry,
             store = store,
             memory = MemoryBus(llm = filing, retrieval = filing, store = store),

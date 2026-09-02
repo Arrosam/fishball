@@ -63,6 +63,88 @@ class LiveSmokeTest {
     }
 
     /**
+     * A turn that has to look past the summary, and is allowed to take as long as it takes.
+     *
+     * Two things are being watched, and both were broken in the same way. The loop used to force
+     * an `answer` call on its tenth round, which a turn doing honest work reached routinely -
+     * traced live it went search, search, quote, quote, search, quote and hit the wall. What the
+     * model wrote under that forced call was 「看起来搜索工具这边有点问题，没返回查询结果」,
+     * followed by citations from the sixteen results it claimed not to have. It had been cut off
+     * and it explained the interruption with the only story it had.
+     *
+     * So: the turn must produce an answer rather than an apology, and it must do it by opening
+     * at least one page instead of answering from search-engine summaries. The notes are the
+     * evidence for both - each round of work leaves one, so counting them is how many rounds it
+     * took, from the outside.
+     */
+    @Test
+    fun `a hard question runs long and reads the page`() {
+        val key = key ?: run {
+            println("LiveSmokeTest skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+        val conversation = Conversation(
+            llm = llm,
+            retrieval = llm,
+            search = SearxngGateway(baseUrl = "https://search.areel.org"),
+            registry = loadBundledRegistry(),
+            store = InMemoryStore(),
+        )
+
+        val notes = mutableListOf<String>()
+        val progress = object : org.areel.fishball.core.agent.TurnProgress {
+            override fun searched(summary: String) {
+                notes += summary
+                println("  note " + notes.size + ": " + summary.lines().joinToString(" / "))
+            }
+        }
+
+        val reply = runBlocking {
+            conversation.ask("布洛芬和对乙酰氨基酚，孕妇能吃哪个？说明书上是怎么写的？", progress)
+        }
+        println("rounds of work -> " + notes.size)
+        println("answer -> " + reply.text)
+        println("sources -> " + reply.sources.joinToString { it.displayName + "/" + it.tier })
+
+        // An answer, not the apology the round cap used to produce.
+        assertTrue(
+            reply.text != org.areel.fishball.core.copy.UiCopy.SERVICE_UNAVAILABLE,
+            "the turn gave up: " + reply.detail,
+        )
+        assertTrue(reply.text.length > 40, "barely an answer: " + reply.text)
+
+        /*
+         * And an answer to the question, rather than a report on the tooling.
+         *
+         * The first version of this test asserted only length and not-an-apology, and passed on
+         * a reply that was the model's own tool-call markup pasted into the answer slot -
+         * 「我注意到工具调用格式一直有问题」 followed by a literal `<｜DSML｜tool_calls>` block.
+         * A turn can fail without failing, and length does not see it.
+         */
+        listOf("<｜", "tool_call", "DSML", "```").forEach {
+            assertTrue(!reply.text.contains(it), "raw model markup in the answer: " + reply.text)
+        }
+        assertTrue(
+            reply.text.contains("对乙酰氨基酚") || reply.text.contains("布洛芬"),
+            "answered about something else entirely: " + reply.text,
+        )
+        assertTrue(
+            !reply.text.contains("工具"),
+            "the answer is about the tools rather than the question: " + reply.text,
+        )
+
+        // And it got there by opening something. A turn that only ever searched has notes that
+        // all begin 查了; reading one leaves a 读了.
+        assertTrue(notes.isNotEmpty(), "no work was reported at all")
+        assertTrue(
+            notes.any { it.startsWith("读了") },
+            "never opened a page, only read summaries: " + notes,
+        )
+    }
+
+    /**
      * The change that is easiest to break without noticing: a turn is asked inside a
      * conversation, not on its own. Before this, every question was the first one the model had
      * ever seen, so a follow-up carrying a pronoun answered about nothing at all.

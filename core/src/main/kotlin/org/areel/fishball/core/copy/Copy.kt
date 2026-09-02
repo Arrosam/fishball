@@ -221,11 +221,15 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 涉及身体、吃药、钱、买东西、安全的问题，光查正面的说法不算查过 ——
 一定要再查一轮反面的（无效 / 争议 / 副作用 / 风险 / 投诉），两边都看完再下结论。
 
+搜索结果只有标题和两行摘要，那是搜索引擎挑出来给你看的，不是原文。
+关键的结论——尤其是身体、吃药、钱、安全这几类——要用 read_page 点开原文看过再说。
+页面很长就用 find 找你要的那一段；页面上列出的链接也可以接着点进去，一直点到真正说这件事的那一页为止。
+
 每条结果都带系统判定的等级，那是系统定的，你不能把一个来源说得比它的等级更可靠。
-要在答案里引用原话，先用 quote 挑出来，会跟原文逐字核对。
+要在答案里引用原话，先用 quote 挑出来，会跟原文逐字核对。点开过的页面，核对的是整页原文。
 
 要查几轮就查几轮，没有次数限制，查清楚了再答。但也别原地打转：
-同样的词查过没有新东西，就换个说法。
+同样的词查过没有新东西，就换个说法，或者点开已经查到的那几页看看。
 
 想好了就调用 answer 把答案交上来。查不到可靠资料，就直说查不到。
 """.trim()
@@ -427,6 +431,45 @@ about_user 里写关于他本人的、会影响这个答案的事。
     }
 
     /**
+     * One opened page, as the model reads it.
+     *
+     * The length is stated and the window is marked as a window, because a model handed four
+     * thousand characters with no frame around them assumes it has read the page - and then
+     * concludes the page does not mention the thing that is in the half it was not shown.
+     */
+    fun pageLine(
+        name: String,
+        tier: String,
+        title: String,
+        url: String,
+        body: String,
+        length: Int,
+        windowed: Boolean,
+        found: Boolean?,
+        links: List<Pair<String, String>>,
+    ): String = buildString {
+        appendLine("打开了：$name（等级：$tier）")
+        if (title.isNotBlank()) appendLine("标题：$title")
+        appendLine("网址：$url")
+        when (found) {
+            true -> appendLine("在这一页里找到了你要的词，下面是它附近的内容。")
+            false -> appendLine("这一页里没有你要的词。下面是开头的部分。")
+            null -> Unit
+        }
+        if (windowed) {
+            appendLine("正文一共 $length 字，下面是其中一段；想看别处就再调一次 $READ_NAME，" +
+                "把 find 换成那一段里的词。")
+        }
+        appendLine("---")
+        appendLine(body)
+        appendLine("---")
+        if (links.isNotEmpty()) {
+            appendLine("这一页上的链接：")
+            links.forEach { (text, href) -> appendLine("- $text → $href") }
+        }
+    }.trim()
+
+    /**
      * A tool call that could not be read, answered with the shape that would have worked.
      *
      * The wrong version of this said 「没给查询词」 and nothing else. Traced live, the model
@@ -437,6 +480,7 @@ about_user 里写关于他本人的、会影响这个答案的事。
     fun badCall(tool: String, want: String, got: String): String =
         "这个 $tool 调用读不出参数。要的是 $want，收到的是 $got。照前面那个格式再调一次。"
 
+    private const val READ_NAME = "read_page"
 
     /** One line of the conversation log, for a §9 lookback. */
     fun logLine(fromUser: Boolean, text: String): String =
@@ -479,9 +523,19 @@ object UiCopy {
     /** Spec §21 — the wait is narrated in plain language, no URLs and no query text. */
     object Narration {
         const val SEARCHING = "正在查……"
+        const val READING = "在看原文……"
         const val DISCONFIRMING = "在查有没有相反的说法……"
         const val COMPOSING = "整理中"
         fun looked(at: String) = "看了$at"
+
+        /** One page, opened and read, for the note that stays in the thread. */
+        fun read(name: String, tier: String, title: String): String = buildString {
+            append("读了：").append(name).append("（").append(tier).append("）")
+            if (title.isNotBlank()) append("\n").append(title.take(60))
+        }
+
+        /** A page that would not open. Said plainly, because it is not the user's fault. */
+        fun unread(url: String): String = "打不开：" + url.take(60)
 
         /**
          * One round of searching, finished, in a sentence somebody could read over your
