@@ -320,6 +320,7 @@ class Conversation(
 
         fresh.forEach { seen[it.hit.url] = it }
         fresh.take(3).forEach { progress.step(UiCopy.Narration.looked(it.resolution.displayName)) }
+        progress.searched(UiCopy.Narration.searched(queries, fresh.map { it.resolution }))
 
         val body = buildString {
             appendLine("查了：" + queries.joinToString("、"))
@@ -694,6 +695,16 @@ interface TurnProgress {
     fun step(text: String) {}
     fun thinking(delta: String) {}
     fun answer(delta: String) {}
+
+    /**
+     * One round of looking, finished.
+     *
+     * Separate from [step] because it is a different kind of thing. A step is a line that
+     * scrolls past inside the placeholder and is gone; this is a record of a round of work that
+     * stays in the thread. A turn that searches three times leaves three of these, which is the
+     * only way from the outside to see that it searched three times.
+     */
+    fun searched(summary: String) {}
 
     /** For callers that only want the result — tests, and the log-replay path. */
     object Silent : TurnProgress

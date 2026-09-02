@@ -215,20 +215,25 @@ fun ChatScreen(
     LaunchedEffect(itemCount) { if (following) toEnd(smooth = true) }
 
     /*
-     * While it writes: the bottom of the growing message stays on the bottom of the screen.
+     * While it works: the bottom of the last block stays on the bottom of the screen.
      *
-     * One collector rather than an effect keyed on the text, and it reads the length on every
-     * change instead of in coarse buckets of forty-eight characters. The buckets were there to
-     * keep a hundred tokens from costing a hundred animations - but [toEnd] is a jump, not an
-     * animation, and the buckets bought nothing except a message that grew four or five lines
-     * past the bottom of the screen before the view caught up with it.
+     * Watched through the *size of the last item* rather than the length of the text, because
+     * text is only one of the things that makes it grow. 思考中 gets taller when a narration
+     * line is added, when the reasoning tail arrives, and over the several frames an expansion
+     * animates - none of which is a character of streamed answer, and all of which used to
+     * walk the block off the bottom of the screen while the app believed nothing had changed.
      *
-     * `collect` on a suspending body conflates for free: while one scroll is in flight the
-     * lengths in between are dropped, so this costs one scroll per frame at worst.
+     * Size and index, never offset: offset changes when the list scrolls, and keying on it
+     * would make this chase its own scrolling.
+     *
+     * `collect` on a suspending body conflates for free - while one scroll is in flight the
+     * sizes in between are dropped - so this costs one scroll per frame at worst.
      */
     LaunchedEffect(Unit) {
-        snapshotFlow { vm.streamed.length + vm.thinking.length }
-            .collect { if (following && busy) toEnd(smooth = false) }
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            Triple(itemCount, last?.index ?: -1, last?.size ?: 0)
+        }.collect { if (following && busy) toEnd(smooth = false) }
     }
 
     // The viewport changing size, from any cause. The keyboard is the one that prompted this,
@@ -314,7 +319,10 @@ fun ChatScreen(
             ) {
                 itemsIndexed(messages) { index, message ->
                     Arriving(animate = index >= alreadyThere) {
-                        if (message.fromUser) {
+                        val note = message.searchNote
+                        if (note != null) {
+                            SearchNote(note)
+                        } else if (message.fromUser) {
                             UserBubble(message.text)
                         } else {
                             AssistantBubble(

@@ -792,6 +792,47 @@ data class Source(
 )
 
 /**
+ * One round of looking, left in the thread after it finished.
+ *
+ * The placeholder's own materials - paper, the cut corner, the hatch behind it - because it is
+ * the same kind of object: work being shown rather than a turn being taken. What it does not
+ * have is the animation. The lap and the bubbling dots say *still going*, and this is a record
+ * of something already done; a finished note that kept pulsing would be claiming otherwise.
+ *
+ * A turn that searches three times leaves three of these, which is the only way from outside to
+ * see that it searched three times. That mattered once the model started deciding for itself
+ * how many rounds a question was worth.
+ */
+@Composable
+fun SearchNote(text: String, modifier: Modifier = Modifier) {
+    val hatchClip = remember { Path() }
+    Box(
+        modifier
+            .fillMaxWidth()
+            .background(Areel.Paper, BubbleShape)
+            .border(1.dp, Areel.Ink20, BubbleShape)
+            .drawBehind { hatch(hatchClip) }
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            // Square and still, where the placeholder's is round and moving.
+            Box(
+                Modifier
+                    .padding(top = 5.dp)
+                    .size(5.dp)
+                    .background(Areel.Magenta),
+            )
+            Text(
+                text,
+                style = MaterialTheme.typography.labelMedium,
+                color = Areel.Ink60,
+                modifier = Modifier.padding(start = 11.dp),
+            )
+        }
+    }
+}
+
+/**
  * Spec §21 — the wait, in the thread rather than pinned above the composer, so the placeholder
  * occupies the slot the answer will land in.
  *

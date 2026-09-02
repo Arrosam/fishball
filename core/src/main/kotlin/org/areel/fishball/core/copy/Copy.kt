@@ -467,6 +467,32 @@ object UiCopy {
         const val DISCONFIRMING = "在查有没有相反的说法……"
         const val COMPOSING = "整理中"
         fun looked(at: String) = "看了$at"
+
+        /**
+         * One round of searching, finished, in a sentence somebody could read over your
+         * shoulder.
+         *
+         * What was asked for and what came back, named and graded. Not how many results the
+         * engine returned, which is a number about the search engine rather than about the
+         * question - what matters is which of them were worth anything.
+         */
+        fun searched(
+            queries: List<String>,
+            found: List<org.areel.fishball.core.trust.Resolution>,
+        ): String = buildString {
+            append("查了：").append(queries.joinToString("、"))
+            if (found.isEmpty()) {
+                append("\n没查到新的东西。")
+                return@buildString
+            }
+            val best = found
+                .distinctBy { it.displayName }
+                .sortedByDescending { it.tier }
+                .take(3)
+            append("\n看了 ").append(found.size).append(" 条，")
+            append(best.joinToString("、") { it.displayName + "（" + it.tier.label + "）" })
+            if (found.size > best.size) append(" 等")
+        }
     }
 
     /**

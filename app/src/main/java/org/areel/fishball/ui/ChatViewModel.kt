@@ -43,6 +43,15 @@ data class ChatMessage(
      */
     val steps: List<String> = emptyList(),
     val thinking: String = "",
+    /**
+     * A round of searching, finished, rather than something anybody said.
+     *
+     * Drawn in the placeholder's own language because it is the same kind of thing - work being
+     * shown rather than a turn being taken - and it is never written to the log: §9 keeps what
+     * was said, and this is how it was found out. It lasts as long as the app is open, which is
+     * as long as it is of any use.
+     */
+    val searchNote: String? = null,
 )
 
 class ChatViewModel(
@@ -91,6 +100,10 @@ class ChatViewModel(
         val progress = object : TurnProgress {
             override fun step(text: String) {
                 narration += text
+            }
+
+            override fun searched(summary: String) {
+                messages += ChatMessage(fromUser = false, text = "", searchNote = summary)
             }
 
             override fun thinking(delta: String) {
