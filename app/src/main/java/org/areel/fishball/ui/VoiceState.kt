@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.areel.fishball.R
 import org.areel.fishball.data.Backend
+import org.areel.fishball.data.Recording
 
 /** What the microphone is doing, which is the only thing the composer needs to draw. */
 enum class VoicePhase { IDLE, RECORDING, TRANSCRIBING }
@@ -40,6 +41,7 @@ class VoiceState internal constructor(
     private val onGranted: () -> Unit,
     private val onText: (String) -> Unit,
     private val emptyNotice: String,
+    private val shortNotice: String,
     private val deniedNotice: String,
 ) {
     var phase by mutableStateOf(VoicePhase.IDLE)
@@ -47,6 +49,20 @@ class VoiceState internal constructor(
 
     /** One line where the field's text would be. Cleared the moment they press again. */
     var notice: String? by mutableStateOf(null)
+        private set
+
+    /**
+     * What the service said, under [notice], when the failure had a code.
+     *
+     * Its own value rather than something glued onto the sentence. The field is one line of
+     * text tall and a code is an unbreakable word: appended, it wrapped onto a second line and
+     * was clipped away, so the notice read exactly as it does when the microphone simply heard
+     * nothing - which is the one case it needs to be told apart from.
+     *
+     * Null after a recording the service heard silence in. That is not a fault, and a code
+     * beside it would be inventing one.
+     */
+    var noticeCode: String? by mutableStateOf(null)
         private set
 
     /**
@@ -59,11 +75,68 @@ class VoiceState internal constructor(
     var level by mutableFloatStateOf(0f)
         private set
 
+    /**
+     * Whether letting go now would throw the recording away instead of sending it.
+     *
+     * Armed by dragging up off the button. It is the gesture every voice message in this
+     * country is cancelled with, and it is the only one available while the button is held -
+     * the finger is on the one control the screen has. The beam drawn over the plate is this
+     * value, and nothing else reads it.
+     */
+    var cancelling by mutableStateOf(false)
+        private set
+
     /** Set by the permission callback so a granted request can start recording immediately. */
     internal var awaitingPermission = false
 
-    fun onHold() {
+    /**
+     * Drop the line under the field.
+     *
+     * Sending anything at all answers it. The notice is what the microphone said last time and
+     * it used to outlive the conversation: type a question, send it, and the field went empty
+     * again underneath a line still complaining that it had not heard you.
+     */
+    fun dismissNotice() {
         notice = null
+        noticeCode = null
+    }
+
+    /**
+     * The finger has moved, and this is whether it is now far enough up to cancel.
+     *
+     * Only the crossings matter, in either direction: the tick is what tells somebody the
+     * threshold is real, and it has to come at the edge rather than the whole way across.
+     */
+    fun aim(up: Boolean) {
+        if (phase != VoicePhase.RECORDING || up == cancelling) return
+        cancelling = up
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+
+    /**
+     * Let go above the button: the recording goes in the bin without a word about it.
+     *
+     * Silent on purpose, like a hold too short to be speech. Somebody who cancelled a message
+     * knows they cancelled it, and a line telling them so would be the app narrating their own
+     * decision back at them.
+     */
+    fun onCancel() {
+        cancelling = false
+        if (phase != VoicePhase.RECORDING) return
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        backend.voice.cancel()
+        phase = VoicePhase.IDLE
+    }
+
+    fun onHold() {
+        // One voice at a time. A second hold while the first is still being turned into words
+        // would take the microphone out from under it and land a transcript in the middle of a
+        // recording. The plate already says as much - it is a fish turning over rather than a
+        // microphone - and this is the same rule written where it is enforced.
+        if (phase != VoicePhase.IDLE) return
+        notice = null
+        noticeCode = null
+        cancelling = false
         if (!granted()) {
             // Ask, and remember that a press is what asked — a granted permission then starts
             // recording on the spot rather than making them press a second time for the same
@@ -96,25 +169,35 @@ class VoiceState internal constructor(
     }
 
     fun onRelease() {
+        cancelling = false
         if (phase != VoicePhase.RECORDING) return
         // Felt on the way up too. Holding to speak is the one gesture in the app with no visible
         // moment of completion - the finger is over the button - so the end of it is told by
         // touch, the same way the beginning was.
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-        val file = backend.voice.stop()
-        if (file == null) {
-            // Too short to be speech. Silent on purpose: this is the mis-tap of somebody
-            // reaching for the send plate out of habit, and it does not deserve a message.
+        val heard = backend.voice.stop()
+        if (heard !is Recording.Ready) {
+            // It used to say nothing here, on the grounds that a mis-tap does not deserve a
+            // message. But somebody who pressed a button and got silence back cannot tell
+            // whether they let go too early or whether the app is broken, and those want
+            // different things done about them - so each says which it was.
+            notice = if (heard is Recording.TooShort) shortNotice else emptyNotice
+            noticeCode = null
             phase = VoicePhase.IDLE
             return
         }
         phase = VoicePhase.TRANSCRIBING
         scope.launch {
-            val text = backend.transcribe(file)
-            file.delete()
+            val text = backend.transcribe(heard.file)
+            heard.file.delete()
             phase = VoicePhase.IDLE
             if (text.isNullOrBlank()) {
+                // The plain sentence, and under it the code when the service gave one. A
+                // reachable service that heard silence carries nothing extra; 503 is worth
+                // being able to read out to somebody, and it is the only part of this that
+                // tells the difference between "say it again" and "come back later".
                 notice = emptyNotice
+                noticeCode = backend.voice.lastFailure
             } else {
                 // Straight into the same send path a typed question takes. There is no draft
                 // step: the person spoke a whole question and asking them to press again to
@@ -128,6 +211,7 @@ class VoiceState internal constructor(
         awaitingPermission = false
         phase = VoicePhase.IDLE
         notice = deniedNotice
+        noticeCode = null
     }
 
     private companion object {
@@ -155,6 +239,7 @@ fun rememberVoiceState(backend: Backend, onText: (String) -> Unit): VoiceState {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val empty = stringResource(R.string.voice_empty)
+    val short = stringResource(R.string.voice_too_short)
     val denied = stringResource(R.string.voice_no_permission)
 
     // A box rather than a captured local. The state is remembered once and the launcher is
@@ -169,6 +254,7 @@ fun rememberVoiceState(backend: Backend, onText: (String) -> Unit): VoiceState {
             onGranted = { ask[0]?.invoke() },
             onText = onText,
             emptyNotice = empty,
+            shortNotice = short,
             deniedNotice = denied,
         )
     }

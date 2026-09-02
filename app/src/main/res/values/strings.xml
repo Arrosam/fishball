@@ -66,8 +66,15 @@
     <string name="voice_hold">按住说话</string>
     <string name="voice_recording">录音中</string>
     <string name="voice_release">松开发送语音</string>
+    <!-- While the button is held. The gesture is the one every voice message here is
+         cancelled with, and the second line is what it becomes once the finger is high enough. -->
+    <string name="voice_cancel">上滑取消语音</string>
+    <string name="voice_cancel_armed">松开手指，取消发送</string>
     <string name="voice_transcribing">正在转文字…</string>
     <!-- Heard nothing usable. Says what to do, and does not blame the microphone or the person. -->
+    <!-- Let go before a second was up. Says which nothing it was, so a mis-tap and a broken
+         microphone do not look alike. -->
+    <string name="voice_too_short">语音消息太短。</string>
     <string name="voice_empty">没听清，再说一遍吧。</string>
     <!-- The permission was refused. One line, and the place it can be changed. -->
     <string name="voice_no_permission">要先允许鱼丸用麦克风才能说话。</string>
