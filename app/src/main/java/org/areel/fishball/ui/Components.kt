@@ -55,6 +55,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.autoSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.animation.core.animateFloatAsState
@@ -689,12 +691,34 @@ fun SourceCard(sources: List<Source>, modifier: Modifier = Modifier) {
         modifier.fillMaxWidth().padding(top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        sources.forEach { source ->
+        sources.forEachIndexed { index, source ->
             // Spec §25, the half the user sees. Tapping a source shows the passage the answer
             // rests on - and it is the passage as the *source* wrote it, sliced out of the
             // retrieved text by the verifier, never the model's rendering of it. A source with
             // nothing to open says so rather than opening onto a paraphrase.
-            var open by remember(source) { mutableStateOf(false) }
+            /*
+             * Saved rather than merely remembered, because this card lives inside a LazyColumn
+             * item and a plain `remember` dies with it: scroll far enough from a long answer
+             * that its item leaves the composed window, come back, and every quote that had
+             * been opened is shut again.
+             *
+             * This is a hazard rather than an observed fault - measured on the emulator, the
+             * quotes did survive a 1400px scroll away and back, because an item tall enough to
+             * still be partly visible is never disposed. The self-dismissal that was reported
+             * came from the thread being slammed to its end under the reader; see the follow
+             * effect in [ChatScreen].
+             *
+             * The key has to be given rather than inferred. `rememberSaveable` derives one from
+             * the position in the composition, and every turn of this loop is at the same
+             * position - all the cards in one answer would share a single saved flag and open
+             * and close together. The index separates them, and the enclosing item's own
+             * registry keeps two answers that cite the same page apart.
+             */
+            var open by rememberSaveable(
+                source,
+                key = "quote:$index",
+                stateSaver = autoSaver(),
+            ) { mutableStateOf(false) }
             val uriHandler = LocalUriHandler.current
             val favicon = rememberFavicon(source.host)
             val openSite = {
