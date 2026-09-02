@@ -184,13 +184,22 @@ fun ChatScreen(
      * actually dragging, so a viewport change cannot silently answer the question "did they
      * want to be at the end" with "well, they aren't now".
      */
-    val atTail by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()
-            last == null || last.index >= info.totalItemsCount - 1
-        }
-    }
+    /*
+     * "At the end" has to mean the end is *on screen*, which is not the same as the last
+     * message being on screen.
+     *
+     * This used to ask whether the last visible item was the last item in the list, and for a
+     * short thread those are the same question. They stop being the same the moment one item is
+     * taller than the phone - which is exactly what an answer that quotes two or three sources
+     * is. Scrolling up *inside* that answer never changes which item is last, so this read
+     * "still at the end" the whole way up: the latch below re-armed `following` when the drag
+     * settled, the next thing to touch the viewport threw the reader back down, and the way
+     * back button stayed hidden because by this measure they had never left.
+     *
+     * `canScrollForward` is the list's own answer to "is there anything below this", which is
+     * the question actually being asked, and it does not care how tall any one item is.
+     */
+    val atTail by remember { derivedStateOf { !listState.canScrollForward } }
     var following by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         // Revised when a scroll *finishes*, not when it starts.
