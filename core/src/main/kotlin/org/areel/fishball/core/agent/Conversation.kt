@@ -222,15 +222,28 @@ class Conversation(
             },
         )
 
-        repeat(MAX_TURN_ROUNDS) { round ->
+        // Rounds that produced neither a tool call nor a word. Nothing goes into the thread on
+        // one of those, so the next round is handed the identical prompt and does the identical
+        // nothing - the only way out is to stop counting on it.
+        var idle = 0
+        var round = 0
+        while (true) {
+            // Three states, and the model is never told to stop - only offered less to do with
+            // the turn. Given no tools at all it writes prose, and prose is an answer.
+            val closing = round >= LAST_ROUND || idle >= IDLE_LIMIT
+            val winding = round >= WIND_DOWN_AT
             val result = llm.complete(
                 LlmRequest(
                     system = systemWithBridge(),
                     messages = thread,
-                    tools = listOf(Tools.search, Tools.quote, Tools.answer),
-                    // Only at the end. Forcing it earlier would take the search away on the
-                    // very turn the model was about to use it.
-                    forceTool = if (round == MAX_TURN_ROUNDS - 1) Tools.ANSWER else null,
+                    tools = when {
+                        closing -> emptyList()
+                        // Looking things up is what does not fit in the time left; deciding what
+                        // to say still has to. Taking quote away here would mean the last thing
+                        // it wrote before the deadline could not be cited.
+                        winding -> listOf(Tools.quote, Tools.answer)
+                        else -> listOf(Tools.search, Tools.quote, Tools.answer)
+                    },
                     maxTokens = MAIN_BUDGET,
                     effort = Effort.MAX,
                     temperature = 0.4,
@@ -245,7 +258,7 @@ class Conversation(
             }
 
             // Either hatch: the tool it is asked for, or prose with no tool call at all, which
-            // is still an answer. A reply that is neither is a budget that ran out mid-thought.
+            // is still an answer - and on the closing round it is the only thing there can be.
             val answered = result.toolCalls.firstOrNull { it.name == Tools.ANSWER }
             val written = answered?.input?.str("text").orEmpty()
                 .ifBlank { if (result.toolCalls.isEmpty()) result.text else "" }
@@ -253,7 +266,20 @@ class Conversation(
                 val sources = cite(seen.values.toList(), verified)
                 return Reply(text = written, shape = shapeOf(sources), sources = sources)
             }
-            if (result.toolCalls.isEmpty()) return@repeat
+            // Nothing said and nothing asked for. On the closing round that is a model that has
+            // run out of anything to say, and there is no further round that would change it.
+            if (result.toolCalls.isEmpty()) {
+                if (closing) {
+                    return Reply(
+                        UiCopy.SERVICE_UNAVAILABLE,
+                        detail = "the model wrote neither an answer nor a tool call",
+                    )
+                }
+                idle++
+                round++
+                continue
+            }
+            idle = 0
 
             thread += result.raw
             thread += LlmMessage(
@@ -266,11 +292,8 @@ class Conversation(
                     }
                 },
             )
+            round++
         }
-        return Reply(
-            UiCopy.SERVICE_UNAVAILABLE,
-            detail = "gave up after $MAX_TURN_ROUNDS rounds without an ${Tools.ANSWER} call",
-        )
     }
 
     /**
@@ -293,9 +316,12 @@ class Conversation(
             .filter { it.isNotEmpty() }
             .take(Tools.MAX_QUERIES)
         if (queries.isEmpty()) {
+            // What was expected and what arrived, both. An error that only says "no" leaves the
+            // model guessing at which of a dozen things about the call was wrong, and a model
+            // guessing at that stops looking anything up and starts debugging its own syntax.
             return@coroutineScope LlmContent.ToolResult(
                 call.id,
-                "没给查询词。",
+                AgentPrompt.badCall(Tools.SEARCH, "{\"queries\": [\"词一\", \"词二\"]}", call.input.toString()),
                 isError = true,
             )
         }
@@ -831,21 +857,32 @@ internal const val TOOL_BUDGET = 65_536
 internal const val MAIN_BUDGET = 131_072
 
 /**
- * How many times round the loop before the answer is forced.
+ * When the loop stops offering to look things up, and when it stops offering anything.
  *
- * Each round is one model call plus whatever tools it asked for, so this is the ceiling on how
- * long a turn can take.
+ * There used to be one number here and it forced an `answer` call on the last round. That is a
+ * worse failure than it sounds, and it is worth being precise about why. A turn traced round by
+ * round went search, search, quote, quote, search, quote - six rounds of real work, none of it
+ * wasted - and then hit the cap. What the model wrote under the forced call was
+ * 「看起来搜索工具这边有点问题，没返回查询结果」, and then it cited two of the sources those
+ * searches had returned. It had been interrupted, and it explained the interruption with the
+ * only story available to it: that the tools had failed. Sixteen results were sitting in its own
+ * context at the time. A deadline the model cannot see does not make it hurry, it makes it
+ * confabulate.
  *
- * Six was too tight, and the way it failed is worth remembering: the turn did not stall, it ran
- * out of room. Traced round by round it went search, search, quote, quote, search, quote - all
- * of it useful work - and the answer only appeared because the last round forces one. A turn
- * that verifies two quotations against three searches is a turn doing its job, and it needs
- * more than six moves to do it.
+ * So nothing is forced now. Past [WIND_DOWN_AT] the looking-up tools are simply not offered any
+ * more, which the model can see, and past [LAST_ROUND] no tools are offered at all - a model
+ * with no tools writes prose, and prose off the back of twenty-four rounds of evidence is an
+ * answer. The turn ends because there is nothing else for it to do, not because a counter fired.
  *
- * Ten leaves the model room to finish on its own terms, and the forced answer on the last round
- * still bounds how long anybody waits.
+ * The numbers are a backstop against a loop that bills forever, not a research budget: an
+ * ordinary question finishes in three or four rounds and never comes near them. A hard one is
+ * allowed to take thirty.
  */
-private const val MAX_TURN_ROUNDS = 10
+private const val WIND_DOWN_AT = 24
+private const val LAST_ROUND = 30
+
+/** Rounds in a row that said nothing and asked for nothing. See the loop for why. */
+private const val IDLE_LIMIT = 3
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6

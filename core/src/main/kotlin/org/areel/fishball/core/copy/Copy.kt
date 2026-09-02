@@ -224,6 +224,9 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 每条结果都带系统判定的等级，那是系统定的，你不能把一个来源说得比它的等级更可靠。
 要在答案里引用原话，先用 quote 挑出来，会跟原文逐字核对。
 
+要查几轮就查几轮，没有次数限制，查清楚了再答。但也别原地打转：
+同样的词查过没有新东西，就换个说法。
+
 想好了就调用 answer 把答案交上来。查不到可靠资料，就直说查不到。
 """.trim()
 
@@ -422,6 +425,18 @@ about_user 里写关于他本人的、会影响这个答案的事。
         if (snippet.isNotBlank()) appendLine("摘要：$snippet")
         append("网址：$url")
     }
+
+    /**
+     * A tool call that could not be read, answered with the shape that would have worked.
+     *
+     * The wrong version of this said 「没给查询词」 and nothing else. Traced live, the model
+     * spent twenty rounds on 「工具调用格式有问题」 - it could tell the call had been rejected
+     * and had no way to find out which part of it was wrong, so it permuted the syntax instead
+     * of looking anything up. Showing it what it sent, next to what was wanted, is one round.
+     */
+    fun badCall(tool: String, want: String, got: String): String =
+        "这个 $tool 调用读不出参数。要的是 $want，收到的是 $got。照前面那个格式再调一次。"
+
 
     /** One line of the conversation log, for a §9 lookback. */
     fun logLine(fromUser: Boolean, text: String): String =
