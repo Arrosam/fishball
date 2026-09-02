@@ -214,6 +214,15 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
      * the turn was factual, the engine ran the search, another model sifted it. This says the
      * same things to the one model that is now doing all of it.
      */
+    /**
+     * How to work, sent once as part of the system prompt rather than appended to every question.
+     *
+     * It used to ride on the end of each turn's user message, which put a few hundred stable
+     * tokens *after* the one part of the prompt that changes every time. Everything before the
+     * question caches; nothing after it can. Moved in front, it joins [SYSTEM] in the prefix that
+     * is identical on every call of a session, and only the question and what memory found are
+     * paid for again.
+     */
     val WORK = """
 要查资料就用 search，一次可以给几条不同的短语，会同时去查；看完不够就再查一轮。
 搜的是短语，不是整句问话。
@@ -230,6 +239,9 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 
 要查几轮就查几轮，没有次数限制，查清楚了再答。但也别原地打转：
 同样的词查过没有新东西，就换个说法，或者点开已经查到的那几页看看。
+
+他提到「上次」「昨天」「之前说的那个」，用 read_log 去翻聊天记录，别猜。
+可以按词找，也可以只给一段日期看那几天说过什么。每句话前面都标了是什么时候说的。
 
 想好了就调用 answer 把答案交上来。查不到可靠资料，就直说查不到。
 """.trim()
@@ -528,6 +540,30 @@ about_user 里写关于他本人的、会影响这个答案的事。
     /** One line of the conversation log, for a §9 lookback. */
     fun logLine(fromUser: Boolean, text: String): String =
         if (fromUser) "他说：$text" else "你说：$text"
+
+    /**
+     * When something was said, in front of what was said.
+     *
+     * Every turn has carried a timestamp since §9 was written and none of it ever reached the
+     * model, so 「上次我问的那个」 had nothing to resolve against and 「昨天」 meant nothing at
+     * all. Day and time only - the year is almost never what distinguishes two turns in a
+     * conversation somebody is still having, and it costs tokens on every replayed line.
+     */
+    fun stamp(month: Int, day: Int, hour: Int, minute: Int): String =
+        "（%d月%d日 %02d:%02d）".format(month, day, hour, minute)
+
+    /** The clock, given once per turn so relative dates have something to be relative to. */
+    fun clockLine(year: Int, month: Int, day: Int, weekday: String, hour: Int, minute: Int): String =
+        "（现在是 %d年%d月%d日 %s %02d:%02d）".format(year, month, day, weekday, hour, minute)
+
+    /** Monday first, matching java.time's DayOfWeek ordering. */
+    val WEEKDAYS = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+    /** What [Tools.HISTORY] hands back when the log has nothing in that window. */
+    const val LOG_EMPTY = "那段时间没找到你们说过的话。"
+
+    /** The header over a set of log lines, so they are not mistaken for this turn's evidence. */
+    const val LOG_FOUND = "翻到这些以前说过的话："
 
     /**
      * Spec §25 — the model selects quotations, it never writes them. These strings are

@@ -23,6 +23,7 @@ object Tools {
 
     const val SEARCH = "search"
     const val READ = "read_page"
+    const val HISTORY = "read_log"
     const val QUOTE = "quote"
     const val ANSWER = "answer"
     const val NOTE_USER = "note_user"
@@ -123,6 +124,33 @@ object Tools {
                 )
             }
             putJsonArray("required") { add("url") }
+        },
+    )
+
+    /**
+     * Going back through what was actually said, rather than guessing at it.
+     *
+     * The log has always been searchable with a time window - `MemoryStore.searchTurns` was
+     * written for spec §9's "what did I ask you yesterday" - and until now nothing called it.
+     * The old classifier had a `log_query` kind that would have, and it went with the pipeline.
+     * So the model could be asked 「上次那个」 and had only the last few turns of prompt to
+     * answer from.
+     *
+     * Both halves are optional on purpose. A keyword with no dates is "find where we discussed
+     * this"; dates with no keyword is "what did we talk about on Tuesday", which is a question
+     * people actually ask and which no amount of searching the web can answer.
+     */
+    val history = LlmTool(
+        name = HISTORY,
+        description = "翻你们以前说过的话。可以按词找，也可以只给一段日期，看那几天聊了什么。" +
+            "他说「上次」「昨天」「之前那个」的时候用这个，别靠印象答。",
+        inputSchema = obj {
+            put("type", "object")
+            putJsonObject("properties") {
+                stringProp("keyword", "要找的词。只想按时间翻就留空。")
+                stringProp("from", "从哪天开始，写成 2026-09-01 这样。不填就从最早的算起。")
+                stringProp("to", "到哪天为止，同样的写法。不填就到今天。")
+            }
         },
     )
 

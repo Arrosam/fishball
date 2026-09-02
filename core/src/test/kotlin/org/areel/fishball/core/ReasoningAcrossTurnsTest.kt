@@ -68,10 +68,11 @@ class ReasoningAcrossTurnsTest {
         )
         assertEquals(0, assistant.content.indexOf(thinking))
 
-        // And the answer is still there, after it.
+        // And the answer is still there, after it. `endsWith` rather than equality because a
+        // replayed turn now carries when it was said - see LogAndClockTest.
         assertTrue(
             assistant.content.filterIsInstance<LlmContent.Text>()
-                .any { it.text == "可以，但孕晚期不行。" },
+                .any { it.text.endsWith("可以，但孕晚期不行。") },
             "the answer itself was lost: " + assistant.content,
         )
     }

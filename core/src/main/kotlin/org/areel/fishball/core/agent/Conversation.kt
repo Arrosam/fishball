@@ -272,9 +272,11 @@ class Conversation(
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
             buildString {
+                // The clock, and only here. It changes every turn, so anywhere earlier -
+                // the system prompt above all - would rewrite the prefix each call and throw
+                // away the cache that moving WORK out of this block was meant to earn.
+                appendLine(clockNow())
                 append(AgentPrompt.Label.QUESTION).append(userText)
-                appendLine()
-                append(AgentPrompt.WORK)
             },
         )
 
@@ -301,8 +303,13 @@ class Conversation(
                         // Looking things up is what does not fit in the time left; deciding what
                         // to say still has to. Taking quote away here would mean the last thing
                         // it wrote before the deadline could not be cited.
-                        winding -> listOf(Tools.quote, Tools.answer)
-                        else -> listOf(Tools.search, Tools.read, Tools.quote, Tools.answer)
+                        // The log stays on the table while winding down: it is one local
+                        // read, it cannot run long, and a follow-up that needs last week's
+                        // answer needs it most when there is no time left to search for it.
+                        winding -> listOf(Tools.history, Tools.quote, Tools.answer)
+                        else -> listOf(
+                            Tools.search, Tools.read, Tools.history, Tools.quote, Tools.answer,
+                        )
                     },
                     maxTokens = MAIN_BUDGET,
                     effort = Effort.MAX,
@@ -384,6 +391,7 @@ class Conversation(
                 when (call.name) {
                     Tools.SEARCH -> lookUp(call, seen, progress)
                     Tools.READ -> openPage(call, seen, progress)
+                    Tools.HISTORY -> readLog(call)
                     Tools.QUOTE -> checkQuote(call, seen, verified)
                     else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
                 }
@@ -614,6 +622,40 @@ class Conversation(
         .joinToString("\n")
         .trim()
 
+    /**
+     * One `read_log` call: what was actually said, in the window asked for.
+     *
+     * Nothing here is tiered or quoted, and that is deliberate - this is not evidence about the
+     * world, it is a record of a conversation. A source card under an answer that rests on
+     * something the user said last Tuesday would be citing them to themselves.
+     */
+    private fun readLog(call: LlmContent.ToolUse): LlmContent.ToolResult {
+        val keyword = call.input.str("keyword").orEmpty().trim()
+        val found = store.searchTurns(
+            query = keyword,
+            from = dayStart(call.input.str("from")),
+            // An unparseable date is a null bound rather than an error: a half-understood
+            // window still returns something the model can read, and a rejected call spends a
+            // whole round teaching it a date format.
+            to = dayEnd(call.input.str("to")),
+            limit = LOG_HITS,
+        )
+        if (found.isEmpty()) {
+            return LlmContent.ToolResult(call.id, AgentPrompt.LOG_EMPTY)
+        }
+        val body = buildString {
+            appendLine(AgentPrompt.LOG_FOUND)
+            // Oldest first. The log reads as a conversation that way, and the model is being
+            // asked what was said, which has an order.
+            found.sortedBy { it.at }.forEach {
+                appendLine(
+                    stampOf(it.at) + AgentPrompt.logLine(it.speaker == Speaker.USER, it.text),
+                )
+            }
+        }
+        return LlmContent.ToolResult(call.id, body.trim())
+    }
+
     /** One `quote` call, checked word for word against the page it claims to come from. */
     private fun checkQuote(
         call: LlmContent.ToolUse,
@@ -760,9 +802,67 @@ class Conversation(
 
     /** Spec §8's bridge, when there is one: the previous session folded into a paragraph. */
     private fun systemWithBridge(): String {
-        val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return AgentPrompt.SYSTEM
-        return AgentPrompt.SYSTEM + "\n\n" + AgentPrompt.Label.BRIDGE + bridge
+        // WORK sits with SYSTEM, in front of the bridge, so the two stable halves are one
+        // contiguous prefix and a session's bridge - which changes only when a session rolls -
+        // is the first thing after them.
+        val standing = AgentPrompt.SYSTEM + "\n\n" + AgentPrompt.WORK
+        val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return standing
+        return standing + "\n\n" + AgentPrompt.Label.BRIDGE + bridge
     }
+
+    /**
+     * What time it is, in words, once per turn.
+     *
+     * Without it 「昨天」 has nothing to be relative to: the model can read a timestamp on every
+     * replayed line and still not know which of them was yesterday. The weekday is included
+     * because people say 「上周三」 far more often than they say a date.
+     */
+    private fun clockNow(): String {
+        val t = local(now())
+        return AgentPrompt.clockLine(
+            year = t.year,
+            month = t.monthValue,
+            day = t.dayOfMonth,
+            weekday = AgentPrompt.WEEKDAYS[t.dayOfWeek.value - 1],
+            hour = t.hour,
+            minute = t.minute,
+        )
+    }
+
+    /** When a turn was said, for the line that replays it. */
+    private fun stampOf(at: Long): String {
+        val t = local(at)
+        return AgentPrompt.stamp(t.monthValue, t.dayOfMonth, t.hour, t.minute)
+    }
+
+    /**
+     * Epoch millis in the phone's own zone.
+     *
+     * The device's zone rather than UTC, because every date in this app is one a person said
+     * out loud - 「昨天」 means their yesterday, and a log line stamped 23:40 UTC would be shown
+     * on the wrong day to somebody in Beijing for a third of every day.
+     */
+    private fun local(at: Long): java.time.LocalDateTime =
+        java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+
+    /**
+     * A day, as the first and last millisecond of it.
+     *
+     * `to` is inclusive of its whole day: somebody asking for 9月1日 to 9月3日 means all three
+     * days, and a bound at midnight would silently drop everything said on the last one.
+     */
+    private fun dayStart(text: String?): Long? = day(text)?.let {
+        it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+
+    private fun dayEnd(text: String?): Long? = day(text)?.let {
+        it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1
+    }
+
+    private fun day(text: String?): java.time.LocalDate? =
+        text?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            runCatching { java.time.LocalDate.parse(it) }.getOrNull()
+        }
 
     /**
      * What goes under the answer. Spec §25 — a source carries its quote only if the verifier
@@ -892,8 +992,8 @@ class Conversation(
         return store.turnsInSession(open.id)
             .dropLast(1)
             .map {
-                if (it.speaker == Speaker.USER) LlmMessage.user(it.text)
-                else recalled(it)
+                val said = stampOf(it.at) + it.text
+                if (it.speaker == Speaker.USER) LlmMessage.user(said) else recalled(it, said)
             }
     }
 
@@ -914,8 +1014,8 @@ class Conversation(
      *
      * Turns logged before reasoning was kept carry none, and come back as they always did.
      */
-    private fun recalled(turn: ConversationTurn): LlmMessage {
-        if (turn.reasoning.isBlank()) return LlmMessage.assistant(turn.text)
+    private fun recalled(turn: ConversationTurn, said: String): LlmMessage {
+        if (turn.reasoning.isBlank()) return LlmMessage.assistant(said)
         return LlmMessage(
             LlmMessage.Role.ASSISTANT,
             listOf(
@@ -925,7 +1025,7 @@ class Conversation(
                         put(THINKING, turn.reasoning)
                     },
                 ),
-                LlmContent.Text(turn.text),
+                LlmContent.Text(said),
             ),
         )
     }
@@ -1198,6 +1298,15 @@ private const val LINKS_SHOWN = 25
  * writer of these blocks now spell it the same way by construction.
  */
 private const val THINKING = "thinking"
+
+/**
+ * Lines of log per `read_log` call.
+ *
+ * Higher than a search's because these are short and cheap - one line each, already written,
+ * no fetching - and because a day of conversation is not many turns. Low enough that "everything
+ * we ever said" cannot arrive in one tool result.
+ */
+private const val LOG_HITS = 40
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6
