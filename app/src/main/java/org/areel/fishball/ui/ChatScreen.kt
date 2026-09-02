@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.derivedStateOf
@@ -215,10 +216,25 @@ fun ChatScreen(
             .collect { scrolling -> if (!scrolling) following = atTail }
     }
 
+    /*
+     * How many items there are, in a box the effects below can still read from later.
+     *
+     * [itemCount] is a plain local, so a lambda that outlives the composition it was built in
+     * goes on seeing the number that was true then. `LaunchedEffect(Unit)` is exactly that kind
+     * of lambda, and the one it holds was built during first composition - when the count is
+     * whatever the log restored, and zero for anybody opening the app for the first time. The
+     * guard below would then return without scrolling, forever, no matter how long the thread
+     * grew. Reading it out of `layoutInfo` instead would swap this for a worse bug: the first
+     * call happens before the list has been measured, so the count there is still zero and the
+     * app would no longer open at the end of the conversation.
+     */
+    val liveCount by rememberUpdatedState(itemCount)
+
     /** The very bottom, not the top of the last message - a plate can be taller than the view. */
     suspend fun toEnd(smooth: Boolean) {
-        if (itemCount == 0) return
-        if (smooth) listState.animateScrollToItem(itemCount - 1) else listState.scrollToItem(itemCount - 1)
+        val count = liveCount
+        if (count == 0) return
+        if (smooth) listState.animateScrollToItem(count - 1) else listState.scrollToItem(count - 1)
         listState.scrollBy(FAR_ENOUGH)
     }
 
@@ -251,12 +267,35 @@ fun ChatScreen(
      *
      * `collect` on a suspending body conflates for free - while one scroll is in flight the
      * sizes in between are dropped - so this costs one scroll per frame at worst.
+     *
+     * Every value this reads is read *live*, and that is the whole of the fix. It used to test
+     * a `busy` and an `itemCount` lifted from the enclosing composition as plain locals, and
+     * `LaunchedEffect(Unit)` keeps the block it was given the first time round: the coroutine
+     * went on testing the values those two had at first composition for as long as the screen
+     * lived. `busy` is false there on any ordinary launch, so the effect this comment describes
+     * had never once run - the block it was written to keep on screen was walking off the
+     * bottom exactly as before. The exception is the bug that was reported: leave for Settings
+     * or Memory in the middle of a turn and come back, and the screen is composed afresh with
+     * `busy` true, which it then believes *permanently*. From that point the list is slammed to
+     * the end on every layout change for the rest of the session - on every frame of an upward
+     * drag, and on the growth of any card opened anywhere in the thread.
+     *
+     * `following` and `atTail` were fine by luck: both are `by remember { ... }` over a State,
+     * so the delegate the lambda captured is the live one.
+     *
+     * And not while the user's own hand is on the list. Their drag changes which item is last
+     * and how big it is, so an emission arrives for every frame of it; without this guard a
+     * turn still running would answer each of those by yanking the thread back to the bottom.
+     * The latch above still gets the final say once the scroll settles.
      */
     LaunchedEffect(Unit) {
         snapshotFlow {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
-            Triple(itemCount, last?.index ?: -1, last?.size ?: 0)
-        }.collect { if (following && busy) toEnd(smooth = false) }
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            Triple(info.totalItemsCount, last?.index ?: -1, last?.size ?: 0)
+        }.collect {
+            if (following && vm.busy && !listState.isScrollInProgress) toEnd(smooth = false)
+        }
     }
 
     // The viewport changing size, from any cause. The keyboard is the one that prompted this,
