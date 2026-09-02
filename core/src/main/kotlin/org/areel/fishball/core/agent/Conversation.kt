@@ -123,11 +123,15 @@ class Conversation(
      * before every block and the thinking rides along in the assistant turn, so the reasoning
      * behind the routing is in front of the model while it writes - which is the whole point.
      *
-     * That last part was an assumption for a while and it was wrong: the thinking block went out
-     * on the wire and the proxy dropped it before the model saw a word of it, so every round after
-     * the first was reasoning from the tool results alone. `HydrogenClient` now hands it back as
-     * text. Nothing here changed - what goes in this list is still whatever came out - but the
-     * sentence above is only true because of that.
+     * That last part is only sometimes true, and the gap is measured rather than guessed at: the
+     * thinking block goes out on the wire intact and this proxy shows it to the model 7 times in
+     * 20 - see `ThinkingRoundTripTest`. So some rounds reason from the tool results alone.
+     *
+     * Closing that from in here was tried - `HydrogenClient` rewrote the block into a labelled
+     * text block - and withdrawn, because the model reads its own replayed turns for the house
+     * format and started answering in it: label, reasoning, `</think>`, then the answer, all in
+     * one bubble. Worth knowing before anyone tries it a second time. The remaining fix is on the
+     * proxy, which drops these on some backends and not others.
      *
      * A field rather than a parameter because a turn is one call to [ask] at a time and half a
      * dozen functions sit between the two ends of it. It is rebuilt from the log at the top of

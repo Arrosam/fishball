@@ -413,18 +413,6 @@ about_user 里写关于他本人的、会影响这个答案的事。
         const val KNOWN = "你已经知道的（不用再查；跟这次问题有关的，回答里要照顾到）："
         const val KNOWN_USER = "关于他"
         const val KNOWN_FACT = "查过"
-
-        /**
-         * The model's own reasoning from an earlier round of this turn, handed back as text.
-         *
-         * Labelled because of where it goes. It rides in an assistant turn, and anything sitting
-         * unmarked in an assistant turn reads as something already said out loud - which would
-         * have the model answering as though the user had read its working.
-         *
-         * Why it is text at all rather than the `thinking` block it arrived as: see
-         * `HydrogenClient.block`. The proxy drops those on the way in.
-         */
-        const val EARLIER_THINKING = "（以下是你刚才的思考，不是你对用户说过的话）"
     }
 
     /** One search result, as the model sees it. The index is what `select_evidence` reports back. */

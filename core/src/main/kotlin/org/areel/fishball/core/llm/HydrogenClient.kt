@@ -31,7 +31,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.notCancellation
 
 /**
@@ -331,9 +330,10 @@ class HydrogenClient(
      * proxy streams as `thinking_delta` and with no signature anywhere: not on
      * `content_block_start`, and there is no `signature_delta` in the stream at all. So there is
      * nothing to carry, which for a while was read as there being nothing to worry about. There
-     * was - see `block`, which is where the reasoning has to be turned back into text before the
-     * model will see it. Tool arguments arrive as `input_json_delta` fragments and are only valid
-     * JSON once the block closes, so they are parsed there and nowhere earlier.
+     * was: the block goes back out intact and the model is shown it only sometimes - see `block`
+     * for the counts and for what was tried about it. Tool arguments arrive as `input_json_delta`
+     * fragments and are only valid JSON once the block closes, so they are parsed there and
+     * nowhere earlier.
      */
     private suspend fun streamed(
         request: LlmRequest,
@@ -697,65 +697,28 @@ class HydrogenClient(
             if (c.isError) put("is_error", true)
         }
 
-        is LlmContent.Opaque -> reasoning(c.raw) ?: c.raw
-    }
-
-    /**
-     * A `thinking` block, rewritten as text so the model is actually shown it.
-     *
-     * The block was going out correctly and arriving only sometimes. Measured against the live
-     * proxy by planting a number in the reasoning and making the next round report it through a
-     * forced tool call - request bytes built by hand, so the arms differ by one block shape and
-     * nothing else. Aggregated over five runs on two machines:
-     *
-     *     thinking               2/40 plain,  7/20 streamed
-     *     thinking + signature   3/40
-     *     text                  40/40 plain, 20/20 streamed
-     *     nothing (control)      0/40
-     *
-     * The accurate word is *unreliable*, not stripped, and the difference matters enough that the
-     * first version of this comment was wrong about it. The streamed thinking arm went 0/5, 5/5,
-     * 0/5, 2/5 across runs - swinging by whole runs more than trial by trial. A `signature`
-     * changes nothing either way, which was the first guess and the wrong one; and the streamed
-     * reply never carries one to round-trip in the first place - `content_block_start` gives
-     * `{"type":"thinking","thinking":""}` and the only delta is `thinking_delta`.
-     *
-     * The cause looks to be routing rather than the block: reply ids come in two shapes, and a
-     * thinking arm has only ever scored on the Anthropic-native one, never on the proxy's own.
-     * A text block works on both. `ThinkingRoundTripTest` has the breakdown - it is worth reading
-     * before anyone tries to fix this from inside the client, because the fix is in the proxy.
-     *
-     * This rewrite is therefore about buying 40/40, not about 2/40 being a mistake. Reasoning
-     * that survives only when the load balancer feels like it is reasoning the turn cannot rely
-     * on, which is the same as having none.
-     *
-     * That matters here because this app's turn is a loop. The reasoning behind round one's tool
-     * call is the reason round two's call makes sense, and without it every round after the first
-     * re-derives what it already worked out from the tool results alone.
-     *
-     * Replaced rather than sent alongside: two copies of the same reasoning is what it would cost
-     * to hedge against the day the proxy honours these, and this comment is the cheaper hedge.
-     *
-     * The objection to answer before deleting this, because it is a fair one: rewriting a native
-     * representation by hand is a step backwards, and the label is a sentence the model has to
-     * interpret. Both true, and both cheaper than the alternative - a representation that arrives
-     * two times in thirty-two is not one the turn can be built on.
-     *
-     * When to delete it: re-run `count how often each block shape reaches the model`, and if the
-     * *streamed* thinking arm comes out at 100% across several runs on different days, this
-     * function has become dead weight and should go. Not on a single good run, and not on the arm
-     * merely scoring - it already scores sometimes, and an earlier draft of this comment said
-     * "if the thinking arm ever scores, delete this function", which read as an instruction to
-     * revert the fix on the strength of the very intermittency that motivates it.
-     */
-    private fun reasoning(raw: JsonObject): JsonObject? {
-        if (raw["type"]?.jsonPrimitive?.content != "thinking") return null
-        val thought = raw["thinking"]?.jsonPrimitive?.content?.trim().orEmpty()
-        if (thought.isEmpty()) return null
-        return buildJsonObject {
-            put("type", "text")
-            put("text", "${AgentPrompt.Label.EARLIER_THINKING}\n$thought")
-        }
+        /*
+         * Handed back exactly as it arrived, including a `thinking` block - which this proxy
+         * accepts and shows the model only sometimes. See `ThinkingRoundTripTest`: 2/40 plain and
+         * 7/20 streamed, against 40/40 for the same words in a `text` block.
+         *
+         * Rewriting it into a labelled text block was tried, measured, and withdrawn, and the
+         * reason is worth keeping because the fix looks obviously correct until you run it. The
+         * model reads its own replayed assistant turns to learn what an assistant turn looks like
+         * here - the same imitation that `assemble` guards against by unwrapping tool calls, where
+         * one envelope in round 2 was a double envelope by round 24. Given a text block containing
+         * 「以下是你刚才的思考」 followed by reasoning, it produced exactly that as an answer: the
+         * label, several paragraphs of English reasoning, a literal `</think>`, then the Chinese
+         * answer, all in one bubble in front of a non-technical user. Any label is still text in
+         * an assistant turn, and any text in an assistant turn is a pattern to copy, so rewording
+         * it does not help.
+         *
+         * If this is picked up again: the promising direction is the *user* turn, alongside the
+         * tool results, where nothing is a template for assistant output - and the thing to do
+         * first is find a backend that reproduces the leak, because the one this key usually
+         * draws does not, and a fix that cannot be seen to work is how this got shipped broken.
+         */
+        is LlmContent.Opaque -> c.raw
     }
 
     // ---- response -----------------------------------------------------------------------
