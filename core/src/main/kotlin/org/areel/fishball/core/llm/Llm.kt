@@ -130,9 +130,10 @@ sealed class LlmContent {
      *
      * "Kept exactly as it arrived" describes this side of the boundary, not the wire. Handing a
      * block back in the shape it came in is not the same as the model being shown it, and for
-     * `thinking` on this proxy the two came apart: it is accepted and stripped. The client
-     * rewrites that one on the way out - see `HydrogenClient.block`. Nothing above this line
-     * needs to know, which is the reason the rewrite lives down there.
+     * `thinking` on this proxy the two come apart: it is accepted, and read only sometimes -
+     * 7/20 streamed, against 20/20 for the same words as text. Rewriting it into a text block to
+     * close that gap was tried and withdrawn, because the model then copied the rewrite into its
+     * answers. See `HydrogenClient.block` and `ThinkingRoundTripTest`.
      */
     data class Opaque(val raw: JsonObject) : LlmContent()
 }

@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import org.areel.fishball.core.agent.Conversation
 import org.areel.fishball.core.copy.AgentPrompt
 import org.areel.fishball.core.llm.Effort
 import org.areel.fishball.core.llm.HydrogenClient
@@ -24,6 +25,9 @@ import org.areel.fishball.core.llm.LlmMessage
 import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
 import org.areel.fishball.core.llm.LlmTool
+import org.areel.fishball.core.memory.InMemoryStore
+import org.areel.fishball.core.search.SearxngGateway
+import org.areel.fishball.core.trust.loadBundledRegistry
 import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.URL
@@ -42,20 +46,32 @@ import kotlin.test.assertTrue
  * What it found. The block was on the wire the whole time - the socket capture shows
  * `{"type":"thinking","thinking":"..."}` sitting in the assistant turn of round two, exactly as
  * intended - and the proxy answered 200 without complaint. What it was not doing was reliably
- * reaching the model: a number planted in the reasoning comes back 2 times in 32 when it travels
- * as `thinking` and 32 times in 32 when the identical number travels as `text`. Not never, and
- * that distinction cost two rounds of review to get right - see the counting test for the shape
- * of the unreliability and for who can fix it. Every guess about *how* the block was malformed -
- * a missing `signature` above all - was answering the wrong question. See `HydrogenClient.block`.
+ * reaching the model: a number planted in the reasoning comes back 2 times in 40 when it travels
+ * as `thinking` and 40 times in 40 when the identical number travels as `text`. Not never, and
+ * that distinction cost two rounds of review to get right. Every guess about *how* the block was
+ * malformed - a missing `signature` above all - was answering the wrong question.
  *
- * A warning about measuring any of this. The obvious probe - build the arms as `LlmContent` and
- * push them through the client - stops working the moment the client is fixed, because then every
- * arm sends the same bytes and every arm passes. One was written that way, it produced a green
- * result that read as "there was never a bug", and it is gone. `count how often each block shape
- * reaches the model` builds its own request bytes for that reason. Keep it that way.
+ * What was done about it: nothing, in the end, and that is the most useful thing in this file.
+ * Rewriting the block into a labelled text block does close the gap, and it was shipped and
+ * withdrawn, because the model reads its own replayed assistant turns for the house format and
+ * began emitting one: the label, several paragraphs of English reasoning, a literal `</think>`
+ * and then the Chinese answer, in a single bubble in front of a non-technical user. Reasoning
+ * that arrives 7 times in 20 is a smaller problem than reasoning that arrives in the answer. The
+ * fix that remains is on the proxy - see the id shapes in the counting test.
+ *
+ * Two warnings about measuring any of this, both bought the hard way.
+ *
+ * A probe that builds its arms as `LlmContent` and pushes them through the client stops working
+ * the moment the client is changed, because then every arm sends the same bytes and every arm
+ * passes. One was written that way, it produced a green result that read as "there was never a
+ * bug", and it is gone. The counting tests build their own request bytes for that reason.
+ *
+ * And this key mostly draws one backend. Every leak trial here came back 0/10 on it while the
+ * leak was live on a device, so a clean run in this file is not evidence of a clean product -
+ * `idShape` is printed by both counting tests so a run can at least say which backend answered.
  *
  * The live tests are opt-in on `HYDROGEN_KEY` and pass silently without it, like [LiveSmokeTest].
- * `round two carries the reasoning as text` needs no key and is the one that guards the fix.
+ * `round two hands the assistant turn back unchanged` needs no key.
  */
 class ThinkingRoundTripTest {
 
@@ -74,6 +90,18 @@ class ThinkingRoundTripTest {
 
         /** Fewer, because by this point the plain arms have already separated cleanly. */
         const val STREAM_TRIALS = 5
+
+        /** Leakage is rare enough that a handful of trials would report zero and mean nothing. */
+        const val LEAK_TRIALS = 10
+
+        /**
+         * The label the withdrawn rewrite put in front of replayed reasoning.
+         *
+         * It lives here rather than in `Copy` because nothing ships it any more - it was removed
+         * from `AgentPrompt.Label` along with the rewrite. It is kept so the leak probe can still
+         * ask the question that killed the idea, and so anyone reviving it measures first.
+         */
+        const val WITHDRAWN_LABEL = "（以下是你刚才的思考，不是你对用户说过的话）"
     }
 
     // ---- what the proxy sends -------------------------------------------------------------
@@ -273,15 +301,20 @@ class ThinkingRoundTripTest {
     }
 
     /**
-     * The regression: round two must carry round one's reasoning somewhere the model reads.
+     * Round two hands the assistant turn back exactly as it arrived, thinking block included.
      *
-     * Asserted off the socket rather than off `result.raw`, because `raw` was right the whole
-     * time the bug existed - the block was in it, and in the request, and the model still never
-     * saw it. The only shape that counts is the one on the wire, and for this proxy that means a
-     * `text` block. A `thinking` block here would be the bug returning.
+     * This asserted the opposite for a while - that the block had been rewritten into text, to
+     * close the gap where the proxy shows the model its own reasoning only 7 times in 20. That
+     * rewrite is gone: the model read the rewritten turn as a template for its own output and
+     * answered with the label, its reasoning and a literal `</think>` in front of the user.
+     *
+     * So the assertion is back to the contract `LlmContent.Opaque` actually promises, and it is
+     * pointed the other way on purpose. If someone reintroduces a rewrite here, this fails and
+     * sends them to `count how often the replayed reasoning leaks into the answer` first, which
+     * is the measurement that was missing the first time.
      */
     @Test
-    fun `round two carries the reasoning as text`() {
+    fun `round two hands the assistant turn back unchanged`() {
         var second: JsonObject? = null
         capture(sseScript(withSignature = false), onRequest = { round, body ->
             if (round == 2) second = body
@@ -320,19 +353,15 @@ class ThinkingRoundTripTest {
         val blocks = assistant["content"]!!.jsonArray.map { it.jsonObject }
         val types = blocks.map { it["type"]?.jsonPrimitive?.content }
 
-        assertFalse(
+        assertTrue(
             types.contains("thinking"),
-            "a thinking block went back out; this proxy strips those. blocks=$types",
+            "the thinking block did not go back as itself. If it was rewritten into text, read " +
+                "`block()` first - that was tried and it leaked into the answer. blocks=$types",
         )
-        val carried = blocks.filter { it["type"]?.jsonPrimitive?.content == "text" }
-            .joinToString("\n") { it["text"]?.jsonPrimitive?.content.orEmpty() }
+        val thinking = blocks.first { it["type"]?.jsonPrimitive?.content == "thinking" }
         assertTrue(
-            carried.contains("先查权威来源"),
-            "round one's reasoning did not reach round two: $carried",
-        )
-        assertTrue(
-            carried.contains(AgentPrompt.Label.EARLIER_THINKING),
-            "the reasoning went back unlabelled, so it reads as something said to the user",
+            thinking["thinking"]?.jsonPrimitive?.content.orEmpty().contains("先查权威来源"),
+            "the reasoning was lost on the way back out: $thinking",
         )
         assertTrue(
             types.contains("tool_use"),
@@ -693,6 +722,195 @@ class ThinkingRoundTripTest {
             .firstOrNull { it["type"]?.jsonPrimitive?.content == "tool_use" }
             ?.get("input")?.jsonObject?.get(name)?.jsonPrimitive?.content
     }.getOrNull()
+
+    /**
+     * What the user actually reads, after a real turn.
+     *
+     * Every other test in this file looks at one call. This one runs [Conversation] end to end,
+     * because the thing being guarded against is not a malformed request - it is the model copying
+     * a shape out of its own replayed turns, which only a multi-round turn can produce.
+     *
+     * That failure mode is not hypothetical here. `assemble` already carries a scar from it: a
+     * tool call replayed in its envelope taught the model to wrap the next one, and one envelope
+     * in round 2 was a double envelope by round 24. Anything put into an assistant turn is a
+     * template as far as the model is concerned.
+     */
+    @Test
+    fun `a real turn does not leak reasoning into the answer`() {
+        val key = key ?: run {
+            println("skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val llm = HydrogenClient(apiKey = key)
+        runBlocking { llm.validate() }
+
+        for (question in listOf(
+            "珠峰顶上水的沸点是多少？",
+            "布洛芬和对乙酰氨基酚有什么区别？",
+        )) {
+            val conversation = Conversation(
+                llm = llm,
+                retrieval = llm,
+                search = SearxngGateway(baseUrl = "https://search.areel.org"),
+                registry = loadBundledRegistry(),
+                store = InMemoryStore(),
+            )
+            val reply = runBlocking { conversation.ask(question) }
+            println("---- $question ----")
+            println(reply.text.take(1200))
+
+            // Each of these has been seen in an answer bubble on a device, so they are named
+            // rather than covered by one loose regex - a failure should say which leak it was.
+            val leaks = listOf(
+                WITHDRAWN_LABEL,
+                "</think>",
+                "<think>",
+            ).filter { reply.text.contains(it) }
+            println("leaks -> ${leaks.ifEmpty { "none" }}")
+        }
+    }
+
+    /**
+     * How often a replayed reasoning block comes back out in the answer.
+     *
+     * The end-to-end test is the honest one but it costs a minute a turn and most of that is
+     * searching. This asks the same question for the price of one call: hand the model a thread
+     * whose assistant turn contains the labelled reasoning, take the tools away so it has to write
+     * prose, and see what it writes. That is exactly the position the closing round of a real turn
+     * is in, and the answer it produces there is the answer the user reads.
+     *
+     * Arms are the two candidate behaviours, so the number that comes out is the one the decision
+     * needs: how much leakage the rewrite causes over sending nothing at all.
+     */
+    @Test
+    fun `count how often the replayed reasoning leaks into the answer`() {
+        val key = key ?: run {
+            println("skipped: set HYDROGEN_KEY to run it")
+            return
+        }
+        val model = runBlocking { discover(key) } ?: return
+        val reasoning = "用户问珠峰上水的沸点。已经查到维基百科，71°C。现在把答案写出来。"
+
+        for (arm in listOf("labelled text (the rewrite)", "nothing (revert)", "user turn")) {
+            var leaked = 0
+            var shapes = mutableMapOf<String, Int>()
+            repeat(LEAK_TRIALS) {
+                val body = leakBody(model, arm, reasoning)
+                val reply = runCatching { post(key, body) }.getOrElse { "threw: ${it.message}" }
+                val text = replyText(reply)
+                val shape = idShape(replyField(reply, "id"))
+                shapes[shape] = (shapes[shape] ?: 0) + 1
+                val leak = listOf(
+                    WITHDRAWN_LABEL,
+                    "</think>",
+                    "<think>",
+                    // The reasoning itself surfacing verbatim counts even without a marker
+                    // around it - that is what the user reported reading.
+                    "现在把答案写出来",
+                ).any { text.contains(it) }
+                if (leak) {
+                    leaked++
+                    if (leaked == 1) println("  [$arm] first leak -> ${text.take(300)}")
+                }
+            }
+            println("arm $arm: leaked $leaked/$LEAK_TRIALS   ids=$shapes")
+        }
+    }
+
+    /** One closing-round request: no tools, so whatever comes back is what the user would read. */
+    private fun leakBody(model: String, arm: String, reasoning: String): JsonObject =
+        buildJsonObject {
+            put("model", model)
+            put("max_tokens", 2048)
+            put("temperature", 0.4)
+            putJsonObject("output_config") { put("effort", "max") }
+            put("system", "你是鱼丸。用中文回答用户的问题。")
+            putJsonArray("messages") {
+                add(
+                    buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("content") {
+                            add(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", "珠峰顶上水的沸点是多少？")
+                                },
+                            )
+                        }
+                    },
+                )
+                add(
+                    buildJsonObject {
+                        put("role", "assistant")
+                        putJsonArray("content") {
+                            if (arm == "labelled text (the rewrite)") {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "text")
+                                        put(
+                                            "text",
+                                            "${WITHDRAWN_LABEL}\n$reasoning",
+                                        )
+                                    },
+                                )
+                            }
+                            add(
+                                buildJsonObject {
+                                    put("type", "tool_use")
+                                    put("id", "call_leak_1")
+                                    put("name", "search")
+                                    putJsonObject("input") {
+                                        putJsonArray("queries") { add("珠峰 水的沸点") }
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+                add(
+                    buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("content") {
+                            add(
+                                buildJsonObject {
+                                    put("type", "tool_result")
+                                    put("tool_use_id", "call_leak_1")
+                                    put("content", "[1] 维基百科：珠峰顶气压约 34 kPa，水的沸点约 71°C。")
+                                },
+                            )
+                            // The third arm: same words, attributed to the turn that carries tool
+                            // results rather than to the assistant. Nothing here is a template for
+                            // assistant output, which is the whole point of trying it.
+                            if (arm == "user turn") {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "text")
+                                        put(
+                                            "text",
+                                            "${WITHDRAWN_LABEL}\n$reasoning",
+                                        )
+                                    },
+                                )
+                            }
+                            add(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", "现在回答用户的问题。")
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+        }
+
+    /** The concatenated `text` blocks of a reply - what the answer bubble would show. */
+    private fun replyText(reply: String): String = runCatching {
+        Json.parseToJsonElement(reply.substringAfter("\n")).jsonObject["content"]!!.jsonArray
+            .map { it.jsonObject }
+            .filter { it["type"]?.jsonPrimitive?.content == "text" }
+            .joinToString("\n") { it["text"]?.jsonPrimitive?.content.orEmpty() }
+    }.getOrDefault("")
 
     // ---- plumbing -------------------------------------------------------------------------
 
