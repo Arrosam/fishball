@@ -128,6 +128,53 @@ class MarkdownTest {
         assertTrue("![" in Markdown.render(img, body).text, "an image vanished without trace")
     }
 
+    /**
+     * A dose is not emphasis.
+     *
+     * The most dangerous thing this parser can do is quietly delete a character from a number.
+     * 「每天 2*500 mg」 has two asterisks in it and is not asking for italics; read as markup it
+     * becomes 「每天 2500 mg」, which is a different instruction to somebody holding a packet of
+     * pills. Nothing else in this file matters as much as this case.
+     */
+    @Test
+    fun `a dose keeps its asterisks`() {
+        val dose = "每天 2*500 mg，连吃 3*7 天。"
+        assertEquals(dose, Markdown.render(dose, body).text)
+    }
+
+    /**
+     * A URL is not emphasis either, and underscores are common in them.
+     *
+     * Same failure, quieter: an address that loses two underscores still looks like an address.
+     */
+    @Test
+    fun `an address keeps its underscores`() {
+        val line = "详见 https://www.nmpa.gov.cn/yaopin_zhuce_guanli.html 这一页。"
+        assertEquals(line, Markdown.render(line, body).text)
+    }
+
+    @Test
+    fun `a snake_case name keeps its underscores`() {
+        val line = "工具是 read_page 和 note_user 两个。"
+        assertEquals(line, Markdown.render(line, body).text)
+    }
+
+    /**
+     * Windows line endings.
+     *
+     * The lines are split on \n, so a \r rides along on the end of every one of them - and a
+     * heading, a rule and a table separator are all matched with `$`-anchored patterns that a
+     * trailing \r defeats. The result is markup that renders on one machine and not another.
+     */
+    @Test
+    fun `CRLF is handled like LF`() {
+        val crlf = Markdown.render("## 用药建议\r\n- 布洛芬\r\n> 世卫组织说", body).text
+        val lf = Markdown.render("## 用药建议\n- 布洛芬\n> 世卫组织说", body).text
+        assertEquals(lf, crlf, "a carriage return changed the rendering")
+        assertTrue("\r" !in crlf, "a carriage return reached the reader")
+        assertTrue("#" !in crlf && ">" !in crlf, "markup survived because of the \\r: $crlf")
+    }
+
     @Test
     fun `a checkpoint's own headings are not markdown, and pass through untouched`() {
         // The session bridge is written with 【】 precisely so it never demonstrates Markdown

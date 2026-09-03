@@ -48,7 +48,10 @@ object Markdown {
 
     /** Body size, so a heading is weight and space rather than scale. */
     fun render(text: String, body: TextUnit): AnnotatedString = buildAnnotatedString {
-        val lines = text.split('\n')
+        // Split on \n and a Windows line keeps its \r, which then defeats every $-anchored
+        // pattern below - a heading, a rule and a table separator would all render on one
+        // machine and not another.
+        val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         // Carried across lines, because three constructs are not decidable from one: a table
         // row needs the heading row above it, a fence needs to know it is open, and a
         // separator row needs to be recognised so it can be dropped.
@@ -174,7 +177,9 @@ object Markdown {
         while (i < text.length) {
             val rest = text.substring(i)
             val opener = INLINE.entries.firstOrNull { (mark, _) ->
-                rest.startsWith(mark) && rest.indexOf(mark, mark.length) > 0
+                rest.startsWith(mark) &&
+                    rest.indexOf(mark, mark.length) > 0 &&
+                    (mark.length > 1 || opensHere(text, i))
             }
             if (opener == null) {
                 append(text[i])
@@ -186,6 +191,28 @@ object Markdown {
             withStyle(style) { append(rest.substring(mark.length, close)) }
             i += close + mark.length
         }
+    }
+
+    /**
+     * Whether a one-character marker at [at] is emphasis or just a character in a word.
+     *
+     * This is the guard that keeps 「每天 2*500 mg」 from rendering as 「每天 2500 mg」. A single
+     * `*` or `_` between two ASCII alphanumerics is arithmetic, a file name, an address or an
+     * identifier - `read_page`, `yaopin_zhuce_guanli.html`, `3*7` - and reading it as emphasis
+     * deletes characters out of the middle of them. Out of a dose, that is a different
+     * instruction to somebody holding a packet of pills, which makes it the worst thing in this
+     * file and the reason the rule is here rather than in a comment saying it rarely happens.
+     *
+     * The test is ASCII deliberately, not [Char.isLetterOrDigit], which is true of 和 and every
+     * other CJK character - guarding on those would stop emphasis working in the language this
+     * app answers in. Numbers, URLs and identifiers are ASCII; the prose around them is not.
+     *
+     * Two-character markers skip this: `**` and `~~` do not appear inside words, and requiring
+     * a boundary would break 「是**孕晚期禁用**」 written without a space.
+     */
+    private fun opensHere(text: String, at: Int): Boolean {
+        val before = text.getOrNull(at - 1) ?: return true
+        return !(before in '0'..'9' || before in 'a'..'z' || before in 'A'..'Z')
     }
 
     private inline fun androidx.compose.ui.text.AnnotatedString.Builder.withHeading(
