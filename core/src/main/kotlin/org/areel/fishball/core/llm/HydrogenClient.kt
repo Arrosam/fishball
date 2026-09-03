@@ -308,6 +308,21 @@ class HydrogenClient(
 
     private val ceiling = Regex("""should be in \[\s*\d+\s*,\s*(\d+)\s*]""")
 
+    /**
+     * A service that will not take the cacheable shape.
+     *
+     * This proxy fronts several backends and they do not agree about anything, so a system
+     * block carrying a `cache_control` marker is offered rather than assumed. A 400 is a
+     * complaint about the shape of the request, and the marker is the newest thing in that
+     * shape, so it is the first thing given up - once, after which a second 400 is the real
+     * complaint and gets reported.
+     *
+     * Checked after [wrongModel] and [capped], which read the body for what they are looking
+     * for; this one only knows that something about the request was refused.
+     */
+    private fun uncacheable(request: LlmRequest, status: Int): Boolean =
+        request.cache && status == 400
+
     private fun wrongModel(request: LlmRequest, status: Int, body: String): Boolean {
         if (request.model == null) return false
         return status == 404 || status == 403 || (status == 400 && body.contains("model"))
@@ -346,6 +361,7 @@ class HydrogenClient(
         var wrongOverride = false
         var overLimit: LlmRequest? = null
         var thoughtless = false
+        var plainly = false
 
         try {
             http.preparePost("${baseUrl.trimEnd('/')}/v1/messages") {
@@ -357,6 +373,7 @@ class HydrogenClient(
                 if (!response.status.isSuccess()) {
                     val text = response.bodyAsText()
                     wrongOverride = wrongModel(request, response.status.value, text)
+                    plainly = uncacheable(request, response.status.value)
                     overLimit = capped(request, text)
                     thoughtless = cannotThink(request, text)
                     refusedModel = refused(response.status.value, text)
@@ -393,6 +410,7 @@ class HydrogenClient(
         }
         overLimit?.let { return complete(it, onDelta, recover) }
         if (thoughtless) return complete(request.copy(effort = null), onDelta, recover)
+        if (plainly) return complete(request.copy(cache = false), onDelta, recover)
         if (recover && refusedModel && repick()) {
             return complete(request, onDelta, recover = false)
         }
@@ -632,7 +650,35 @@ class HydrogenClient(
                 put("effort", it.wire)
             }
         }
-        put("system", request.system)
+        /*
+         * The prompt's stable head, marked so the service can keep it.
+         *
+         * Nothing was ever marked before this, and a prefix nobody marks is a prefix nobody
+         * caches: the user's own capture of a reply showed `cachedInputTokens: 0` and
+         * `cacheCreationInputTokens: 0` on a turn with four thousand tokens of prompt. Laying
+         * the standing instructions out in front of the question was the necessary half of the
+         * job and bought nothing on its own.
+         *
+         * One breakpoint, at the end of the system block. The prefix runs tools -> system ->
+         * messages, so this one marker covers every tool schema as well - and the schemas are
+         * five blocks of Chinese description, which is most of what a short turn sends.
+         *
+         * As an array of blocks rather than a bare string because that is the only shape a
+         * `cache_control` marker can be attached to.
+         */
+        if (request.cache) {
+            putJsonArray("system") {
+                add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", request.system)
+                        putJsonObject("cache_control") { put("type", "ephemeral") }
+                    },
+                )
+            }
+        } else {
+            put("system", request.system)
+        }
         putJsonArray("messages") {
             request.messages.forEach { add(message(it)) }
         }

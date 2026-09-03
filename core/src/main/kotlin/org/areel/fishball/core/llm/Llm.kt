@@ -56,6 +56,14 @@ data class LlmRequest(
      */
     val model: String? = null,
     /**
+     * Ask the service to keep the prefix of this request.
+     *
+     * On by default and turned off only by the client, once, when a service rejects the shape -
+     * see `HydrogenClient.uncacheable`. It is not a caller's decision: what is worth caching is
+     * a property of how the prompt is laid out, and that is this layer's business.
+     */
+    val cache: Boolean = true,
+    /**
      * How long to think before answering, when the model takes direction on it.
      *
      * Not a knob for its own sake. The model behind this proxy stopped thinking by default and
