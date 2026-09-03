@@ -61,7 +61,19 @@ class HttpPageReader(
             // goes and finds the same leaflet somewhere in HTML, which live it did.
             PageContent(url, failed = true, reason = "不是网页，是 $kind")
         } else {
-            val html = response.bodyAsText()
+            // Capped before anything looks at it.
+            //
+            // The URL is the model's, and it may have come off a link list on a page rather
+            // than out of a search result - so how big the response is, is decided by somebody
+            // else. Uncapped, a large document is decoded whole and then copied again by each
+            // of the substitutions in [readable], and every page read is held for the rest of
+            // the turn so the quote verifier has something to check against. On a phone that
+            // is how a followed link becomes an OutOfMemoryError.
+            //
+            // Truncated rather than refused: the front of a long article is the part that
+            // says what it is about, and [PAGE_WINDOW] on the far side was only ever showing
+            // the model a slice of this anyway.
+            val html = response.bodyAsText().take(MAX_PAGE_CHARS)
             PageContent(
                 url = url,
                 title = TITLE.find(html)?.groupValues?.get(1)?.let(::plain).orEmpty(),
@@ -108,10 +120,31 @@ class HttpPageReader(
         }.getOrNull()
     }
 
+    /**
+     * Entities out, characters in.
+     *
+     * The numeric forms are decoded rather than dropped. `&#20013;` and `&ldquo;` used to match
+     * one catch-all `&…;` pattern and be replaced with nothing, which took the characters out of
+     * the one string §25 promises a quotation is cut from character by character - and nothing
+     * failed, because the model and the verifier both read the damaged copy. The reader was
+     * simply shown a quote missing the source's own quotation marks.
+     *
+     * A named entity this does not know is left as it was written. Visible `&hellip;` is untidy;
+     * a silently shorter sentence is a different sentence.
+     */
     private fun plain(raw: String): String {
         var s = raw
         for ((from, to) in ENTITIES) s = s.replace(from, to)
-        s = AMPERSAND.replace(s) { "" }
+        s = NUMERIC.replace(s) { m ->
+            val hex = m.groupValues[1].isNotEmpty()
+            val code = m.groupValues[2].toIntOrNull(if (hex) 16 else 10)
+            // Out of range, or a surrogate half on its own, is left exactly as written.
+            if (code == null || code !in 1..0x10FFFF || code in 0xD800..0xDFFF) {
+                m.value
+            } else {
+                String(Character.toChars(code))
+            }
+        }
         return s.replace(SPACES, " ").replace(BLANK_LINES, "\n").trim()
     }
 
@@ -131,7 +164,19 @@ class HttpPageReader(
         val ANCHOR = Regex("<a\\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
         val SPACES = Regex("[ \\t\\u00a0]+")
         val BLANK_LINES = Regex("\\s*\\n\\s*(\\n\\s*)+")
-        val AMPERSAND = Regex("&[a-zA-Z#0-9]{1,8};")
+
+        /** `&#20013;` and `&#x4e2d;`, decoded. See [plain]. */
+        val NUMERIC = Regex("&#([xX]?)([0-9a-fA-F]{1,6});")
+
+        /**
+         * The most of a page that is read.
+         *
+         * A long article is a few tens of thousands of characters of prose; this is well past
+         * any of them and well short of what a phone cannot hold, and it bounds the copies the
+         * substitutions in [readable] make as well as the string itself. It is a ceiling on
+         * somebody else's server, not a view of how long a page should be.
+         */
+        const val MAX_PAGE_CHARS = 600_000
 
         /** What is worth running through a tag stripper. Everything else is bytes. */
         val READABLE = listOf("text/html", "application/xhtml", "text/plain")
@@ -140,6 +185,11 @@ class HttpPageReader(
             "&nbsp;" to " ", "&amp;" to "&", "&lt;" to "<", "&gt;" to ">",
             "&quot;" to "\"", "&#39;" to "'", "&apos;" to "'", "&mdash;" to "—",
             "&ndash;" to "–", "&hellip;" to "…", "&middot;" to "·",
+            // The curly quotes, because a CMS writes them this way and they are the marks a
+            // quotation is delimited by - the one punctuation whose loss changes what a
+            // quoted span looks like to the person checking it.
+            "&ldquo;" to "“", "&rdquo;" to "”",
+            "&lsquo;" to "‘", "&rsquo;" to "’",
         )
 
         fun defaultClient() = HttpClient(OkHttp) {
