@@ -286,7 +286,9 @@ fun Modifier.voiceWave(active: Boolean, level: () -> Float): Modifier = composed
             if (x < 0f) return@forEach
             // Grown from the middle, both ways, which is what makes a row of bars read as a
             // wave rather than as a bar chart.
-            val half = size.height * (QUIET + (1f - QUIET) * pulse.loudness) / 2f
+            // Scaled so an ordinary speaking voice fills the field rather than half of it.
+            val reach = (pulse.loudness / SPEAKING).coerceIn(0f, 1f)
+            val half = size.height * (QUIET + (1f - QUIET) * reach) / 2f
             drawRect(
                 color = Areel.Magenta.copy(alpha = (1f - pulse.travelled).coerceIn(0f, 1f)),
                 topLeft = Offset(x, mid - half),
@@ -315,6 +317,23 @@ private const val TRAVEL = 0.55f
  * invisible bars would say the microphone had stopped listening.
  */
 private const val QUIET = 0.16f
+
+/**
+ * The reading a normal speaking voice gives, and therefore the one that fills the field.
+ *
+ * The bars used to be drawn straight off the level, and the level is
+ * `sqrt(peak / 32767)` - so a phone held at talking distance, peaking at a fifth or so of full
+ * scale, reads about 0.45 and drew a bar a little over half the height of the block. Beside the
+ * magenta rule at the end of the same block, which is that block's full height, the wave looked
+ * like it was whispering.
+ *
+ * So this is the divisor rather than a multiplier on the output: it names the thing being
+ * measured. Louder than this clamps, which costs nothing - there is no room above the rule to
+ * grow into, and the dynamics worth seeing are the pauses and soft syllables below it.
+ *
+ * Raise it if the wave looks pinned at full height; lower it if it still looks timid.
+ */
+private const val SPEAKING = 0.45f
 
 /**
  * The mark. Every edge lands on 0/45/90 with the head into the upper-right, so it reads as a
