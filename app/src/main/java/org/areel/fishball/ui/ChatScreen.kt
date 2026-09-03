@@ -672,6 +672,23 @@ private fun Composer(
      * because a composer that keeps growing eventually is the screen.
      */
     var typedLines by remember { mutableIntStateOf(1) }
+
+    /*
+     * Sending, with the field put back to one line on the way out.
+     *
+     * [typedLines] is set from `onTextLayout`, which does not run until the emptied field has
+     * been measured again - a pass or two after the message is already in the list. So a
+     * question long enough to have grown the composer left it standing at three or four lines
+     * while the bubble was fading in above it, and the bar collapsed afterwards. Two things
+     * moving in sequence when one gesture caused both.
+     *
+     * Resetting it here puts the shrink in the same frame as the send, so the composer is
+     * already back to its resting height when the entrance starts.
+     */
+    fun submit() {
+        typedLines = 1
+        onSend()
+    }
     val shownLines = if (recording) 1 else typedLines.coerceIn(1, COMPOSER_MAX_LINES)
     val fieldHeight = lineBox * shownLines + 28.dp
 
@@ -886,7 +903,7 @@ private fun Composer(
                     textStyle = fieldStyle,
                     cursorBrush = SolidColor(Areel.Magenta),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    keyboardActions = KeyboardActions(onSend = { submit() }),
                     modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -973,7 +990,7 @@ private fun Composer(
                                 Feel.CLICKY,
                                 enabled = enabled,
                                 indication = null,
-                                onClick = onSend,
+                                onClick = ::submit,
                             )
                         },
                     ),
