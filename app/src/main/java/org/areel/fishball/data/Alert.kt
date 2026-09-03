@@ -80,16 +80,26 @@ class Alert(private val context: Context) {
             track.setNotificationMarkerPosition(frames)
             // Released when it finishes rather than left to the finalizer: an AudioTrack holds a
             // hardware buffer, and one per answer would run the device out of them.
+            //
+            // Released exactly once, from whichever of two paths gets there first. The marker
+            // sits on the very last frame, and a track that is pre-empted, underruns, or has
+            // its callback dropped never reaches it - so the callback alone was a leak with a
+            // comment on top explaining why there must not be one. The timer is the backstop
+            // and the flag is what keeps a double release from being a crash.
+            val released = java.util.concurrent.atomic.AtomicBoolean(false)
+            val letGo = {
+                if (released.compareAndSet(false, true)) runCatching { track.release() }
+            }
             track.setPlaybackPositionUpdateListener(
                 object : AudioTrack.OnPlaybackPositionUpdateListener {
-                    override fun onMarkerReached(t: AudioTrack?) {
-                        runCatching { t?.release() }
-                    }
+                    override fun onMarkerReached(t: AudioTrack?) = letGo()
 
                     override fun onPeriodicNotification(t: AudioTrack?) = Unit
                 },
             )
             track.play()
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ letGo() }, DURATION_MS + RELEASE_GRACE_MS)
         }
     }
 
@@ -169,6 +179,14 @@ class Alert(private val context: Context) {
          * a half, which is where it stops sounding like a UI beep and starts sounding wet.
          */
         private const val DURATION_MS = 140
+
+        /**
+         * How long after the sound should have finished the buffer is taken back anyway.
+         *
+         * Long enough that it never races a track that is simply playing late, short enough
+         * that a phone answering several questions does not stack them up. See [bubble].
+         */
+        private const val RELEASE_GRACE_MS = 1_000L
         private const val FROM_HZ = 420.0
         private const val TO_HZ = 1_150.0
         private const val DECAY = 5.5
