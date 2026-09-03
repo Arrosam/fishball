@@ -422,6 +422,17 @@ class Conversation(
                     Tools.READ -> openPage(call, seen, progress)
                     Tools.HISTORY -> readLog(call)
                     Tools.QUOTE -> checkQuote(call, seen, verified)
+                    // Reached only when `answer` came back with nothing in it - a full one
+                    // returns above. Told what was wrong with the call rather than that the
+                    // tool does not exist, which is what the `else` used to say about a tool
+                    // offered in the same request: see [AgentPrompt.badCall] for what
+                    // unactionable rejection feedback costs in rounds.
+                    Tools.ANSWER -> LlmContent.ToolResult(
+                        call.id,
+                        AgentPrompt.badCall(Tools.ANSWER, "{\"text\": \"给他看的答案\"}", call.input.toString()),
+                        isError = true,
+                    )
+
                     else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
                 }
             }
