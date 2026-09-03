@@ -6,7 +6,11 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.util.Base64
-import android.media.ExifInterface
+// AndroidX, not android.media. The platform class reads orientation out of an InputStream for
+// JPEG only, so a camera writing HEIC - which recent Android defaults to - answers
+// ORIENTATION_NORMAL for a picture that is on its side, and the label goes to the model
+// sideways. This one parses HEIC, WebP and the raw formats too.
+import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.areel.fishball.core.llm.LlmContent
