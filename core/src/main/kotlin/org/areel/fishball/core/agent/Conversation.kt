@@ -797,7 +797,17 @@ class Conversation(
         return Remembered(
             world = narrowAnswers(question, world),
             // Already scored, against the terms it was looked up by. See [PREFERENCE_FLOOR].
-            personal = about.filter { it.similarity >= PREFERENCE_FLOOR }.take(KEPT_MEMORIES),
+            //
+            // §20 — and it has to still be true. A cached answer carries `fresh` and the
+            // narrowing pass reads it; a preference carried nothing, so a six-month
+            // 在吃布洛芬 recorded eight months ago cleared the cosine floor and was handed over
+            // as present tense with no age on it, in front of a question about what that drug
+            // interacts with. Something with a lifetime that has run out is not known any more.
+            // A permanent one - an allergy, a chronic condition - is always fresh and is never
+            // what this drops.
+            personal = about
+                .filter { it.similarity >= PREFERENCE_FLOOR && it.fact.isFresh(at) }
+                .take(KEPT_MEMORIES),
         )
     }
 
