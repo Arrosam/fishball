@@ -973,7 +973,7 @@ class Conversation(
         // clear anything they can see, and the log survives it untouched.
         if (session == null) session = store.loadSession()
         val sofar = session?.let { store.turnsInSession(it.id) }.orEmpty()
-        val size = estimateTokens(sofar.joinToString("\n") { it.text })
+        val size = sentSize(sofar)
 
         when (
             val decision =
@@ -1000,6 +1000,20 @@ class Conversation(
     }
 
     /**
+     * What a session actually costs to replay, which is not what was said in it.
+     *
+     * §8's threshold has to be measured against what [priorTurns] puts on the wire, and since
+     * the reasoning started riding along with each assistant turn that is mostly not the text.
+     * Measured in this file's own notes at over four thousand characters of thinking against a
+     * few hundred of answer, so sizing on `text` alone undercounted the prompt several times
+     * over: the rollover never fired, [compact] always returned false, and a conversation ran
+     * past the window it was being kept inside.
+     */
+    private fun sentSize(turns: List<ConversationTurn>): Int = estimateTokens(
+        turns.joinToString("\n") { it.text + "\n" + it.reasoning },
+    )
+
+    /**
      * Fold the conversation so far into one paragraph and start again from it.
      *
      * Called when the model changes, as well as on the §8 rollover: a different model has not
@@ -1021,7 +1035,7 @@ class Conversation(
         // Switching model twice in a row used to roll a fresh empty session each time and
         // announce a compaction that had not happened.
         if (sofar.isEmpty()) return false
-        if (estimateTokens(sofar.joinToString("\n") { it.text }) < SESSION_COMPACT_TOKENS) {
+        if (sentSize(sofar) < SESSION_COMPACT_TOKENS) {
             return false
         }
 
