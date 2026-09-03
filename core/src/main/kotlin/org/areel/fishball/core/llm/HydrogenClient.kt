@@ -492,8 +492,16 @@ class HydrogenClient(
                         // and "streaming" would mean watching the model think and nothing else.
                         // Only the growing tail of the `text` argument is forwarded; the rest
                         // of the object is structure the user has no business seeing.
-                        val grown = block.streamedText()
-                        if (grown.isNotEmpty()) onDelta(LlmDelta.Text(grown))
+                        //
+                        // And only that tool's. `streamedText` looks for a field called `text`,
+                        // and `quote` has one too - so every quotation the model proposed was
+                        // streamed into the answer slot, including the ones the verifier was
+                        // about to reject, and the placeholder then showed them instead of the
+                        // reasoning for the rest of the turn.
+                        if (block.name == ANSWER_TOOL) {
+                            val grown = block.streamedText()
+                            if (grown.isNotEmpty()) onDelta(LlmDelta.Text(grown))
+                        }
                     }
                 }
             }
@@ -816,6 +824,15 @@ class HydrogenClient(
 
         /** Names what a request is for, so a proxy log can tell five similar calls apart. */
         const val CALL_HEADER = "X-FishBall-Call"
+
+        /**
+         * The one tool whose argument is the reply, and so the only one worth streaming.
+         *
+         * Spelled here rather than taken from `agent.Tools`, which sits above this layer and
+         * would be a cycle. If the tool is ever renamed, streaming stops rather than
+         * misbehaving - which is the failure that shows up in a test.
+         */
+        private const val ANSWER_TOOL = "answer"
 
         /** What a tool input gets wrapped in when it gets wrapped. See `unwrap`. */
         private val ENVELOPES = setOf("arguments", "input", "parameters", "args")
