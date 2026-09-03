@@ -1,6 +1,7 @@
 package org.areel.fishball.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.text.selection.SelectionContainer
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
@@ -701,7 +702,18 @@ fun AssistantBubble(
  * would not.
  */
 @Composable
-fun UserBubble(text: String, modifier: Modifier = Modifier) {
+fun UserBubble(
+    text: String,
+    modifier: Modifier = Modifier,
+    /**
+     * Pictures asked with this question, already decoded by the caller.
+     *
+     * Above the words rather than below, because that is the order it happened in: somebody
+     * holds a box up and then says "can I take this".
+     */
+    images: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
+    onImage: (Int) -> Unit = {},
+) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         // .userwrap.shell - width:86%; padding:12px 0 12px 14px. Fixed, not content-hugging:
         // it was tried the other way, and a rule that slides left to meet a short question
@@ -720,8 +732,36 @@ fun UserBubble(text: String, modifier: Modifier = Modifier) {
                     .userRule()
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
             ) {
-                SelectionContainer {
-                    Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+                Column {
+                    if (images.isNotEmpty()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(bottom = if (text.isBlank()) 0.dp else 8.dp),
+                        ) {
+                            images.forEachIndexed { i, bitmap ->
+                                Image(
+                                    bitmap = bitmap,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(THUMB)
+                                        // Square, like everything else here. A photograph is
+                                        // the one thing in this app with no chamfer, because a
+                                        // cut corner on a picture reads as a rendering fault.
+                                        .pressable { onImage(i) },
+                                )
+                            }
+                        }
+                    }
+                    if (text.isNotBlank()) {
+                        SelectionContainer {
+                            Text(
+                                text,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Areel.Ink,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1276,6 +1316,9 @@ fun EmptyThread(modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** Big enough to recognise the photograph, small enough that three fit across the bubble. */
+private val THUMB = 96.dp
 
 private val MARK = 104.dp
 private val MARK_NUDGE = MARK * (1.5f / 24f)

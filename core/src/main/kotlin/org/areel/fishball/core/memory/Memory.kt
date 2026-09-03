@@ -164,6 +164,14 @@ data class ConversationTurn(
      * shown to anybody: §9 keeps what was said, and this is how it was worked out.
      */
     val reasoning: String = "",
+    /**
+     * The pictures that were part of this turn, as whatever the app calls them.
+     *
+     * Opaque strings. §9 keeps what was said, and a question asked by holding up a photograph
+     * is not fully kept by keeping the sentence beside it - "这个能吃吗" recorded on its own is
+     * a record of nothing.
+     */
+    val images: List<String> = emptyList(),
 )
 
 /** A remembered fact about the user, and how well it matched what was being looked for. */

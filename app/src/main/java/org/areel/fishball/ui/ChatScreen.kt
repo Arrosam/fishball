@@ -314,11 +314,24 @@ fun ChatScreen(
      */
     var menuOpen by remember { mutableStateOf(false) }
 
+    /**
+     * A picture from the log, opened full-screen.
+     *
+     * Decoded on demand and held one at a time. A thread of thirty messages is thirty
+     * photographs, and holding them all decoded to serve the one somebody tapped would cost
+     * more memory than the whole conversation.
+     */
+    var viewing by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
     fun send(text: String) {
         // Whatever was attached rides this message and only this one - typed or spoken, the
         // picture goes with the next thing said and is then let go of, so it cannot silently
         // follow the conversation into a question it had nothing to do with.
-        val images = attach.pending.map { it.content }
+        // Kept on the way past, so the name travels with the picture it belongs to rather
+        // than in a second list that could fall out of step with it.
+        val images = attach.pending.map { item ->
+            item.content.copy(handle = vm.backend.attachments.keep(item.content))
+        }
         attach.clear()
         attach.close()
         vm.send(text, images)
@@ -385,7 +398,18 @@ fun ChatScreen(
                         if (note != null) {
                             SearchNote(note)
                         } else if (message.fromUser) {
-                            UserBubble(message.text)
+                            UserBubble(
+                                text = message.text,
+                                images = remember(message.images) {
+                                    message.images.mapNotNull {
+                                        vm.backend.attachments.recall(it)?.asImageBitmap()
+                                    }
+                                },
+                                onImage = { i ->
+                                    viewing = message.images.getOrNull(i)
+                                        ?.let { vm.backend.attachments.recall(it) }
+                                },
+                            )
                         } else {
                             AssistantBubble(
                                 text = message.text,
@@ -550,7 +574,10 @@ fun ChatScreen(
     }
 
     // Over everything, including the composer that raised it.
-    AttachViewer(attach)
+    AttachViewer(attach, viewing) {
+        viewing = null
+        attach.viewing = null
+    }
 }
 
 /**
@@ -1490,10 +1517,12 @@ private fun AttachedThumb(item: Attachment, onOpen: () -> Unit, onRemove: () -> 
  * a control bar would be three affordances for one action.
  */
 @Composable
-private fun AttachViewer(attach: AttachState) {
-    val item = attach.viewing ?: return
+private fun AttachViewer(attach: AttachState, kept: android.graphics.Bitmap?, onClose: () -> Unit) {
+    // Either the picture being attached right now, or one recalled out of the log. One viewer
+    // for both, because it is the same thing to look at and the same gesture to dismiss.
+    val shown = kept?.asImageBitmap() ?: attach.viewing?.thumb?.asImageBitmap() ?: return
     Dialog(
-        onDismissRequest = { attach.viewing = null },
+        onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(
@@ -1503,17 +1532,16 @@ private fun AttachViewer(attach: AttachState) {
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                ) { attach.viewing = null },
+                    onClick = onClose,
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            item.thumb?.let {
-                Image(
-                    bitmap = it.asImageBitmap(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                )
-            }
+            Image(
+                bitmap = shown,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+            )
         }
     }
 }

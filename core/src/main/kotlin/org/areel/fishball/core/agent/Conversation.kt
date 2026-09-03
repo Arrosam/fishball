@@ -157,7 +157,10 @@ class Conversation(
         rollSession(at)
 
         store.appendTurn(
-            ConversationTurn(store.nextId(), session!!.id, at, Speaker.USER, userText),
+            ConversationTurn(
+                store.nextId(), session!!.id, at, Speaker.USER, userText,
+                images = images.mapNotNull { it.handle },
+            ),
         )
 
         // §9 — before anything else, and without waiting for it. What someone says about

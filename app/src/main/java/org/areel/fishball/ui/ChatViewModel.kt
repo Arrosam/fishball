@@ -54,6 +54,13 @@ data class ChatMessage(
      * as long as it is of any use.
      */
     val searchNote: String? = null,
+    /**
+     * Pictures asked with this question, as the names [Attachments] kept them under.
+     *
+     * Names rather than bitmaps: a thread of thirty messages would otherwise hold thirty
+     * decoded photographs in memory for the sake of the two that are on screen.
+     */
+    val images: List<String> = emptyList(),
 )
 
 class ChatViewModel(
@@ -101,7 +108,11 @@ class ChatViewModel(
         val question = text.trim()
         if (question.isEmpty() || busy) return
 
-        messages += ChatMessage(fromUser = true, text = question)
+        messages += ChatMessage(
+            fromUser = true,
+            text = question,
+            images = images.mapNotNull { it.handle },
+        )
         busy = true
         narration.clear()
         thinking = ""
@@ -250,6 +261,7 @@ private fun Reply.toMessage() = ChatMessage(
 private fun ConversationTurn.toMessage() = ChatMessage(
     fromUser = speaker == Speaker.USER,
     text = text,
+    images = images,
     sources = sources.map {
         Source(
             name = it.displayName,

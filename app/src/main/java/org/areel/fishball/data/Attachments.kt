@@ -79,6 +79,43 @@ class Attachments(private val context: Context) {
         }.getOrNull()
     }
 
+    /**
+     * Keep this picture, so the question it was asked with still has it tomorrow.
+     *
+     * The bytes are the shrunk JPEG that was sent to the model, not the original: what the log
+     * should hold is what the question actually carried, and a twelve-megapixel original would
+     * be a hundred times the size for a picture nobody will ever view larger than a phone.
+     *
+     * Beside the log rather than inside it. `memory.json` is rewritten in full after every
+     * turn, so a photograph base64'd into it would be re-serialised and re-written on every
+     * message for the life of the conversation.
+     */
+    fun keep(image: LlmContent.Image): String? = runCatching {
+        val dir = File(context.filesDir, PICTURES).apply { mkdirs() }
+        // Named by when it was kept plus a counter, because two pictures on one message arrive
+        // in the same millisecond and the second would otherwise overwrite the first.
+        val name = "pic-${System.currentTimeMillis()}-${kept++}.jpg"
+        File(dir, name).writeBytes(Base64.decode(image.base64, Base64.NO_WRAP))
+        name
+    }.getOrNull()
+
+    /** A kept picture, decoded, or null if it has been cleared out from under the log. */
+    fun recall(name: String): Bitmap? = runCatching {
+        BitmapFactory.decodeFile(File(File(context.filesDir, PICTURES), name).path)
+    }.getOrNull()
+
+    /**
+     * Forget every kept picture.
+     *
+     * Called when the conversation log is cleared, because a photograph is the most personal
+     * thing this app stores and leaving the files behind would make 清空会话 a lie.
+     */
+    fun forgetAll() {
+        runCatching { File(context.filesDir, PICTURES).deleteRecursively() }
+    }
+
+    private var kept = 0
+
     /** Somewhere for the camera to write to, handed out through the same provider updates uses. */
     fun cameraTarget(): Pair<File, Uri> {
         val dir = File(context.cacheDir, "shots").apply { mkdirs() }
@@ -142,6 +179,9 @@ class Attachments(private val context: Context) {
     }
 
     private companion object {
+        /** Under `filesDir`, so it is private to the app and goes when the app does. */
+        const val PICTURES = "pictures"
+
         /** Long edge. Enough to read a label off a box, and a fraction of what a camera writes. */
         const val MAX_EDGE = 1280
         const val QUALITY = 82

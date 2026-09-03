@@ -115,7 +115,19 @@ sealed class LlmContent {
      * base64: whoever picked the image owns reading and shrinking it, and this layer only has
      * to know the media type to declare.
      */
-    data class Image(val mediaType: String, val base64: String) : LlmContent()
+    data class Image(
+        val mediaType: String,
+        val base64: String,
+        /**
+         * Where the app put this picture, if it kept it.
+         *
+         * Opaque here and never sent on the wire: `:core` has no filesystem and no business
+         * knowing what the string means. It rides along so the turn that is written to the log
+         * can record which pictures were part of it, without a second list running in parallel
+         * to this one and able to fall out of step with it.
+         */
+        val handle: String? = null,
+    ) : LlmContent()
 
     /** The model asking for a tool to be run. */
     data class ToolUse(val id: String, val name: String, val input: JsonObject) : LlmContent()

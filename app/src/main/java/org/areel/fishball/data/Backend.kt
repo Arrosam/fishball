@@ -188,6 +188,9 @@ class Backend private constructor(
      */
     fun clearHistory() {
         store.clearTurns()
+        // The pictures too. They are only reachable through the turns that name them, so
+        // clearing the log without them would leave files nothing can ever open again.
+        attachments.forgetAll()
         restore()
     }
 

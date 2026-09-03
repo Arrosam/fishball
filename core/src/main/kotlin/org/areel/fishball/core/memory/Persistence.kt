@@ -80,6 +80,9 @@ data class TurnDto(
     // Same reason, one version later: a log written before reasoning was kept still reads,
     // and its turns simply carry none.
     val reasoning: String = "",
+    // And the same again for pictures. Names only - the files live beside this one, because a
+    // photograph base64'd into the log would be rewritten to disk on every single turn.
+    val images: List<String> = emptyList(),
 )
 
 @Serializable
@@ -238,6 +241,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
     id, sessionId, at, speaker.name, text, shape?.name,
     sources.map { CitedSourceDto(it.url, it.displayName, it.explanation, it.tier.name, it.quote) },
     reasoning,
+    images,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -248,6 +252,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     text = text,
     shape = shape?.let { enumOrNull<AnswerShape>(it) },
     reasoning = reasoning,
+    images = images,
     sources = sources.map {
         CitedSource(
             url = it.url,
