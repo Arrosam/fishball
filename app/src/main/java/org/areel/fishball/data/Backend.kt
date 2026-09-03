@@ -64,6 +64,19 @@ class Backend private constructor(
     /** The microphone, and the one upload it feeds. */
     val voice by lazy { Voice(context) }
 
+    /**
+     * Saying the answer has landed. Off until somebody turns it on.
+     *
+     * Default off because the app has never made a sound before, and a phone that starts
+     * chiming at somebody who did not ask it to is a worse first impression than one that is
+     * quiet until told otherwise.
+     */
+    var alerting: Boolean
+        get() = prefs().getBoolean(KEY_ALERT, false)
+        set(on) { prefs().edit().putBoolean(KEY_ALERT, on).apply() }
+
+    val alert by lazy { Alert(context) }
+
     /** Pictures, on their way from the gallery or the camera to the model. */
     val attachments by lazy { Attachments(context) }
 
@@ -210,6 +223,7 @@ class Backend private constructor(
         private const val PREFS = "fishball"
         private const val KEY_API = "api_key"
         private const val KEY_MODEL = "model"
+        private const val KEY_ALERT = "alert_on_answer"
 
         fun create(context: Context): Backend {
             val app = context.applicationContext

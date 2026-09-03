@@ -57,6 +57,13 @@
     <string name="send">发送</string>
     <!-- The plate while a turn or a transcription is running. Tapping it calls the work off. -->
     <string name="stop_turn">别查了</string>
+    <!-- The notification posted when an answer lands and nobody is watching for it. -->
+    <string name="notify_title">鱼丸查好了</string>
+    <string name="notify_channel">查好了通知</string>
+    <string name="notify_channel_why">agent 把答案写完的时候提醒你一声。</string>
+    <!-- Settings: the row that turns the above, and the sound, on and off. -->
+    <string name="notify_setting">查好了提醒我</string>
+    <string name="notify_setting_why">答案写完的时候响一声。App 不在前台的话，再发一条通知。</string>
 
     <!--
       Attaching a picture. Two ways in, named for what the person does rather than for where

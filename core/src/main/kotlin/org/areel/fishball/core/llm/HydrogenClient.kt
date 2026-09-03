@@ -430,6 +430,20 @@ class HydrogenClient(
          * log, which is the only place it can be seen at all.
          */
         if (blocks.isEmpty()) {
+            /*
+             * Not retried, and that is deliberate.
+             *
+             * A retry was added here to test whether the cache marker provokes this, and the
+             * answer was no - dropping it rescued nothing. Then the real cause turned up: the
+             * empty streams were this proxy swallowing *rate-limit refusals*, produced by the
+             * live test suite being run three times in a row. Retrying doubles the request rate
+             * at precisely the moment the account is already over its limit, which is the worst
+             * possible response.
+             *
+             * Worth knowing for the proxy side: a 429 arriving here as HTTP 200 with no content
+             * is why this reads as 「这会儿连不上」 rather than "slow down". The app cannot tell
+             * the two apart, because the wire does not.
+             */
             return LlmResult.Failed(
                 "the service returned an empty stream - a refusal it did not report",
                 retryable = true,

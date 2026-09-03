@@ -142,6 +142,9 @@ private fun FishBallApp() {
 
     val compacted = stringResource(R.string.session_compacted)
     val stopped = stringResource(R.string.turn_stopped)
+    // Read once out of prefs. The switch owns it from there and writes through on each change,
+    // so the row redraws without a round trip to disk for every recomposition.
+    var alerting by remember { mutableStateOf(backend.alerting) }
     val vm: ChatViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -149,6 +152,11 @@ private fun FishBallApp() {
                 ChatViewModel(backend, compacted, stopped) as T
         },
     )
+
+    // Whether the answer will be seen as it lands, which decides if it is also worth a
+    // notification. Both edges, because ON_STOP is what "they put the phone down" looks like.
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { vm.watching = true }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.watching = false }
 
     // System back leaves whichever screen is open rather than the app — the user has no concept
     // of a screen stack, so "back" has to mean the obvious thing.
@@ -264,6 +272,11 @@ private fun FishBallApp() {
                         }
                         settingsBusy = false
                     }
+                },
+                alerting = alerting,
+                onAlertingChange = {
+                    alerting = it
+                    backend.alerting = it
                 },
                 onBack = { screen = Screen.THREAD },
             )

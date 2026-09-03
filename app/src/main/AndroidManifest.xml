@@ -19,6 +19,13 @@
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+      Telling somebody the answer is ready once they have stopped watching for it. A turn is
+      allowed to run a long time now, which is exactly when the phone gets put down. Asked for
+      from Settings, next to the switch that turns it on, rather than on launch.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

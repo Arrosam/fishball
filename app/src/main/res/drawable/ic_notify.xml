@@ -1,0 +1,18 @@
+<!--
+  The mark, flattened to one colour and one path.
+
+  A notification icon is masked to its alpha channel by the system, so the magenta eye and the
+  two-tone body of FishMark cannot survive here - anything not transparent comes out white.
+  This is the same fish with the eye punched through, which is the only way to keep it at 24dp.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7.4,16.6 L7.4,9.9 L11.3,5.6 L18.4,5.6 L18.4,12.7 L14.1,16.6 Z M7.4,16.6 L2.6,21.4 L7.4,21.4 Z M14.6,7.4 L16.6,7.4 L16.6,9.4 L14.6,9.4 Z"
+        android:fillType="evenOdd" />
+</vector>

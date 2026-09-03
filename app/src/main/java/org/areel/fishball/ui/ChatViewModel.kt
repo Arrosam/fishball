@@ -88,6 +88,21 @@ class ChatViewModel(
         private set
 
     /**
+     * Whether the conversation is actually in front of somebody.
+     *
+     * Set from the activity's lifecycle. A notification posted while they are watching the
+     * answer arrive is a notification about something they can already see, and the sound has
+     * that moment covered.
+     */
+    var watching: Boolean = true
+        set(value) {
+            field = value
+            // Coming back to the thread answers the notification, so it should not still be
+            // sitting in the shade.
+            if (value) backend.alert.clear()
+        }
+
+    /**
      * The turn in flight, so it can be called off.
      *
      * Held rather than launched and forgotten. A turn is now allowed to run for as long as it
@@ -154,6 +169,21 @@ class ChatViewModel(
                 reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
                 messages += reply.toMessage()
                     .copy(steps = narration.toList(), thinking = thinking)
+                /*
+                 * Only for an answer, and only if they asked to be told.
+                 *
+                 * `detail` is set exactly when the turn failed, so it is the honest test: a
+                 * notification headed 「鱼丸查好了」 that opens onto 「这会儿连不上」 is a small
+                 * lie told to somebody who walked away trusting it. They find out when they come
+                 * back, which is no worse than never having been promised anything.
+                 *
+                 * A stopped turn is not news either - they stopped it - and it leaves through
+                 * the cancellation path without reaching here at all.
+                 */
+                if (backend.alerting && reply.detail == null) {
+                    backend.alert.bubble()
+                    if (!watching) backend.alert.answered(reply.text)
+                }
             } catch (stopped: CancellationException) {
                 // Said out loud, because the alternative is a question sitting in the thread
                 // with nothing under it and no way to tell a stopped turn from a lost one.

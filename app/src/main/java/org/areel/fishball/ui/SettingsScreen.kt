@@ -1,5 +1,12 @@
 package org.areel.fishball.ui
 
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import org.areel.fishball.data.Alert
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -76,6 +83,9 @@ fun SettingsScreen(
     onModeChange: (Mode) -> Unit,
     onKeyChange: (String) -> Unit,
     onClearHistory: () -> Unit,
+    /** Whether an answer landing should say so. Read once; the switch owns it from there. */
+    alerting: Boolean,
+    onAlertingChange: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     var editingKey by remember { mutableStateOf(false) }
@@ -215,6 +225,63 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f),
                         ) { editingKey = false; draft = "" }
                     }
+                }
+
+                Spacer(Modifier.height(28.dp))
+                SettingLabel(stringResource(R.string.notify_setting))
+
+                /*
+                 * Asked for here, at the switch, rather than on launch.
+                 *
+                 * The permission is only meaningful once somebody has said they want to be
+                 * told something, and a notification prompt on first open - before the app has
+                 * anything to say - is a request with no visible reason for it. Same argument
+                 * the microphone is asked for under.
+                 *
+                 * A refusal does not turn the switch back off: the sound still works without
+                 * the permission, and silently undoing what somebody just chose is worse than
+                 * doing a little less than they asked.
+                 */
+                val askNotify = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { }
+                val context = LocalContext.current
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassSurface(small = true)
+                        .pressable(Feel.TOGGLE) {
+                            val on = !alerting
+                            onAlertingChange(on)
+                            if (on &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Alert.PERMISSION) !=
+                                PackageManager.PERMISSION_GRANTED
+                            ) {
+                                askNotify.launch(Alert.PERMISSION)
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.notify_setting_why),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink40,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
+                    )
+                    // A square that fills, not a pill that slides. Every other state in this
+                    // app is shown by whether a plate is inked or empty.
+                    Box(
+                        Modifier
+                            .size(22.dp)
+                            .background(
+                                if (alerting) Areel.Magenta else Areel.Paper,
+                                RectangleShape,
+                            )
+                            .border(1.dp, if (alerting) Areel.Magenta else Areel.Ink20),
+                    )
                 }
 
                 Spacer(Modifier.height(28.dp))
