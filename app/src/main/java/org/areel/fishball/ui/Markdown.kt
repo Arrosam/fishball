@@ -81,7 +81,15 @@ object Markdown {
                 val cells = cellsOf(raw)
                 if (headings.isEmpty()) {
                     headings = cells
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(cells.joinToString("、")) }
+                    // Through [inline] like every data cell below. A model that writes a table
+                    // usually bolds its heading row, and appending it raw was the one place in
+                    // here that showed the reader `**药名**`.
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        cells.forEachIndexed { i, cell ->
+                            if (i > 0) append('、')
+                            inline(cell)
+                        }
+                    }
                 } else {
                     row(cells, headings)
                 }
@@ -175,11 +183,10 @@ object Markdown {
         val text = LINK.replace(line) { it.groupValues[1] }
         var i = 0
         while (i < text.length) {
-            val rest = text.substring(i)
+            // Indexed rather than re-sliced. `text.substring(i)` once per character copies the
+            // rest of the answer per character of it, and an answer is a few thousand.
             val opener = INLINE.entries.firstOrNull { (mark, _) ->
-                rest.startsWith(mark) &&
-                    rest.indexOf(mark, mark.length) > 0 &&
-                    (mark.length > 1 || opensHere(text, i))
+                opensAt(text, i, mark) && closerFrom(text, i, mark) >= 0
             }
             if (opener == null) {
                 append(text[i])
@@ -187,10 +194,65 @@ object Markdown {
                 continue
             }
             val (mark, style) = opener
-            val close = rest.indexOf(mark, mark.length)
-            withStyle(style) { append(rest.substring(mark.length, close)) }
-            i += close + mark.length
+            val close = closerFrom(text, i, mark)
+            withStyle(style) { append(text, i + mark.length, close) }
+            i = close + mark.length
         }
+    }
+
+    /**
+     * Whether [mark] opens an emphasis span at [at].
+     *
+     * Two things beyond the characters lining up. A one-character marker has to sit on a word
+     * boundary — see [opensHere]. And no marker may be followed by a space: 「体重 * 15」 is a
+     * multiplication sign with room around it, not the start of an italic, and reading it as
+     * one takes the sign out of a dose. A marker at the very end of the line opens nothing.
+     */
+    private fun opensAt(text: String, at: Int, mark: String): Boolean {
+        if (!text.startsWith(mark, at)) return false
+        val after = text.getOrNull(at + mark.length) ?: return false
+        if (after.isWhitespace()) return false
+        return mark.length > 1 || opensHere(text, at)
+    }
+
+    /**
+     * Where the span opened by [mark] at [at] closes, or -1 if nothing here closes it.
+     *
+     * Candidates are walked rather than taken. The first occurrence of the marker is often not
+     * a closer at all, and abandoning on it would stop `_a_b_` matching anything; skipping it
+     * finds the one that does.
+     *
+     * A candidate has to leave something between the two markers. A zero-length span is never
+     * emphasis, and the case that matters is an unclosed `**` at the start of a line: the pair's
+     * own second asterisk sits one character away, and closing on it made both of them vanish
+     * with nothing to show the model had written anything there.
+     *
+     * And it has to end a word rather than sit inside one — see [closesHere].
+     */
+    private fun closerFrom(text: String, at: Int, mark: String): Int {
+        // One past the opener, so the span cannot be empty.
+        var from = at + mark.length + 1
+        while (from <= text.length - mark.length) {
+            val found = text.indexOf(mark, from)
+            if (found < 0) return -1
+            if (mark.length > 1 || closesHere(text, found + mark.length)) return found
+            from = found + 1
+        }
+        return -1
+    }
+
+    /**
+     * The mirror of [opensHere], on the other end of the span.
+     *
+     * A one-character marker followed by an ASCII alphanumeric is inside a word — the `_`
+     * between `a` and `b` in `a_b.html` — and closing on it deletes a character out of an
+     * address or an identifier, the same way opening on one did. ASCII for the same reason:
+     * 和 is a letter, and guarding on it would stop emphasis closing in the language this app
+     * answers in.
+     */
+    private fun closesHere(text: String, after: Int): Boolean {
+        val c = text.getOrNull(after) ?: return true
+        return !(c in '0'..'9' || c in 'a'..'z' || c in 'A'..'Z')
     }
 
     /**
