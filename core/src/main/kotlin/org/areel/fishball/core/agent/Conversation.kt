@@ -882,6 +882,20 @@ class Conversation(
         )
     }
 
+    /**
+     * A stamp somebody's answer starts with, taken back off.
+     *
+     * Defensive, and it has already been needed. Assistant turns used to be replayed with a
+     * time on the front like the user's are, and the model read its own replayed turns for the
+     * house format and began writing 「（9月3日 21:53）」 at the top of its answers - which then
+     * went into the log as part of the answer and back into the next prompt as another example.
+     * Three turns on a real phone before it was caught.
+     *
+     * The stamping is fixed above; this cleans what the stamped build already wrote, so those
+     * turns neither show a timestamp to the user nor keep teaching the pattern.
+     */
+    private fun unstamped(text: String): String = STAMPED.replaceFirst(text, "")
+
     /** When a turn was said, for the line that replays it. */
     private fun stampOf(at: Long): String {
         val t = local(at)
@@ -1035,7 +1049,7 @@ class Conversation(
     private suspend fun summarise(turns: List<ConversationTurn>): String? {
         val replayed = turns.map {
             if (it.speaker == Speaker.USER) LlmMessage.user(stampOf(it.at) + it.text)
-            else recalled(it, stampOf(it.at) + it.text)
+            else recalled(it)
         }
         val result = llm.complete(
             LlmRequest(
@@ -1069,8 +1083,8 @@ class Conversation(
         return store.turnsInSession(open.id)
             .dropLast(1)
             .map {
-                val said = stampOf(it.at) + it.text
-                if (it.speaker == Speaker.USER) LlmMessage.user(said) else recalled(it, said)
+                if (it.speaker == Speaker.USER) LlmMessage.user(stampOf(it.at) + it.text)
+                else recalled(it)
             }
     }
 
@@ -1091,7 +1105,8 @@ class Conversation(
      *
      * Turns logged before reasoning was kept carry none, and come back as they always did.
      */
-    private fun recalled(turn: ConversationTurn, said: String): LlmMessage {
+    private fun recalled(turn: ConversationTurn): LlmMessage {
+        val said = unstamped(turn.text)
         if (turn.reasoning.isBlank()) return LlmMessage.assistant(said)
         return LlmMessage(
             LlmMessage.Role.ASSISTANT,
@@ -1396,6 +1411,9 @@ private const val LOG_HITS = 40
  * needs.
  */
 private const val COMPACT_BUDGET = 8_192
+
+/** The stamp format, anchored at the start, for taking one back off. See `unstamped`. */
+private val STAMPED = Regex("""^（\d{1,2}月\d{1,2}日 \d{2}:\d{2}）""")
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6

@@ -57,23 +57,81 @@ class LogAndClockTest {
         assertTrue("9月3日" in question, "clock has the wrong day: $question")
         assertTrue("星期四" in question, "clock has no weekday: $question")
 
-        // And a stamp in front of everything replayed out of the log.
+        // A stamp in front of what *he* said, and the words kept.
         val replayed = sent.messages.dropLast(1)
         assertTrue(replayed.isNotEmpty(), "nothing was replayed")
-        replayed.forEach { message ->
-            val text = message.content.filterIsInstance<LlmContent.Text>().single().text
-            assertTrue(
-                text.startsWith("（") && "月" in text.take(12),
-                "a replayed turn carries no time: $text",
-            )
+        // Two of them in the fixture, and both should be stamped; the first is the one whose
+        // words are asserted on below.
+        val users = replayed.filter { it.role == LlmMessage.Role.USER }
+        assertEquals(2, users.size, "the replayed turns are not what this test seeded")
+        users.forEach { m ->
+            val line = m.content.filterIsInstance<LlmContent.Text>().single().text
+            assertTrue(line.startsWith("（") && "月" in line.take(12), "no time on: $line")
         }
-        // The stamp is a prefix, not a replacement.
-        assertTrue(
-            replayed.any { m ->
-                m.content.filterIsInstance<LlmContent.Text>().single().text.endsWith("阿莫西林")
-            },
-            "the words themselves were lost: " + replayed,
+        val said = users.first().content.filterIsInstance<LlmContent.Text>().single().text
+        assertTrue(said.startsWith("（") && "月" in said.take(12), "no time on his turn: $said")
+        assertTrue(said.endsWith("阿莫西林"), "the words themselves were lost: $said")
+    }
+
+    /**
+     * And nothing the app said carries one.
+     *
+     * Assistant turns were stamped too at first, which taught the model the house format for an
+     * assistant turn included a timestamp - so it began writing 「（9月3日 21:53）」 at the top of
+     * its answers, which went into the log as part of the answer and back into the next prompt
+     * as a fresh example of itself. Three turns on a real phone before it was caught.
+     *
+     * The same shape as the `</think>` leak, and the second time this codebase has been bitten
+     * by it: anything put in an assistant turn is a template the model may copy. The user's
+     * turns are safe to stamp because it is not writing those.
+     */
+    @Test
+    fun `nothing the app said is replayed with a time on it`() {
+        val store = InMemoryStore()
+        val session = store.nextId()
+        store.saveSession(Session(session, at(1)))
+        store.appendTurn(ConversationTurn(store.nextId(), session, at(1), Speaker.USER, "问题"))
+        store.appendTurn(
+            ConversationTurn(store.nextId(), session, at(1), Speaker.ASSISTANT, "答案"),
         )
+        store.appendTurn(ConversationTurn(store.nextId(), session, at(2), Speaker.USER, "追问"))
+
+        val llm = Recorder()
+        runBlocking { conversation(llm, store).ask("追问") }
+
+        val assistant = llm.seen.first().messages
+            .single { it.role == LlmMessage.Role.ASSISTANT }
+        val text = assistant.content.filterIsInstance<LlmContent.Text>().single().text
+        assertEquals("答案", text, "the app's own turn was replayed with a time on it")
+    }
+
+    /**
+     * And an answer already written with one is cleaned on the way back out.
+     *
+     * Those three turns are in a real log on a real phone. Without this they would keep showing
+     * a timestamp to the user and keep demonstrating the pattern to the model.
+     */
+    @Test
+    fun `a stamp an earlier build wrote into an answer is stripped`() {
+        val store = InMemoryStore()
+        val session = store.nextId()
+        store.saveSession(Session(session, at(1)))
+        store.appendTurn(ConversationTurn(store.nextId(), session, at(1), Speaker.USER, "问题"))
+        store.appendTurn(
+            ConversationTurn(
+                store.nextId(), session, at(1), Speaker.ASSISTANT,
+                "（9月3日 21:53）好，继续。",
+            ),
+        )
+        store.appendTurn(ConversationTurn(store.nextId(), session, at(2), Speaker.USER, "追问"))
+
+        val llm = Recorder()
+        runBlocking { conversation(llm, store).ask("追问") }
+
+        val assistant = llm.seen.first().messages
+            .single { it.role == LlmMessage.Role.ASSISTANT }
+        val text = assistant.content.filterIsInstance<LlmContent.Text>().single().text
+        assertEquals("好，继续。", text, "the stamp went back to the model to be copied again")
     }
 
     @Test

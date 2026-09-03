@@ -24,6 +24,9 @@ import org.areel.fishball.core.memory.WorldFact
 import org.areel.fishball.core.trust.normalizeHost
 import org.areel.fishball.data.Backend
 
+/** A leading 「（9月3日 21:53）」, which no answer should have been written with. */
+private val STAMPED = Regex("""^（\d{1,2}月\d{1,2}日 \d{2}:\d{2}）""")
+
 /** One turn in the thread, as the UI draws it. */
 data class ChatMessage(
     val fromUser: Boolean,
@@ -290,7 +293,10 @@ private fun Reply.toMessage() = ChatMessage(
 
 private fun ConversationTurn.toMessage() = ChatMessage(
     fromUser = speaker == Speaker.USER,
-    text = text,
+    // Stripped, because a build that stamped assistant turns on the way to the model taught it
+    // to write the stamp into its answers, and those answers are in the log. See
+    // `Conversation.unstamped` - this is the same cleaning, for the half the user reads.
+    text = STAMPED.replaceFirst(text, ""),
     images = images,
     // The working panel, restored. Both halves: the reasoning the model wrote and the lines the
     // app narrated while it ran. Held only in memory before this, so reopening the app left an
