@@ -267,6 +267,16 @@ object Tools {
             putJsonObject("properties") {
                 stringProp("text", "给用户看的答案正文。主要用大白话，要紧的一句可以加粗，" +
                     "列几样东西可以分行列出来；别写成文档。")
+                // Spec R7. The disagreement is the model's to notice - it is the only thing
+                // here that has read both pages - but what is *done* about it stays in code:
+                // the meter draws a fault line instead of a confidence reading, because
+                // averaging two authorities that contradict each other is the one outcome R7
+                // exists to prevent. Before this the flag had nowhere to arrive and the fault
+                // line could not be reached.
+                boolProp(
+                    "conflict",
+                    "两条等级都在「高」以上的资料，在同一件事上说法相反。答案里要把分歧说出来。",
+                )
             }
             putJsonArray("required") { add("text") }
         },

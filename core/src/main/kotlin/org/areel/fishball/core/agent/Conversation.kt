@@ -387,10 +387,15 @@ class Conversation(
                  * lost is the one turn, not the memory.
                  */
                 val sources = cite(seen.values.toList(), verified)
+                // §R7. Read off the call rather than inferred from the tiers: whether two
+                // pages contradict each other is the one judgement only something that has
+                // read both can make. What follows from it stays here - see [shapeOf].
+                val disputed = answered?.input?.bool("conflict") == true
                 return Reply(
                     text = written,
-                    shape = shapeOf(sources),
+                    shape = shapeOf(sources, disputed),
                     sources = sources,
+                    conflict = disputed,
                     thinking = thoughtIn(result.raw),
                     steps = (progress as? Recording)?.lines.orEmpty().toList(),
                 )
@@ -712,9 +717,15 @@ class Conversation(
      * shape and hand the writer a sentence budget with it; with the model doing its own looking
      * there is no before-the-fact to plan in, and the honest thing left to say is how good the
      * sources it ended up with were.
+     *
+     * [disputed] comes first and outranks every tier, which is the whole of R7: a claim two
+     * authorities disagree about is not a confident answer that happens to have a note on it.
+     * The meter reads CONFLICT as no reading at all and draws the fault line instead, because
+     * averaging the two into "medium" hides exactly what the reader needs to see.
      */
-    private fun shapeOf(sources: List<SourceRef>): AnswerShape? = when {
+    private fun shapeOf(sources: List<SourceRef>, disputed: Boolean = false): AnswerShape? = when {
         sources.isEmpty() -> null
+        disputed -> AnswerShape.CONFLICT
         sources.any { it.tier >= Tier.AUTHORITATIVE } -> AnswerShape.CONFIDENT
         sources.any { it.tier >= Tier.HIGH } -> AnswerShape.ATTRIBUTED
         else -> AnswerShape.WEAK_LEAD
