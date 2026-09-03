@@ -452,10 +452,15 @@ outdated_about_user，同时把新的说法写进 about_user。只在真的不�
      *
      * So it is addressed as what it is. No persona, no rules of conduct, no tools beyond the one
      * it is forced into: take a sentence apart and name the pieces.
+     *
+     * And it is written entirely in the positive. An earlier draft said 「不是助手」 and 「不要回答
+     * 问题」, which is the same mistake as telling somebody not to think about an elephant: a
+     * small model has to represent the behaviour to suppress it, and representing it is most of
+     * the way to doing it. What the job is, plus three worked examples, specifies the same
+     * boundary without ever naming the thing on the other side of it.
      */
     val PARSE_SYSTEM = """
-你是一个语义拆解工具，不是助手。不要回答问题，不要解释，不要闲聊。
-只把输入拆成结构化的检索词。
+你是一个语义拆解工具。读入一句话，输出它涉及的检索词。
 """.trim()
 
     /**
@@ -466,7 +471,7 @@ outdated_about_user，同时把新的说法写进 about_user。只在真的不�
      * 事" reads as an invitation to think about the answer; "拆成几个要查什么" does not.
      */
     val RECALL_TERMS = """
-把这句话拆成「要查什么」。只拆，不答。
+把这句话拆成「要查什么」。
 
 facts：这句话涉及的事实，一条一个名词短语。
 about_user：这句话里跟他本人有关的方面，一条一个名词短语；跟他本人无关就留空。
