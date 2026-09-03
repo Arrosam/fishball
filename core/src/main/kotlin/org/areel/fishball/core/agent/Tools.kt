@@ -250,13 +250,23 @@ object Tools {
         },
     )
 
+    /**
+     * The answer itself.
+     *
+     * The field description has to agree with `AgentPrompt.SYSTEM`, because both ride in the
+     * same request and both describe this one string. It used to say 「纯文字，不要 markdown」,
+     * which was true while the bubble showed syntax to the reader and became a contradiction
+     * the moment the thread learned to render it - and of the two this is the more proximate,
+     * being attached to the field the answer is written into.
+     */
     val answer = LlmTool(
         name = ANSWER,
         description = "把写好的答案交上来。",
         inputSchema = obj {
             put("type", "object")
             putJsonObject("properties") {
-                stringProp("text", "给用户看的答案正文。纯文字，不要 markdown。")
+                stringProp("text", "给用户看的答案正文。主要用大白话，要紧的一句可以加粗，" +
+                    "列几样东西可以分行列出来；别写成文档。")
             }
             putJsonArray("required") { add("text") }
         },
