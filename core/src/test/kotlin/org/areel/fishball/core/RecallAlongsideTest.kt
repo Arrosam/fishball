@@ -193,23 +193,29 @@ class RecallAlongsideTest {
     }
 
     /**
-     * And the other half. A turn that answers straight away beats the lookup, and that answer
-     * is not the one that gets served.
+     * And the other half: a turn that outruns the lookup answers anyway.
+     *
+     * This asserted the opposite until the user asked for it. The answer used to be held back,
+     * the lookup awaited, and the model asked a second time with the facts in front of it -
+     * correct on the one case that matters, and paid for with an extra round on the critical
+     * path that the user sits and watches as more 思考中 for something they did not ask for.
+     *
+     * So the cost is now taken deliberately and pinned here so nobody re-adds the wait by
+     * accident: a turn that beats its own recall answers without it. Rare in practice, because
+     * round one is almost always a search and a search takes longer than the lookup - and the
+     * facts stay in the store, so the next question finds them. One turn is affected, not the
+     * memory.
      */
     @Test
-    fun `an answer written before memory lands is not the answer served`() {
+    fun `an answer written before memory lands is served as it is`() {
         val store = seeded()
         val chat = Scripted("第一版", "第二版")
         val conversation = conversation(store, chat, PausedRetrieval(RECALL_WAIT))
 
         val reply = runBlocking { conversation.ask("医生开了阿莫西林，能吃吗？") }
 
-        assertEquals(2, chat.shown.size, "the early answer was served without a second look")
-        assertTrue(
-            chat.text(1).contains(ALLERGY),
-            "the second call did not carry what memory found: " + chat.text(1),
-        )
-        assertEquals("第二版", reply.text, "the reply came from before memory landed")
+        assertEquals(1, chat.shown.size, "the turn was made to ask again for memory's sake")
+        assertEquals("第一版", reply.text, "the first answer was not the one served")
     }
 
     /**

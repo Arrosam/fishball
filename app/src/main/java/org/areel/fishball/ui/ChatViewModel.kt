@@ -39,21 +39,15 @@ data class ChatMessage(
     /** Why this turn failed, when it did. Not persisted: an error is not part of the record. */
     val detail: String? = null,
     /**
-     * How the turn was worked out. Held for as long as the app is open and not written to the
-     * log — §9 keeps what was said, and this is how it was arrived at, which is a different
-     * thing and a much larger one.
+     * How the turn was worked out: the lines it narrated, and the reasoning behind them.
+     *
+     * Both are written to the log now. They were held in memory only, on the argument that §9
+     * keeps what was said and this is a different and much larger thing - true, but it meant
+     * reopening the app left every answer with a blank panel under it, and half a record reads
+     * as the app having forgotten what it did.
      */
     val steps: List<String> = emptyList(),
     val thinking: String = "",
-    /**
-     * A round of searching, finished, rather than something anybody said.
-     *
-     * Drawn in the placeholder's own language because it is the same kind of thing - work being
-     * shown rather than a turn being taken - and it is never written to the log: §9 keeps what
-     * was said, and this is how it was found out. It lasts as long as the app is open, which is
-     * as long as it is of any use.
-     */
-    val searchNote: String? = null,
     /**
      * Pictures asked with this question, as the names [Attachments] kept them under.
      *
@@ -111,7 +105,7 @@ class ChatViewModel(
      */
     private var turn: Job? = null
 
-    /** The model's reasoning for the turn in flight. Cleared when it lands; never persisted. */
+    /** The model's reasoning for the turn in flight. Cleared when it lands, and kept in the log. */
     var thinking by mutableStateOf("")
         private set
 
@@ -142,7 +136,13 @@ class ChatViewModel(
             }
 
             override fun searched(summary: String) {
-                messages += ChatMessage(fromUser = false, text = "", searchNote = summary)
+                // Into the panel with the rest of the working, not into the thread.
+                //
+                // It was a block of its own, so a long-horizon turn left a column of them
+                // standing between the question and the answer - a dozen slabs of 查了…… that
+                // outlived the moment they described and pushed the reply off the screen. It is
+                // the same kind of thing as a narration step and now sits in the same place.
+                narration += summary
             }
 
             override fun thinking(delta: String) {
@@ -292,6 +292,11 @@ private fun ConversationTurn.toMessage() = ChatMessage(
     fromUser = speaker == Speaker.USER,
     text = text,
     images = images,
+    // The working panel, restored. Both halves: the reasoning the model wrote and the lines the
+    // app narrated while it ran. Held only in memory before this, so reopening the app left an
+    // answer with no account of where it came from.
+    thinking = reasoning,
+    steps = steps,
     sources = sources.map {
         Source(
             name = it.displayName,

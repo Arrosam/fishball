@@ -17,6 +17,35 @@ import kotlin.test.assertTrue
  */
 class PersistenceTest {
 
+    /**
+     * The panel under an answer survives being closed.
+     *
+     * It did not: the reasoning and the narrated lines lived in the view model and nowhere else,
+     * so every answer came back from the log with a blank panel under it. Reported as "thinking
+     * block looks like will be lost when reload the conversation" - it was in RAM, not in the
+     * history. The search summaries go through the same field now, so this covers both.
+     */
+    @Test
+    fun `the working panel comes back with the turn`() {
+        val io = Buffer()
+        PersistentStore(io).appendTurn(
+            ConversationTurn(
+                id = 7,
+                sessionId = 1,
+                at = 1_700_000_000_000,
+                speaker = Speaker.ASSISTANT,
+                text = "对乙酰氨基酚更安全。",
+                reasoning = "说明书把孕晚期列为禁忌，其余孕期只是慎用。",
+                steps = listOf("正在查……", "查了：布洛芬 孕妇\n看了 12 条"),
+            ),
+        )
+
+        val back = PersistentStore(Buffer(io.contents)).recentTurns().single()
+        assertEquals("说明书把孕晚期列为禁忌，其余孕期只是慎用。", back.reasoning)
+        assertEquals(2, back.steps.size)
+        assertTrue(back.steps[1].startsWith("查了："), "the search summary was lost: " + back.steps)
+    }
+
     private class Buffer(var contents: String? = null) : SnapshotIo {
         override fun read() = contents
         override fun write(contents: String) {

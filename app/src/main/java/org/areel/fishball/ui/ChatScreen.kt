@@ -334,6 +334,16 @@ fun ChatScreen(
         }
         attach.clear()
         attach.close()
+        /*
+         * Asking something is choosing to watch for the answer.
+         *
+         * [following] is otherwise only revised when a scroll finishes, so somebody who had read
+         * back up the thread and then typed a question stayed where they were reading while the
+         * reply arrived somewhere below them. Every other way into the conversation - the jump
+         * button, opening the app - lands at the end; this is the one that did not.
+         */
+        following = true
+        scope.launch { toEnd(smooth = false) }
         vm.send(text, images)
     }
 
@@ -394,10 +404,7 @@ fun ChatScreen(
             ) {
                 itemsIndexed(messages) { index, message ->
                     Arriving(animate = index >= alreadyThere) {
-                        val note = message.searchNote
-                        if (note != null) {
-                            SearchNote(note)
-                        } else if (message.fromUser) {
+                        if (message.fromUser) {
                             UserBubble(
                                 text = message.text,
                                 images = remember(message.images) {

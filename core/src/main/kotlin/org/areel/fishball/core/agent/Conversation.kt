@@ -140,6 +140,31 @@ class Conversation(
      */
     private var thread = mutableListOf<LlmMessage>()
 
+    /**
+     * Everything a turn narrated, kept so it can be written down with the answer.
+     *
+     * A wrapper rather than a field updated at each call site: `step` and `searched` are emitted
+     * from four places, and a list that has to be appended to beside each of them is a list that
+     * will eventually miss one.
+     */
+    private class Recording(private val inner: TurnProgress) : TurnProgress {
+        val lines = mutableListOf<String>()
+
+        override fun step(text: String) {
+            lines += text
+            inner.step(text)
+        }
+
+        override fun searched(summary: String) {
+            lines += summary
+            inner.searched(summary)
+        }
+
+        override fun thinking(delta: String) = inner.thinking(delta)
+
+        override fun answer(delta: String) = inner.answer(delta)
+    }
+
     suspend fun ask(
         userText: String,
         progress: TurnProgress = TurnProgress.Silent,
@@ -201,8 +226,9 @@ class Conversation(
             catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
                 .getOrDefault(Remembered.NOTHING)
         }
+        val recording = Recording(progress)
         val reply = try {
-            converse(userText, progress, recalled)
+            converse(userText, recording, recalled)
         } finally {
             // Whatever is left of it is work nobody is waiting for: the turn is over, and this
             // scope would otherwise sit here until a lookup for an answer already on screen
@@ -227,6 +253,7 @@ class Conversation(
                 text = reply.text,
                 shape = reply.shape,
                 reasoning = reply.thinking,
+                steps = reply.steps,
                 sources = reply.sources.map {
                     CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
                 },
@@ -336,42 +363,27 @@ class Conversation(
                 .ifBlank { if (result.toolCalls.isEmpty()) result.text else "" }
             if (written.isNotBlank()) {
                 /*
-                 * The guard, and the reason recall may run alongside the turn at all.
+                 * The answer goes out. Memory never holds it.
                  *
-                 * An answer written before memory came back is an answer written without it, and
-                 * on the questions that matter that is the difference between 阿莫西林 being
-                 * fine and it being the thing this person is allergic to. So a turn that got
-                 * here first waits - once, and only if it beat the lookup - and then answers
-                 * again with the facts in front of it.
+                 * This used to wait: if the turn reached an answer before recall landed, it
+                 * awaited the lookup and asked the model again with the facts in front of it.
+                 * That bought correctness on one narrow case - the answer that should have known
+                 * about an allergy - at the price of an extra round on the critical path, and
+                 * the user watches that round as more 思考中 for something they did not ask for.
                  *
-                 * Nothing is held back when memory found nothing, which is most turns: there is
-                 * no second call and the reply goes straight out.
+                 * So it is gone by their decision, and the cost is worth stating once: a turn
+                 * that outruns its own recall answers without it. In practice that is rare -
+                 * round one is almost always a search, which takes longer than the lookup - and
+                 * the facts are still in the store, so the next question finds them. What is
+                 * lost is the one turn, not the memory.
                  */
-                if (known == null) {
-                    val late = recalled.await()
-                    known = late
-                    val lines = late.lines()
-                    if (lines.isNotEmpty()) {
-                        thread += result.raw
-                        thread += LlmMessage(
-                            LlmMessage.Role.USER,
-                            // Every call in that turn gets an answer, including the `answer` it
-                            // is being asked to make again - a tool_use with no tool_result is
-                            // a malformed thread, whatever the reason for holding it back.
-                            result.toolCalls.map {
-                                LlmContent.ToolResult(it.id, AgentPrompt.HOLD_FOR_MEMORY)
-                            } + LlmContent.Text(knownBlock(lines)),
-                        )
-                        round++
-                        continue
-                    }
-                }
                 val sources = cite(seen.values.toList(), verified)
                 return Reply(
                     text = written,
                     shape = shapeOf(sources),
                     sources = sources,
                     thinking = thoughtIn(result.raw),
+                    steps = (progress as? Recording)?.lines.orEmpty().toList(),
                 )
             }
             // Nothing said and nothing asked for. On the closing round that is a model that has
@@ -1182,6 +1194,8 @@ data class Reply(
      * every search that preceded it.
      */
     val thinking: String = "",
+    /** What the turn narrated on its way here, in the order it said it. */
+    val steps: List<String> = emptyList(),
 )
 
 data class SourceRef(

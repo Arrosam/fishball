@@ -172,6 +172,15 @@ data class ConversationTurn(
      * a record of nothing.
      */
     val images: List<String> = emptyList(),
+    /**
+     * What the app said it was doing while this answer was worked out.
+     *
+     * Kept for the same reason [reasoning] is: the panel under an answer showed how it was
+     * arrived at, and reopening the app used to empty it. Half a record is worse than none -
+     * somebody who saw 「查了：布洛芬 孕妇」 yesterday and finds a blank panel today reasonably
+     * concludes the app forgot what it did.
+     */
+    val steps: List<String> = emptyList(),
 )
 
 /** A remembered fact about the user, and how well it matched what was being looked for. */

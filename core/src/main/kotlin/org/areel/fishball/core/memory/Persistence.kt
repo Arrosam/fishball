@@ -83,6 +83,7 @@ data class TurnDto(
     // And the same again for pictures. Names only - the files live beside this one, because a
     // photograph base64'd into the log would be rewritten to disk on every single turn.
     val images: List<String> = emptyList(),
+    val steps: List<String> = emptyList(),
 )
 
 @Serializable
@@ -242,6 +243,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
     sources.map { CitedSourceDto(it.url, it.displayName, it.explanation, it.tier.name, it.quote) },
     reasoning,
     images,
+    steps,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -253,6 +255,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     shape = shape?.let { enumOrNull<AnswerShape>(it) },
     reasoning = reasoning,
     images = images,
+    steps = steps,
     sources = sources.map {
         CitedSource(
             url = it.url,
