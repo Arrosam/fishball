@@ -160,7 +160,18 @@ class VoiceState internal constructor(
         // hold registered, and without it a button that looks the same pressed or not gives
         // nothing back until the first word is already lost.
         buzzer.down(Feel.CLICKY)
-        if (!backend.voice.start()) return
+        // Twice, and then said out loud.
+        //
+        // A failed [Voice.start] switches the audio source before it returns, so the second
+        // call asks for the microphone a different way - which is the whole point of that
+        // fallback and nothing was taking it. And if neither way opens, this says so: a press
+        // that felt the haptic and then did nothing at all is indistinguishable from a broken
+        // button, which is the failure the three-outcome `Recording` type exists to prevent.
+        if (!backend.voice.start() && !backend.voice.start()) {
+            notice = emptyNotice
+            noticeCode = null
+            return
+        }
         phase = VoicePhase.RECORDING
         level = 0f
         scope.launch {

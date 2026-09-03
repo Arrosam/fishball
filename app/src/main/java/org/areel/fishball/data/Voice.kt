@@ -87,7 +87,15 @@ class Voice(private val context: Context) {
     /** The loudest sample since [level] last looked. Written by [drain], read by the meter. */
     private val peak = AtomicInteger(0)
 
-    /** How many bytes of audio are in the file. Only settled once [drain] has been joined. */
+    /**
+     * How many bytes of audio are in the file. Only settled once [drain] has been joined.
+     *
+     * Volatile because the join is the only thing that publishes it and the join can time out.
+     * A successful join carries its own happens-before edge and this would be redundant; a
+     * timed-out one carries none, and [stop] reading a torn or stale count is how a header
+     * comes to describe a different file than the one on disk.
+     */
+    @Volatile
     private var written = 0
 
     /**
@@ -217,18 +225,27 @@ class Voice(private val context: Context) {
         target = null
 
         // Joined before the file is touched, so [written] has settled and nothing is still
-        // writing behind the header. That join is what makes the rest of this single-threaded.
+        // writing behind the header. That join is what makes the rest of this single-threaded -
+        // and it only makes it single-threaded if it actually finished.
+        //
+        // The recorder is stopped *first* for that reason. [drain] blocks inside `read`, so
+        // clearing the flag on its own leaves it there until the current block fills; stopping
+        // the recorder ends that read now, and the join has something short to wait for.
         running = false
-        runCatching { reader?.join(JOIN_MS) }
-        reader = null
         runCatching { rec.stop() }
+        val done = runCatching { reader?.join(JOIN_MS); reader?.isAlive != true }.getOrDefault(false)
+        reader = null
         runCatching { rec.release() }
 
         val audio = written
-        runCatching { f?.let { header(it, audio) } }
+        // Only if the writer is known to have stopped. Patching the header seeks to offset 0
+        // and closing takes the handle away, and doing either under a thread still appending
+        // gives a WAV whose declared length disagrees with its contents - or an exception on a
+        // closed file. A recording that cannot be sealed is one to throw away, not to send.
+        runCatching { if (done) f?.let { header(it, audio) } }
         runCatching { f?.close() }
 
-        if (file == null || audio == 0) {
+        if (file == null || audio == 0 || !done) {
             file?.delete()
             return Recording.Silent
         }
