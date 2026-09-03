@@ -358,29 +358,40 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
      * The two rules at the end exist because the instruction moved out of the system prompt and
      * into the dialogue: from here it looks like a turn, and a turn is something the model
      * would otherwise answer conversationally or reach for a tool over.
+     *
+     * The headings are 【】 rather than DeepSeek's `##`, and that is not cosmetic. This
+     * checkpoint is stored as the session bridge and injected at the *front* of every thread
+     * from the next session onward - so a Markdown checkpoint would have the model opening
+     * every conversation looking at a Markdown document it wrote itself, while [SYSTEM] tells
+     * it never to write Markdown. That is the shape of bug this codebase has now been bitten by
+     * twice: a stamped assistant turn taught it to stamp its answers, a labelled reasoning
+     * block taught it to label them. DeepSeek does not have the problem because their agent's
+     * answers are Markdown anyway; ours are not, so the notation has to change with the
+     * borrowing. Everything the structure buys - mandatory ordered sections, 「无」 rather than
+     * a missing heading - survives the swap.
      */
     val COMPACT = """
 现在把上面这段对话压缩成一份记录，写给「接着聊下去的你」看，不要丢掉要紧的东西。
 
 按下面的结构写，每一节都要有，顺序不要变，空的写「无」，不要整节省略。
-一节里用短句列点，不要写成一段话。
+一节里一行一条，不要写成一段话。
 
-## 他问过什么
+【他问过什么】
 - [他想知道的事，以及中途变成了什么。原话要紧的地方就照抄]
 
-## 已经查到的结论
+【已经查到的结论】
 - [查出来的结果，带上是哪家说的和等级；数字、剂量、日期照抄]
 
-## 关于他本人
+【关于他本人】
 - [他自己说到的：在吃的药、过敏、忌口、家里的情况、口味]
 
-## 还没做完的事
+【还没做完的事】
 - [他要求过但还没给他的]
 
-## 现在在聊什么
+【现在在聊什么】
 - [这一刻正在进行的那件事]
 
-## 要注意的
+【要注意的】
 - [他纠正过你的地方、他的偏好、还没弄清楚的问题]
 
 规矩：

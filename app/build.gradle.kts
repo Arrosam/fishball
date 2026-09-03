@@ -108,6 +108,16 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    /*
+     * Unit tests for :app, which had none.
+     *
+     * Almost everything here is Compose and wants a device, and that is still true - what this
+     * buys is the handful of pure functions that are not: the Markdown an answer arrives
+     * wearing, and anything else that turns a string into another string. Those are exactly the
+     * pieces where a mistake reaches the reader silently.
+     */
+    testImplementation(kotlin("test"))
+
     // No material-icons dependency: every icon is a hand-drawn VectorDrawable in
     // res/drawable, matching the 24-grid in docs/06-design-directions.md section E.
     implementation(libs.kotlinx.coroutines.android)

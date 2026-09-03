@@ -2,6 +2,7 @@ package org.areel.fishball.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.text.selection.SelectionContainer
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
@@ -615,7 +616,20 @@ fun AssistantBubble(
             // paste into a message to somebody - and a wall of text that cannot be copied
             // quietly tells them it is not really theirs.
             SelectionContainer {
-                Text(text, style = MaterialTheme.typography.bodyLarge, color = Areel.Ink)
+                // Rendered rather than shown raw. The prompt asks for plain text and mostly
+                // gets it, but "mostly" is the problem: an answer that arrives with **粗体** in
+                // it should read as an answer, not as a leak. See [Markdown] for how little of
+                // the syntax is honoured and why.
+                val body = MaterialTheme.typography.bodyLarge
+                Text(
+                    text = if (Markdown.looksMarkedUp(text)) {
+                        Markdown.render(text, body.fontSize)
+                    } else {
+                        AnnotatedString(text)
+                    },
+                    style = body,
+                    color = Areel.Ink,
+                )
             }
             if (detail != null) {
                 Spacer(Modifier.height(10.dp))
