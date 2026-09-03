@@ -621,12 +621,19 @@ fun AssistantBubble(
                 // it should read as an answer, not as a leak. See [Markdown] for how little of
                 // the syntax is honoured and why.
                 val body = MaterialTheme.typography.bodyLarge
-                Text(
-                    text = if (Markdown.looksMarkedUp(text)) {
+                // Parsed once per answer, not once per recomposition. This bubble is not
+                // skippable - `steps` and `sources` are plain Lists, which the compiler treats
+                // as unstable - so it recomposes whenever anything in the thread moves, and
+                // the answer it would re-parse each time is a few thousand characters.
+                val rendered = remember(text, body.fontSize) {
+                    if (Markdown.looksMarkedUp(text)) {
                         Markdown.render(text, body.fontSize)
                     } else {
                         AnnotatedString(text)
-                    },
+                    }
+                }
+                Text(
+                    text = rendered,
                     style = body,
                     color = Areel.Ink,
                 )
