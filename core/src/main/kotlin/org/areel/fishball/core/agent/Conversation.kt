@@ -639,9 +639,11 @@ class Conversation(
     private fun thoughtIn(message: LlmMessage): String = message.content
         .filterIsInstance<LlmContent.Opaque>()
         .mapNotNull { block ->
-            block.raw["type"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
-                ?.takeIf { it == THINKING }
-                ?.let { block.raw[THINKING]?.let { v -> runCatching { v.jsonPrimitive.content }.getOrNull() } }
+            val kind = block.raw["type"]
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                ?.takeIf { it in REASONING }
+                ?: return@mapNotNull null
+            block.raw[kind]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
         }
         .joinToString("\n")
         .trim()
@@ -1392,6 +1394,20 @@ private const val LINKS_SHOWN = 25
  * writer of these blocks now spell it the same way by construction.
  */
 private const val THINKING = "thinking"
+
+/**
+ * Every name a reply might give its own reasoning.
+ *
+ * All three fish models produce `reasoning_content` natively - the OpenAI-side spelling - and
+ * the proxy translates it into a `thinking` block for the Anthropic dialect this client speaks,
+ * which is what arrives on the wire today. Reading only one spelling means a route that ever
+ * stops translating drops the reasoning silently: the block still lands in [LlmContent.Opaque]
+ * and still goes back out intact, but nothing is recorded on the turn, so the panel is empty
+ * and the next question gets no working. Accepting all three costs a set lookup.
+ *
+ * Writing stays [THINKING] alone. This client speaks one dialect and should keep saying so.
+ */
+private val REASONING = setOf(THINKING, "reasoning_content", "reasoning")
 
 /**
  * Lines of log per `read_log` call.
