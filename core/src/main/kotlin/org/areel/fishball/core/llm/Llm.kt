@@ -33,6 +33,36 @@ interface LlmClient {
     suspend fun validate(): KeyCheck
 }
 
+/**
+ * What a request is for, so it can be told apart from the others in a log.
+ *
+ * Every call this app makes carries the same key to the same proxy, and four of the five carry
+ * the same system prompt, so a log of them is five things that look alike. The name goes out as
+ * a header and answers the question the log cannot: which of these was the person waiting on,
+ * and which were bookkeeping.
+ *
+ * The wire names are lowercase and hyphenated because they are read by a human grepping.
+ */
+enum class Call(val wire: String) {
+    /** The turn itself - the only one anybody is waiting for. */
+    ANSWER("answer"),
+
+    /** §10 - what facts this question needs looked up in memory before it is answered. */
+    RECALL("recall"),
+
+    /** §9 - filing what the user just said about themselves. */
+    NOTE_USER("note-user"),
+
+    /** §10 - filing the answer that was just given, if it is worth keeping. */
+    NOTE_FACT("note-fact"),
+
+    /** §8 - folding a session into a paragraph, on rollover or a model switch. */
+    COMPACT("compact"),
+
+    /** Checking a key and discovering which model it may drive. */
+    VALIDATE("validate"),
+}
+
 data class LlmRequest(
     val system: String,
     val messages: List<LlmMessage>,
@@ -55,6 +85,8 @@ data class LlmRequest(
      * runs on. See `HydrogenClient`.
      */
     val model: String? = null,
+    /** What this request is for. Sent as a header so it can be found in a log. */
+    val call: Call = Call.ANSWER,
     /**
      * Ask the service to keep the prefix of this request.
      *

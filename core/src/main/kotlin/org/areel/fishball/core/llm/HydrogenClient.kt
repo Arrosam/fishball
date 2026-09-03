@@ -82,6 +82,7 @@ class HydrogenClient(
     override suspend fun validate(): KeyCheck = try {
         val response: HttpResponse = http.get("${baseUrl.trimEnd('/')}/v1/models") {
             authHeaders()
+            nameCall(Call.VALIDATE)
         }
         when {
             response.status == HttpStatusCode.Unauthorized ||
@@ -200,6 +201,7 @@ class HydrogenClient(
     private suspend fun probe(candidate: String): Pair<Int, String> = try {
         val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/messages") {
             authHeaders()
+            nameCall(Call.VALIDATE)
             contentType(ContentType.Application.Json)
             setBody(
                 buildJsonObject {
@@ -366,6 +368,7 @@ class HydrogenClient(
         try {
             http.preparePost("${baseUrl.trimEnd('/')}/v1/messages") {
                 authHeaders()
+                nameCall(request.call)
                 header("Accept", "text/event-stream")
                 contentType(ContentType.Application.Json)
                 setBody(body(request, stream = true).toString())
@@ -783,6 +786,17 @@ class HydrogenClient(
 
     // ---- response -----------------------------------------------------------------------
 
+    /**
+     * The name of the call, for whoever is reading the proxy's log.
+     *
+     * A header rather than a field in the body: it survives whatever the body is rewritten into,
+     * it is the part of a request a proxy logs by default, and it costs nothing to a service
+     * that ignores it.
+     */
+    private fun io.ktor.client.request.HttpRequestBuilder.nameCall(call: Call) {
+        header(CALL_HEADER, call.wire)
+    }
+
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders() {
         header("x-api-key", apiKey)
         header("anthropic-version", ANTHROPIC_VERSION)
@@ -799,6 +813,9 @@ class HydrogenClient(
         const val RERANK_MODEL = "reranker"
 
         private const val ANTHROPIC_VERSION = "2023-06-01"
+
+        /** Names what a request is for, so a proxy log can tell five similar calls apart. */
+        const val CALL_HEADER = "X-FishBall-Call"
 
         /** What a tool input gets wrapped in when it gets wrapped. See `unwrap`. */
         private val ENVELOPES = setOf("arguments", "input", "parameters", "args")

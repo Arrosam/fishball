@@ -135,6 +135,10 @@ class Backend private constructor(
             pages = pages,
             registry = registry,
             store = store,
+            // The professional tier pays for the factorisation in front of memory; the fast
+            // one embeds the question as it stands. Read here rather than passed a lambda,
+            // because a model switch rebuilds this whole object anyway.
+            expert = modelId == PRO,
             memory = MemoryBus(llm = filing, retrieval = filing, store = store),
         )
     }

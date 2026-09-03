@@ -2,13 +2,13 @@ package org.areel.fishball.core.agent
 
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import org.areel.fishball.core.catching
@@ -64,14 +64,60 @@ class MemoryBus(
 ) {
 
     /**
-     * One piece of memory work at a time.
+     * What is waiting to be filed.
      *
-     * Two turns in quick succession would otherwise have their harvests interleave, and both
-     * read the same records to decide what to retire — so one can delete the row the other is
-     * about to number, and the second retires whatever moved into that index. Serialising also
-     * means the store only ever has one writer besides the turn itself.
+     * Unbounded and never blocking the caller: a turn hands work over and forgets it. Unbounded
+     * is safe because the only producer is somebody typing, and a person cannot outrun a model
+     * call by enough to matter - and dropping something they said about themselves to keep a
+     * queue short would be the wrong trade in every case.
      */
-    private val gate = Mutex()
+    private val filings = Channel<Filing>(Channel.UNLIMITED)
+
+    /** One piece of work for the loop. */
+    private sealed interface Filing {
+        data class Said(val text: String) : Filing
+        data class Answered(
+            val question: String,
+            val answer: String,
+            val tier: Tier,
+            val sources: List<String>,
+        ) : Filing
+
+        /** Not work: a marker a caller can wait on. See [idle]. */
+        data class Barrier(val reached: CompletableDeferred<Unit>) : Filing
+    }
+
+    /**
+     * The loop, running beside the conversation for as long as the conversation exists.
+     *
+     * It used to be a coroutine launched per message, two of them per turn, each taking a lock
+     * to keep out of the others' way. One consumer is the same serialisation without the lock,
+     * and it is the structure the work actually has: a queue of things that happened, drained in
+     * the order they happened, by something nobody is waiting for.
+     *
+     * Serialising is not incidental. Two harvests interleaving both read the same records to
+     * decide what to retire, so one can delete the row the other is about to number, and the
+     * second then retires whatever moved into that index. One consumer also means the store has
+     * exactly one writer besides the turn itself.
+     *
+     * Every item is caught individually. One malformed reply from the filing model must not take
+     * the loop down and silently stop the app remembering anything for the rest of the session -
+     * which is exactly what a single `catching` around the whole loop would do.
+     */
+    init {
+        scope.launch {
+            for (filing in filings) {
+                catching {
+                    when (filing) {
+                        is Filing.Said -> fileSaid(filing.text)
+                        is Filing.Answered -> fileAnswered(filing)
+                        is Filing.Barrier -> Unit
+                    }
+                }
+                if (filing is Filing.Barrier) filing.reached.complete(Unit)
+            }
+        }
+    }
 
     /**
      * Spec §10 — the facts a question needs, asked for before anything is looked up.
@@ -114,13 +160,19 @@ class MemoryBus(
         val result = catching {
             llm.complete(
                 LlmRequest(
-                    system = AgentPrompt.SYSTEM,
+                    // Not [AgentPrompt.SYSTEM]. Sixteen hundred characters about who 鱼丸 is
+                    // and how to cite a source, in front of a request for two lists of noun
+                    // phrases, is all cost and some harm: told it is an assistant, it behaves
+                    // like one - live, a picture question sent it into a spiral about not being
+                    // able to see the picture rather than naming what to look up.
+                    system = AgentPrompt.PARSE_SYSTEM,
                     messages = context + LlmMessage.user(ask),
                     tools = listOf(Tools.recallTerms),
                     forceTool = Tools.RECALL,
                     maxTokens = TOOL_BUDGET,
                     model = SYSTEM_MODEL,
                     effort = Effort.HIGH,
+                    call = org.areel.fishball.core.llm.Call.RECALL,
                 ),
             )
         }.getOrNull()
@@ -137,27 +189,26 @@ class MemoryBus(
      */
     fun noteUser(userText: String) {
         if (userText.isBlank()) return
-        scope.launch {
-            catching {
-                gate.withLock {
-                    // What is already known that this could contradict. Similarity alone: a
-                    // correction names the thing it corrects, so there is nothing here a
-                    // reranker would be better at, and it would cost a round trip to ask.
-                    val held = nearby(userText, world = false)
-                    val input = ask(
-                        AgentPrompt.noteUserBrief(userText) + held.numbered(),
-                        Tools.noteUser,
-                        Tools.NOTE_USER,
-                    ) ?: return@withLock
+        filings.trySend(Filing.Said(userText))
+    }
 
-                    input.ints("outdated_about_user").forEach { index ->
-                        held.personal.getOrNull(index)?.let { store.forgetPreference(it.fact.id) }
-                    }
-                    if (input.bool("nothing") == true) return@withLock
-                    keepPreferences(input)
-                }
-            }
+    private suspend fun fileSaid(userText: String) {
+        // What is already known that this could contradict. Similarity alone: a correction
+        // names the thing it corrects, so there is nothing here a reranker would be better at,
+        // and it would cost a round trip to ask.
+        val held = nearby(userText, world = false)
+        val input = ask(
+            AgentPrompt.noteUserBrief(userText) + held.numbered(),
+            Tools.noteUser,
+            Tools.NOTE_USER,
+            org.areel.fishball.core.llm.Call.NOTE_USER,
+        ) ?: return
+
+        input.ints("outdated_about_user").forEach { index ->
+            held.personal.getOrNull(index)?.let { store.forgetPreference(it.fact.id) }
         }
+        if (input.bool("nothing") == true) return
+        keepPreferences(input)
     }
 
     /**
@@ -168,30 +219,39 @@ class MemoryBus(
      */
     fun noteAnswer(question: String, answer: String, tier: Tier, sources: List<String>) {
         if (question.isBlank() || answer.isBlank()) return
-        scope.launch {
-            catching {
-                gate.withLock {
-                    val held = nearby(question, personal = false)
-                    val input = ask(
-                        AgentPrompt.noteFactBrief(question, answer, tier.label, sources.size) +
-                            held.numbered(),
-                        Tools.noteFact,
-                        Tools.NOTE_FACT,
-                    ) ?: return@withLock
-
-                    input.ints("outdated_facts").forEach { index ->
-                        held.world.getOrNull(index)?.let { store.invalidateWorldFact(it.fact.id, now()) }
-                    }
-                    if (input.bool("nothing") == true) return@withLock
-                    keepWorldFact(input, tier, sources)
-                }
-            }
-        }
+        filings.trySend(Filing.Answered(question, answer, tier, sources))
     }
 
-    /** Outstanding filing, for a caller that needs it finished — tests, and nothing else. */
+    private suspend fun fileAnswered(filing: Filing.Answered) {
+        val question = filing.question
+        val answer = filing.answer
+        val tier = filing.tier
+        val sources = filing.sources
+        val held = nearby(question, personal = false)
+        val input = ask(
+            AgentPrompt.noteFactBrief(question, answer, tier.label, sources.size) +
+                held.numbered(),
+            Tools.noteFact,
+            Tools.NOTE_FACT,
+            org.areel.fishball.core.llm.Call.NOTE_FACT,
+        ) ?: return
+
+        input.ints("outdated_facts").forEach { index ->
+            held.world.getOrNull(index)?.let { store.invalidateWorldFact(it.fact.id, now()) }
+        }
+        if (input.bool("nothing") == true) return
+        keepWorldFact(input, tier, sources)
+    }
+
+    /**
+     * Outstanding filing, for a caller that needs it finished — tests, and nothing else.
+     *
+     * A marker put on the end of the queue rather than a join on the loop, which never ends. The
+     * loop is sequential, so reaching the marker means everything queued before it is done.
+     */
     suspend fun idle() {
-        scope.coroutineContext[Job]?.children?.toList()?.forEach { it.join() }
+        val reached = CompletableDeferred<Unit>()
+        if (filings.trySend(Filing.Barrier(reached)).isSuccess) reached.await()
     }
 
     /**
@@ -205,7 +265,12 @@ class MemoryBus(
 
     // ---- the calls ------------------------------------------------------------------------
 
-    private suspend fun ask(brief: String, tool: org.areel.fishball.core.llm.LlmTool, force: String): JsonObject? {
+    private suspend fun ask(
+        brief: String,
+        tool: org.areel.fishball.core.llm.LlmTool,
+        force: String,
+        call: org.areel.fishball.core.llm.Call,
+    ): JsonObject? {
         val result = llm.complete(
             LlmRequest(
                 system = AgentPrompt.SYSTEM,
@@ -215,6 +280,7 @@ class MemoryBus(
                 maxTokens = TOOL_BUDGET,
                 model = SYSTEM_MODEL,
                 effort = Effort.HIGH,
+                call = call,
             ),
         )
         return (result as? LlmResult.Ok)?.toolCalls?.firstOrNull()?.input

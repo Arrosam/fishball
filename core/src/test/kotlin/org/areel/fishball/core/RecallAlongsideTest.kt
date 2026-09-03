@@ -160,6 +160,10 @@ class RecallAlongsideTest {
         search = search,
         registry = loadBundledRegistry(),
         store = store,
+        // These are all about the factorisation in front of memory, which is the professional
+        // tier's. On the fast tier the question is embedded as it stands and there is no
+        // `terms` call for them to be measuring.
+        expert = true,
         memory = MemoryBus(llm = Filing(aboutUser), retrieval = retrieval, store = store),
     )
 

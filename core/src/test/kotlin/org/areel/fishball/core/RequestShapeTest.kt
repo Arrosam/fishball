@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.areel.fishball.core.llm.Call
 import org.areel.fishball.core.llm.Effort
 import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.LlmMessage
@@ -26,6 +27,7 @@ class RequestShapeTest {
 
     @Test
     fun `print the routing call as the client sends it`() {
+        var seen = ""
         val server = ServerSocket(0)
         val port = server.localPort
 
@@ -40,6 +42,11 @@ class RequestShapeTest {
                     println("---- request on the wire ----")
                     println(text.take(4000))
                     println("---- end ----")
+                    // The call names itself, so a proxy log can tell an answer from the
+                    // bookkeeping around it. Asserted on the captured bytes rather than on the
+                    // builder: a header added to the wrong request builder compiles and is
+                    // simply absent, which is the class of mistake this file exists for.
+                    seen = text
                 }
                 }
             }
@@ -74,6 +81,10 @@ class RequestShapeTest {
                 }
             }
             server.close()
+        kotlin.test.assertTrue(
+            seen.contains(HydrogenClient.CALL_HEADER + ": " + Call.ANSWER.wire, ignoreCase = true),
+            "the request did not name itself: " + seen.take(400),
+        )
         }
     }
 }

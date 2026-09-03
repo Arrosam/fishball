@@ -75,6 +75,14 @@ class Conversation(
     private val pages: PageGateway = HttpPageReader(),
     private val registry: SourceRegistry,
     private val store: MemoryStore,
+    /**
+     * Whether this conversation is running on the professional tier.
+     *
+     * The only thing it gates is the factorisation in front of memory: on the fast tier the
+     * question is embedded as it stands. Rebuilt with the conversation on a model switch, so it
+     * is a value rather than a lambda.
+     */
+    private val expert: Boolean = false,
     private val now: () -> Long = { System.currentTimeMillis() },
     /**
      * Memory, off to one side. Defaults to running on this conversation's own client so a test
@@ -196,7 +204,7 @@ class Conversation(
         attached = images
         lastFailure = null
         // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
-        thread = priorTurns().toMutableList()
+        thread = (bridgeMessage() + priorTurns()).toMutableList()
 
         /*
          * §10 — what is already known, started here and read later.
@@ -326,7 +334,7 @@ class Conversation(
             val winding = round >= WIND_DOWN_AT
             val result = llm.complete(
                 LlmRequest(
-                    system = systemWithBridge(),
+                    system = standingPrompt(),
                     messages = thread,
                     tools = when {
                         closing -> emptyList()
@@ -343,6 +351,7 @@ class Conversation(
                     },
                     maxTokens = MAIN_BUDGET,
                     effort = Effort.MAX,
+                    call = org.areel.fishball.core.llm.Call.ANSWER,
                     temperature = 0.4,
                 ),
                 // The one call on the screen's two channels. Everything else a turn does runs
@@ -745,11 +754,27 @@ class Conversation(
         // sent; see [MemoryBus.terms].
         // Passed in rather than read off [attached], because this now runs on its own coroutine
         // alongside the turn and a field is the one thing a later turn could change underneath it.
-        val wanted = memory.terms(
-            question,
-            priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS),
-            hasPicture = hasPicture,
-        )
+        /*
+         * The factorisation, and only on the professional tier.
+         *
+         * Taking a question apart into what it needs known is a real improvement - 「我这个药还
+         * 能吃吗」 shares no word with 对青霉素过敏 and no amount of embedding the sentence will
+         * find it - but it is a whole model call in front of every turn, and the fast tier
+         * exists to not make calls like that.
+         *
+         * So the fast tier embeds the question as it stands. That finds the paraphrases, which
+         * is most of what memory is for, and misses the ones where the needed fact is not named
+         * in the sentence. A worse search, not an absent one.
+         */
+        val wanted = if (expert) {
+            memory.terms(
+                question,
+                priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS),
+                hasPicture = hasPicture,
+            )
+        } else {
+            emptyList<String>() to emptyList()
+        }
         val facts = wanted.first.ifEmpty { listOf(question) }
         val personal = wanted.second
 
@@ -816,13 +841,26 @@ class Conversation(
     }
 
     /** Spec §8's bridge, when there is one: the previous session folded into a paragraph. */
-    private fun systemWithBridge(): String {
-        // WORK sits with SYSTEM, in front of the bridge, so the two stable halves are one
-        // contiguous prefix and a session's bridge - which changes only when a session rolls -
-        // is the first thing after them.
-        val standing = AgentPrompt.SYSTEM + "\n\n" + AgentPrompt.WORK
-        val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return standing
-        return standing + "\n\n" + AgentPrompt.Label.BRIDGE + bridge
+    /**
+     * The standing prompt, and nothing else. The same bytes on every call, forever.
+     *
+     * The session bridge used to be appended here, which meant the one part of the request that
+     * could be cached stopped being identical the moment a session rolled - and since a rollover
+     * is exactly when the thread gets long enough for the cache to be worth anything, it was
+     * thrown away at the least convenient moment. It is a message now; see [bridgeMessage].
+     */
+    private fun standingPrompt(): String = AgentPrompt.SYSTEM + "\n\n" + AgentPrompt.WORK
+
+    /**
+     * The previous session, folded, as the first thing said rather than part of the system.
+     *
+     * A user turn because that is what it is: something already established between the two of
+     * them. DeepSeek Harness lands its checkpoints the same way and for the same reason - the
+     * summary belongs in the dialogue, and the system prompt belongs to the cache.
+     */
+    private fun bridgeMessage(): List<LlmMessage> {
+        val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return listOf(LlmMessage.user(AgentPrompt.Label.BRIDGE + bridge))
     }
 
     /**
@@ -975,17 +1013,41 @@ class Conversation(
         return true
     }
 
+    /**
+     * Fold a session, by asking the conversation itself.
+     *
+     * Three things here are deliberate and all three come from the same finding.
+     *
+     * It runs on the *answering* model, not [SYSTEM_MODEL]. Writing a summary somebody's next
+     * hour depends on is not the bookkeeping that model is for, and the thread it is condensing
+     * was written by this one.
+     *
+     * It reuses the standing prompt and the tool list verbatim rather than a summariser prompt
+     * of its own. The tools ride along unused on purpose: DeepSeek Harness measured that
+     * dropping them shortens the token sequence and breaks alignment with the cached request,
+     * and the whole point of this shape is that the call is a prefix of one the service has
+     * already seen. Its own system prompt would cost the entire cache to save a few hundred
+     * tokens of persona.
+     *
+     * And the instruction goes last, as a user turn, for the same reason - anything in front of
+     * the replayed conversation would change the prefix.
+     */
     private suspend fun summarise(turns: List<ConversationTurn>): String? {
-        val transcript = turns.joinToString("\n") {
-            AgentPrompt.logLine(it.speaker == Speaker.USER, it.text)
+        val replayed = turns.map {
+            if (it.speaker == Speaker.USER) LlmMessage.user(stampOf(it.at) + it.text)
+            else recalled(it, stampOf(it.at) + it.text)
         }
         val result = llm.complete(
             LlmRequest(
-                system = AgentPrompt.SYSTEM,
-                messages = listOf(LlmMessage.user("${AgentPrompt.COMPACT}\n\n$transcript")),
-                maxTokens = 1024,
-                model = SYSTEM_MODEL,
+                system = standingPrompt(),
+                messages = bridgeMessage() + replayed + LlmMessage.user(AgentPrompt.COMPACT),
+                // Unused, and sent anyway. See above.
+                tools = listOf(
+                    Tools.search, Tools.read, Tools.history, Tools.quote, Tools.answer,
+                ),
+                maxTokens = COMPACT_BUDGET,
                 effort = Effort.HIGH,
+                call = org.areel.fishball.core.llm.Call.COMPACT,
             ),
         )
         return (result as? LlmResult.Ok)?.text?.takeIf { it.isNotBlank() }
@@ -1324,6 +1386,16 @@ private const val THINKING = "thinking"
  * we ever said" cannot arrive in one tool result.
  */
 private const val LOG_HITS = 40
+
+/**
+ * Room for a structured checkpoint.
+ *
+ * Six sections of bullets over a whole session, and it was 1024 when it was one paragraph. A
+ * summary cut off mid-section is worse than a short one: the sections are ordered, so what gets
+ * lost is always the end - 现在在聊什么 and 要注意的, which are the two the next session most
+ * needs.
+ */
+private const val COMPACT_BUDGET = 8_192
 
 /** How much of one search comes back. Enough to choose from, not enough to drown in. */
 private const val HITS_PER_QUERY = 6

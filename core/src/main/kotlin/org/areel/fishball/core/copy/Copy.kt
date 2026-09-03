@@ -292,14 +292,56 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
      * Asked for as prose rather than notes because the next session reads it as context, not as
      * a record: what was being discussed, what was settled, and what was left hanging.
      */
+    /**
+     * Folding a session, as the last thing said in the conversation being folded.
+     *
+     * There is deliberately no summariser system prompt. This goes out as the final *user*
+     * message with the conversation's own system prompt, tools and messages in front of it, so
+     * the whole call is a prefix of a request the service has already seen and the cache is
+     * reused rather than thrown away. That is DeepSeek Harness's finding, and they are explicit
+     * that even the tools have to ride along unused, because dropping them shortens the token
+     * sequence and breaks the alignment.
+     *
+     * The shape is theirs too: fixed sections, always all of them, in order, terse, and 「无」
+     * rather than a missing heading - a summary that silently omits a section is one nobody can
+     * tell is incomplete. What differs is which sections, because theirs checkpoint a coding
+     * task and this checkpoints a conversation with somebody about their life.
+     *
+     * The two rules at the end exist because the instruction moved out of the system prompt and
+     * into the dialogue: from here it looks like a turn, and a turn is something the model
+     * would otherwise answer conversationally or reach for a tool over.
+     */
     val COMPACT = """
-下面是你和他之前的对话。把它压缩成一段话，写给「接着聊下去的你」看。
+现在把上面这段对话压缩成一份记录，写给「接着聊下去的你」看，不要丢掉要紧的东西。
 
-要留下的：他问过什么、你查到的结论是什么、还有什么没聊完。
-要留下的还有：他顺带说到的关于他自己的事，比如在吃什么药、有什么忌口。
-不要留：具体的网址、搜索过程、你当时的措辞。
+按下面的结构写，每一节都要有，顺序不要变，空的写「无」，不要整节省略。
+一节里用短句列点，不要写成一段话。
 
-只写这一段话，不要加标题，不要分点。
+## 他问过什么
+- [他想知道的事，以及中途变成了什么。原话要紧的地方就照抄]
+
+## 已经查到的结论
+- [查出来的结果，带上是哪家说的和等级；数字、剂量、日期照抄]
+
+## 关于他本人
+- [他自己说到的：在吃的药、过敏、忌口、家里的情况、口味]
+
+## 还没做完的事
+- [他要求过但还没给他的]
+
+## 现在在聊什么
+- [这一刻正在进行的那件事]
+
+## 要注意的
+- [他纠正过你的地方、他的偏好、还没弄清楚的问题]
+
+规矩：
+- 数字、药名、日期、机构名照原样写，不要换说法。
+- 他纠正过你的话，一定要留下来。
+- 不要提这次压缩，也不要说上下文被整理过。
+- 只输出这份记录，不要调用工具，不要说别的。
+- 上面如果已经有一份这样的记录，那是上一次的：还成立的留着，过时的删掉，跟新的合成一份，
+  不要原样抄一遍。
 """.trim()
 
     /**
@@ -399,16 +441,42 @@ outdated_about_user，同时把新的说法写进 about_user。只在真的不�
      * thing being asked about. What is wanted is the shape of the answer, not the shape of the
      * asking - and usually more than one, because a question tends to need several facts.
      */
+    /**
+     * The whole of what a parser is told.
+     *
+     * This used to arrive under [SYSTEM] - sixteen hundred characters about who 鱼丸 is, how to
+     * cite a source, what may be said about buying things - in front of a request to list two
+     * sets of noun phrases. None of it bears on the task, and all of it invites the model to
+     * behave like the assistant it has just been told it is; live, a picture question sent it
+     * into a spiral about not being able to see the picture.
+     *
+     * So it is addressed as what it is. No persona, no rules of conduct, no tools beyond the one
+     * it is forced into: take a sentence apart and name the pieces.
+     */
+    val PARSE_SYSTEM = """
+你是一个语义拆解工具，不是助手。不要回答问题，不要解释，不要闲聊。
+只把输入拆成结构化的检索词。
+""".trim()
+
+    /**
+     * Spec §10 — the factorisation, and the only thing this call does.
+     *
+     * Worded as decomposition rather than as a question, and given examples rather than
+     * explanations, because that is what a parser can be held to. "要回答这个问题你得先知道哪些
+     * 事" reads as an invitation to think about the answer; "拆成几个要查什么" does not.
+     */
     val RECALL_TERMS = """
-要回答下面这个问题，你得先知道哪些事？
+把这句话拆成「要查什么」。只拆，不答。
 
-facts 里写需要的事实，一条一个短语，别写成问句。
-比如问「布洛芬伤胃吗」，需要的是「布洛芬的常见副作用」「布洛芬的胃肠道风险」。
+facts：这句话涉及的事实，一条一个名词短语。
+about_user：这句话里跟他本人有关的方面，一条一个名词短语；跟他本人无关就留空。
 
-about_user 里写关于他本人的、会影响这个答案的事。
-比如问吃药就写「药物过敏史」「正在吃的药」；跟他本人无关就留空。
+例：
+布洛芬伤胃吗 → facts：布洛芬 副作用、布洛芬 胃肠道风险；about_user：空
+我这个药还能吃吗 → facts：药物相互作用；about_user：药物过敏史、正在吃的药
+明天天气怎么样 → facts：天气预报；about_user：空
 
-两边各最多三条，短语，不要解释。
+各最多三条。
 """.trim()
 
     /**
@@ -436,7 +504,20 @@ about_user 里写关于他本人的、会影响这个答案的事。
         const val FROM_MEMORY = "这是以前查过、现在还没过期的结论，可以直接用，不用再查："
         const val FROM_LOG = "这是他以前跟你说过的话："
         const val NOTHING_LOGGED = "（没有找到相关的记录）"
-        const val BRIDGE = "你们之前聊过的："
+        /**
+         * What the folded summary is introduced as, when it goes back into the thread.
+         *
+         * It used to be glued to the front of the system prompt, which made the one part of the
+         * request that is identical on every call stop being identical the moment a session
+         * rolled - and the prefix cache went with it. It is a message now, and the system
+         * prompt never changes again.
+         *
+         * Worded so the model treats it as something it already knows rather than as news: a
+         * summary announced as a summary gets acknowledged, and 「我们之前聊过……」 is not a
+         * sentence anybody wants their assistant opening with.
+         */
+        const val BRIDGE = "这是你们之前聊过的内容，已经整理好了。当成你本来就知道的事，" +
+            "接着往下聊，不用回头复述，也不用提这件事。\n\n"
         const val KNOWN = "你已经知道的（不用再查；跟这次问题有关的，回答里要照顾到）："
 
         /**
