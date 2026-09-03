@@ -93,6 +93,30 @@ android {
     }
 }
 
+/*
+ * Unit tests could not start on this machine, and the cause is not in this project.
+ *
+ * PATH here carries a stray double quote - `...\jdk8u282-b08\bin";C:\Users\...`. The JVM folds
+ * PATH into `java.library.path` at startup, so the daemon's copy carries the quote too; the
+ * Android plugin reads that property when it launches a test worker, appends the jniLibs
+ * directories, and passes the result as `-Djava.library.path=...`. The unbalanced quote then
+ * breaks the quoting of the rest of the command line and a bare word further along is taken for
+ * the main class - the JVM reports `ClassNotFoundException: VS`, the middle word of
+ * `Microsoft VS Code`, and the task dies before one test is loaded. Removing that entry from
+ * PATH only moves the error to `Files`, from `Program Files`, which is how the quote was found.
+ *
+ * Two things that look like the fix and are not: setting `environment("PATH", ...)` on the task
+ * changes the worker's environment, but the value was taken from the daemon; and setting the
+ * system property in `doFirst` is overwritten, because the plugin writes it later.
+ *
+ * So it is cleaned where it is read from, at configuration time, and it is a no-op on a machine
+ * whose PATH is well formed. The real repair is to take the quote out of PATH - this only means
+ * the tests do not wait for that.
+ */
+System.getProperty("java.library.path")?.takeIf { it.contains('"') }?.let {
+    System.setProperty("java.library.path", it.replace("\"", ""))
+}
+
 dependencies {
     // Trust engine, memory, sessions, the turn state machine. Android-free by design.
     implementation(project(":core"))

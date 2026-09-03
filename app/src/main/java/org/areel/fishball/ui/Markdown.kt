@@ -218,8 +218,15 @@ object Markdown {
         "`" to SpanStyle(fontFamily = FontFamily.Monospace, color = Areel.Ink),
     )
 
-    /** `[words](url)` keeps the words. */
-    private val LINK = Regex("""\[([^\]]+)]\((?:[^)]*)\)""")
+    /**
+     * `[words](url)` keeps the words.
+     *
+     * The lookbehind is the whole of the difference between a link and an image. Without it
+     * `![说明书](…)` matches from the bracket onward, the words and the address are replaced,
+     * and all that survives is a lone `!` - which is worse than either rendering it or leaving
+     * it alone, because it hides that anything was there. A test caught this.
+     */
+    private val LINK = Regex("""(?<!!)\[([^\]]+)]\((?:[^)]*)\)""")
 
     private val HEADING = Regex("""^#{1,6} +\S.*$""")
     private val BULLET = Regex("""^ *[-*] +\S.*$""")
