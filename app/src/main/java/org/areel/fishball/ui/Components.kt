@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -722,6 +724,7 @@ fun AssistantBubble(
  * the assistant's plate. That survives greyscale and colour-blindness, which a hue difference
  * would not.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UserBubble(
     text: String,
@@ -755,8 +758,14 @@ fun UserBubble(
             ) {
                 Column {
                     if (images.isNotEmpty()) {
-                        Row(
+                        // Wrapped, not a row. Five thumbnails at [THUMB] are wider than the
+                        // bubble on any phone, and a Row simply ran off its right edge: the
+                        // fourth and fifth pictures were clipped out of the message that sent
+                        // them. A photograph that went to the model and cannot be seen in the
+                        // thread reads as one that was never sent.
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.padding(bottom = if (text.isBlank()) 0.dp else 8.dp),
                         ) {
                             images.forEachIndexed { i, bitmap ->
