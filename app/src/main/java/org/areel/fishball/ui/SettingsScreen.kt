@@ -80,6 +80,13 @@ fun SettingsScreen(
     history: Pair<Int, Long>,
     /** A model switch is folding the conversation. It is a model call, so it is not instant. */
     compacting: Boolean,
+    /** What this build calls itself, as the person would say it back to whoever helps them. */
+    version: String,
+    /** The on-demand update check is out on the network. */
+    checkingUpdate: Boolean,
+    /** What the last check said, when it had nothing to offer: current, or unreachable. */
+    updateNote: String?,
+    onCheckUpdate: () -> Unit,
     onModeChange: (Mode) -> Unit,
     onKeyChange: (String) -> Unit,
     onClearHistory: () -> Unit,
@@ -312,6 +319,52 @@ fun SettingsScreen(
                         modifier = Modifier.padding(start = 10.dp),
                         enabled = turns > 0,
                         onConfirm = onClearHistory,
+                    )
+                }
+
+                Spacer(Modifier.height(28.dp))
+                SettingLabel(stringResource(R.string.settings_version))
+
+                /*
+                 * The version, and a way to ask for a newer one.
+                 *
+                 * The launch check is silent when there is nothing to offer, which is right for
+                 * something nobody asked for. This row is somebody asking, so it answers either
+                 * way: a newer build raises the same sheet the launch check would, and otherwise
+                 * a line under the row says it is current or that the site could not be reached.
+                 * The number itself is here because it is the first thing anyone helping over the
+                 * phone asks for.
+                 */
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassSurface(small = true)
+                        .pressable(enabled = !checkingUpdate, onClick = onCheckUpdate)
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.version_current, version),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (checkingUpdate) {
+                        Bubbling()
+                    } else {
+                        Text(
+                            stringResource(R.string.update_check),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Areel.Magenta,
+                        )
+                    }
+                }
+                if (updateNote != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        updateNote,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Areel.Ink40,
                     )
                 }
 

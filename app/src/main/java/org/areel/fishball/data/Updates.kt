@@ -36,7 +36,10 @@ data class Release(
     val notes: String = "",
     /** Bytes, for the modal. Zero means the manifest did not say. */
     val size: Long = 0,
-)
+) {
+    /** Newer than the build reading it, and installable. Compared on the code, never the name. */
+    fun isNewer(): Boolean = versionCode > BuildConfig.VERSION_CODE && url.isNotBlank()
+}
 
 /**
  * Checking whether a newer FishBall exists, and handing one to the installer.
@@ -66,11 +69,20 @@ class Updates(private val context: Context) {
      * The published release, if it is newer than this build. Null for everything else —
      * up to date, unreachable, malformed, or a manifest that has not been put there yet.
      */
-    suspend fun check(): Release? = withContext(Dispatchers.IO) {
+    suspend fun check(): Release? = published()?.takeIf { it.isNewer() }
+
+    /**
+     * What the site is publishing, whatever version it is. Null only when it could not be read.
+     *
+     * The launch check has no use for the distinction - up to date and unreachable both mean
+     * nothing to say - but somebody who opened Settings and pressed 检查更新 asked a question,
+     * and 「已经是最新版」 and 「这会儿连不上」 are different answers to it.
+     */
+    suspend fun published(): Release? = withContext(Dispatchers.IO) {
         runCatching {
             val body = http.get(BuildConfig.UPDATE_MANIFEST_URL).bodyAsText()
             json.decodeFromString<Release>(body)
-        }.getOrNull()?.takeIf { it.versionCode > BuildConfig.VERSION_CODE && it.url.isNotBlank() }
+        }.getOrNull()
     }
 
     /**

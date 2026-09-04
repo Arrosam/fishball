@@ -142,10 +142,14 @@ Two things follow from the release being signed differently to the debug build:
 ### Publishing an update
 
 The app reads `https://areel.org/fishball/latest.json` on launch and offers anything with a
-higher `versionCode`. To ship one: bump `versionCode` and `versionName` in
-[app/build.gradle.kts](app/build.gradle.kts), build the release, attach the APK to a GitHub
-release **named `fishball.apk`** so
-`releases/latest/download/fishball.apk` keeps resolving, then update `latest.json` on the site.
+higher `versionCode`; Settings has a 检查更新 row that runs the same check on demand. To ship
+one: bump `versionCode` and `versionName` in [app/build.gradle.kts](app/build.gradle.kts),
+build the release, and attach the APK to a GitHub release tagged `v<versionName>` under two
+names — **`fishball-<versionName>.apk`**, so a downloaded file says which build it is, and
+**`fishball.apk`**, so `releases/latest/download/fishball.apk` keeps resolving for anyone who
+has that link. Then update `latest.json` on the site: `versionCode`, `versionName`, `size`,
+`notes`, and `url` pointing at the version-named asset. The site's download buttons follow
+`url` from the manifest, so the page itself does not need editing beyond its fallback text.
 
 ## Known gaps
 

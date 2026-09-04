@@ -224,6 +224,10 @@ private fun FishBallApp() {
             var history by remember { mutableStateOf(vm.historySize()) }
             var compacting by remember { mutableStateOf(false) }
             val modeUnavailable = stringResource(R.string.mode_unavailable)
+            var checkingUpdate by remember { mutableStateOf(false) }
+            var updateNote by remember { mutableStateOf<String?>(null) }
+            val upToDate = stringResource(R.string.update_latest)
+            val cannotCheck = stringResource(R.string.update_unreachable)
 
             SettingsScreen(
                 mode = mode,
@@ -232,6 +236,23 @@ private fun FishBallApp() {
                 error = settingsError,
                 history = history,
                 compacting = compacting,
+                version = BuildConfig.VERSION_NAME,
+                checkingUpdate = checkingUpdate,
+                updateNote = updateNote,
+                onCheckUpdate = {
+                    checkingUpdate = true
+                    updateNote = null
+                    scope.launch {
+                        val published = updates.published()
+                        when {
+                            published == null -> updateNote = cannotCheck
+                            // The same sheet the launch check raises, over this screen.
+                            published.isNewer() -> update = UpdateState.Offered(published)
+                            else -> updateNote = upToDate
+                        }
+                        checkingUpdate = false
+                    }
+                },
                 onClearHistory = {
                     vm.clearHistory()
                     history = vm.historySize()
