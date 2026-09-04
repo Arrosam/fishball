@@ -8,6 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -49,6 +52,9 @@ import org.areel.fishball.core.trust.Tier
  * The rest is launched and forgotten. A person who asked a question should never wait on
  * filing, and should never be shown its failures either — every path here swallows its errors,
  * because a memory that did not get written is a worse answer next week, not a broken app now.
+ *
+ * **And filing waits its turn.** Recall runs beside the turn because the answer needs it;
+ * filing runs between turns because nothing does. See [turnStarted].
  */
 class MemoryBus(
     /**
@@ -107,6 +113,8 @@ class MemoryBus(
     init {
         scope.launch {
             for (filing in filings) {
+                // Not while a turn is running. See [turnStarted].
+                if (filing !is Filing.Barrier) turns.first { it == 0 }
                 catching {
                     when (filing) {
                         is Filing.Said -> fileSaid(filing.text)
@@ -117,6 +125,35 @@ class MemoryBus(
                 if (filing is Filing.Barrier) filing.reached.complete(Unit)
             }
         }
+    }
+
+    /** Turns in flight. The loop above only takes the next filing while this is zero. */
+    private val turns = MutableStateFlow(0)
+
+    /**
+     * A turn is starting: hold the filing until it is over.
+     *
+     * Filing is a side bus, and a side bus yields. Two model calls ride on every turn - what the
+     * person said about themselves, and the answer that was given - and both used to go out the
+     * moment they were queued, beside the calls the person was actually waiting on. Nothing in
+     * the app made the turn wait for them, but the proxy, the upstream behind it and the phone's
+     * own radio are shared, and a request nobody is waiting on should not be competing with one
+     * somebody is. So nothing is filed while a turn runs; what was queued during it is filed
+     * the moment it ends, in order, while the person reads the answer.
+     *
+     * The cost is stated plainly: what someone says about themselves is now recorded when the
+     * turn ends rather than when they say it. A turn that fails still ends, so a stated allergy
+     * survives a dead search and a dead proxy as before; what it no longer survives is the app
+     * being killed mid-turn, which it only ever survived when the filing call had already
+     * finished. A filing already in flight when a turn starts is left to finish - it is one
+     * call, it is bounded, and throwing it away would spend its tokens twice.
+     */
+    fun turnStarted() {
+        turns.update { it + 1 }
+    }
+
+    fun turnEnded() {
+        turns.update { (it - 1).coerceAtLeast(0) }
     }
 
     /**

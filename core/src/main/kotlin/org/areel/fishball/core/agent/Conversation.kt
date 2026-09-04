@@ -189,6 +189,22 @@ class Conversation(
          * classifier left to keep them from.
          */
         images: List<LlmContent.Image> = emptyList(),
+    ): Reply {
+        // The bus holds its filing while the turn runs and picks it up the moment the turn
+        // ends, however the turn ends. See [MemoryBus.turnStarted].
+        memory.turnStarted()
+        try {
+            return turn(userText, progress, images)
+        } finally {
+            memory.turnEnded()
+        }
+    }
+
+    /** One turn, start to finish. [ask] wraps it to keep the bus out of its way. */
+    private suspend fun turn(
+        userText: String,
+        progress: TurnProgress,
+        images: List<LlmContent.Image>,
     ): Reply = coroutineScope {
         val recording = Recording(progress)
         val at = now()
@@ -235,6 +251,11 @@ class Conversation(
          * `rerank` would cancel this scope from the side at an unpredictable moment; a memory
          * lookup that did not work is a worse answer, never a broken turn.
          */
+        // Narrated like a tool, because to the person watching that is what it is: the one
+        // piece of memory work that happens before the model acts. What it found is said at
+        // the seam it lands at - see [converse] - so the panel never claims a fact was in front
+        // of the model on a turn that answered before the lookup came back.
+        recording.step(UiCopy.Narration.RECALLING)
         val recalled = async {
             catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
                 .getOrDefault(Remembered.NOTHING)
@@ -461,6 +482,7 @@ class Conversation(
             val late = if (known == null && recalled.isCompleted) {
                 val arrived = recalled.await()
                 known = arrived
+                progress.step(UiCopy.Narration.recalled(arrived.world.size + arrived.personal.size))
                 arrived.lines().takeIf { it.isNotEmpty() }
             } else {
                 null

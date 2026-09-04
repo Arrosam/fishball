@@ -758,6 +758,12 @@ object UiCopy {
 
         /** §8's fold, when it lands mid-conversation. One long call, so it is announced. */
         const val FOLDING = "先把之前聊的整理一下……"
+
+        /** §10's lookup, as a step of its own: the one memory call that runs before the model acts. */
+        const val RECALLING = "在回忆……"
+
+        /** What the lookup found, said when it reaches the model rather than when it returns. */
+        fun recalled(count: Int): String = if (count == 0) "没想起相关的事" else "想起了 $count 件事"
         fun looked(at: String) = "看了$at"
 
         /** One page, opened and read, for the note that stays in the thread. */

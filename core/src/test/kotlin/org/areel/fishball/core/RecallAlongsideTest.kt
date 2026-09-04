@@ -9,7 +9,9 @@ import kotlinx.serialization.json.put
 import org.areel.fishball.core.agent.Conversation
 import org.areel.fishball.core.agent.MemoryBus
 import org.areel.fishball.core.agent.Tools
+import org.areel.fishball.core.agent.TurnProgress
 import org.areel.fishball.core.copy.AgentPrompt
+import org.areel.fishball.core.copy.UiCopy
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.core.llm.LlmClient
 import org.areel.fishball.core.llm.LlmContent
@@ -270,6 +272,43 @@ class RecallAlongsideTest {
             "an answer was held back on a turn that never wrote one early",
         )
         assertEquals("答案", reply.text)
+    }
+
+    /**
+     * The lookup is a step in the panel, like a search: said when it starts, and what it found
+     * said when it reaches the model. At the seam, not when it returned, so a turn that answered
+     * before memory came back never shows a fact the model did not have.
+     */
+    @Test
+    fun `the lookup is narrated, and what it found is said where it lands`() {
+        val store = seeded()
+        val chat = Scripted(SEARCH_FIRST, "答案")
+        val conversation = conversation(
+            store,
+            chat,
+            PausedRetrieval(0),
+            search = PausedSearch(SEARCH_WAIT),
+        )
+        val steps = CopyOnWriteArrayList<String>()
+        val watching = object : TurnProgress {
+            override fun step(text: String) {
+                steps += text
+            }
+        }
+
+        runBlocking { conversation.ask("这个药能吃吗？", watching) }
+
+        assertEquals(
+            UiCopy.Narration.RECALLING,
+            steps.first(),
+            "the lookup was not the first thing narrated: $steps",
+        )
+        val found = UiCopy.Narration.recalled(1)
+        assertTrue(found in steps, "what memory found was never said: $steps")
+        assertTrue(
+            steps.indexOf(found) > steps.indexOf(UiCopy.Narration.SEARCHING),
+            "the finding was announced before the round it landed on: $steps",
+        )
     }
 
     private companion object {

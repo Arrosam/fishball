@@ -1,5 +1,6 @@
 package org.areel.fishball.core
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -158,5 +159,62 @@ class MemoryBusTest {
             store.preferences().map { it.text },
             "a fact stated on a turn that failed was lost",
         )
+    }
+
+    /**
+     * And filing waits for the turn to end.
+     *
+     * A side bus yields. Both filing calls used to go out the moment they were queued, beside
+     * the calls the person was actually waiting on, through the same proxy and the same radio.
+     * Nothing is filed while a turn runs; everything queued during it is filed when it ends,
+     * which the second assertion checks - a hold that never let go would be a quieter way of
+     * forgetting.
+     */
+    @Test
+    fun `nothing is filed while a turn is running`() {
+        val store = InMemoryStore()
+        val filing = Spy { forced ->
+            if (forced == Tools.NOTE_USER) {
+                json("""{"nothing":false,"about_user":[{"text":"对青霉素过敏","kind":"medical_constant"}]}""")
+            } else {
+                json("""{"nothing":true}""")
+            }
+        }
+        val chat = Watching(filing)
+        val conversation = Conversation(
+            llm = chat,
+            retrieval = null,
+            search = NoSearch,
+            registry = loadBundledRegistry(),
+            store = store,
+            memory = MemoryBus(llm = filing, retrieval = null, store = store),
+        )
+
+        runBlocking {
+            conversation.ask("我对青霉素过敏。")
+            conversation.memory.idle()
+        }
+
+        assertTrue(!chat.filedDuringTurn, "the bus filed while the turn was running: ${filing.forced}")
+        assertEquals(
+            listOf("对青霉素过敏"),
+            store.preferences().map { it.text },
+            "what was held back during the turn was never filed",
+        )
+    }
+
+    /** The conversation's model, noting whether the bus had done anything by the time it was asked. */
+    private class Watching(private val filing: Spy) : LlmClient {
+        @Volatile
+        var filedDuringTurn = false
+
+        override suspend fun complete(request: LlmRequest, onDelta: (LlmDelta) -> Unit): LlmResult {
+            // Give the bus every chance to misbehave before looking.
+            delay(50)
+            if (filing.forced.isNotEmpty()) filedDuringTurn = true
+            return LlmResult.Ok(text = "好的。", raw = LlmMessage.assistant("好的。"))
+        }
+
+        override suspend fun validate() = KeyCheck.Valid(listOf("spy"), "spy")
     }
 }
