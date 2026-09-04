@@ -1,5 +1,6 @@
 package org.areel.fishball.core.memory
 
+import kotlinx.serialization.json.JsonObject
 import org.areel.fishball.core.copy.Vocabulary
 import org.areel.fishball.core.trust.Tier
 import org.areel.fishball.core.answer.AnswerShape
@@ -181,6 +182,41 @@ data class ConversationTurn(
      * concludes the app forgot what it did.
      */
     val steps: List<String> = emptyList(),
+    /**
+     * What the model looked up on the way to this answer, round by round.
+     *
+     * The tool calls it made and what each one returned, in the order they happened. Kept so
+     * the next question can be answered by a model that remembers what it read, not only what
+     * it concluded: a follow-up like 「那篇药监局的页面还说了什么」 has nothing to resolve
+     * against when the previous turn is replayed as a question and an answer with the looking
+     * cut out from between them. Empty on user turns, and on answers that looked nothing up.
+     */
+    val rounds: List<ToolRound> = emptyList(),
+)
+
+/** One round of tool calls in a turn: what was asked for together, and what came back together. */
+data class ToolRound(
+    val exchanges: List<ToolExchange>,
+    /**
+     * What memory offered on the back of this round's results, when it landed here.
+     *
+     * The lines as the model was shown them. Memory is looked up beside the turn and folded in
+     * at the first seam between rounds, so it belongs to the round it arrived in - and a
+     * follow-up replayed without it is a follow-up whose model has forgotten it was ever told
+     * about the allergy.
+     */
+    val known: List<String> = emptyList(),
+)
+
+/** One tool call and its result, as they went over the wire. */
+data class ToolExchange(
+    /** The provider's id for the call. Kept so a replayed result still points at its call. */
+    val id: String,
+    val name: String,
+    /** The arguments as the model wrote them. The log has no opinion about their shape. */
+    val input: JsonObject,
+    val result: String,
+    val isError: Boolean = false,
 )
 
 /** A remembered fact about the user, and how well it matched what was being looked for. */

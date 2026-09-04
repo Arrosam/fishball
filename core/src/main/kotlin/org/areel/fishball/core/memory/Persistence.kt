@@ -2,6 +2,7 @@ package org.areel.fishball.core.memory
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.trust.Tier
@@ -84,6 +85,24 @@ data class TurnDto(
     // photograph base64'd into the log would be rewritten to disk on every single turn.
     val images: List<String> = emptyList(),
     val steps: List<String> = emptyList(),
+    // And once more for the tool calls. A log written before they were kept replays its
+    // answers as it always did, with nothing between question and answer.
+    val rounds: List<ToolRoundDto> = emptyList(),
+)
+
+@Serializable
+data class ToolRoundDto(
+    val exchanges: List<ToolExchangeDto> = emptyList(),
+    val known: List<String> = emptyList(),
+)
+
+@Serializable
+data class ToolExchangeDto(
+    val id: String,
+    val name: String,
+    val input: JsonObject,
+    val result: String,
+    val isError: Boolean = false,
 )
 
 @Serializable
@@ -244,6 +263,12 @@ internal fun ConversationTurn.toDto() = TurnDto(
     reasoning,
     images,
     steps,
+    rounds.map { round ->
+        ToolRoundDto(
+            round.exchanges.map { ToolExchangeDto(it.id, it.name, it.input, it.result, it.isError) },
+            round.known,
+        )
+    },
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -256,6 +281,12 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     reasoning = reasoning,
     images = images,
     steps = steps,
+    rounds = rounds.map { round ->
+        ToolRound(
+            round.exchanges.map { ToolExchange(it.id, it.name, it.input, it.result, it.isError) },
+            round.known,
+        )
+    },
     sources = sources.map {
         CitedSource(
             url = it.url,

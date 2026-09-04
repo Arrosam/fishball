@@ -163,6 +163,11 @@ class InMemoryStore : MemoryStore {
         turn.text.toByteArray(Charsets.UTF_8).size.toLong() +
             turn.sources.sumOf { source ->
                 (source.displayName.length + source.url.length + (source.quote?.length ?: 0)).toLong()
+            } +
+            // The tool results are most of what a researched answer weighs now that they are
+            // kept, and a size that left them out would barely move when the log is cleared.
+            turn.rounds.sumOf { round ->
+                round.exchanges.sumOf { (it.input.toString().length + it.result.length).toLong() }
             }
     }
 

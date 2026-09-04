@@ -31,6 +31,22 @@ data class Session(
  */
 const val SESSION_COMPACT_TOKENS = 128_000
 
+/**
+ * And where it has to fold whether or not anybody has stopped talking.
+ *
+ * Every turn now goes back with the tool calls that produced it - each search's results, each
+ * page that was opened - which is tens of thousands of tokens on a researched question. A
+ * conversation somebody is still having can therefore outgrow the window in an afternoon, and
+ * a session that only ever folds once it is stale would go on sending a prompt the model can no
+ * longer take. So past this line it folds at once, in the middle of things, which is the one
+ * place §8 did not want a boundary: the bridge is what makes that bearable.
+ *
+ * Five eighths of the window, not the whole of it. The count is [estimateTokens], which is
+ * rough and undercounts URL-heavy text, and the turn about to start has its own searching to
+ * fit on top of what is replayed.
+ */
+const val SESSION_CEILING_TOKENS = 160_000
+
 sealed class SessionDecision {
     data class Continue(val session: Session) : SessionDecision()
 
@@ -47,6 +63,7 @@ sealed class SessionDecision {
 class SessionManager(
     private val idleTimeoutMs: Long = SESSION_IDLE_TIMEOUT_MS,
     private val compactTokens: Int = SESSION_COMPACT_TOKENS,
+    private val ceilingTokens: Int = SESSION_CEILING_TOKENS,
 ) {
 
     fun decide(
@@ -61,7 +78,8 @@ class SessionManager(
         if (lastTurnAt == null) return SessionDecision.Continue(current)
         val stale = now - lastTurnAt >= idleTimeoutMs
         val large = contextTokens >= compactTokens
-        return if (stale && large) {
+        val full = contextTokens >= ceilingTokens
+        return if ((stale && large) || full) {
             SessionDecision.RollOver(current, nextId())
         } else {
             SessionDecision.Continue(current)

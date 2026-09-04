@@ -1,5 +1,11 @@
 package org.areel.fishball.core.memory
 
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.trust.Tier
 import kotlin.test.Test
@@ -44,6 +50,58 @@ class PersistenceTest {
         assertEquals("说明书把孕晚期列为禁忌，其余孕期只是慎用。", back.reasoning)
         assertEquals(2, back.steps.size)
         assertTrue(back.steps[1].startsWith("查了："), "the search summary was lost: " + back.steps)
+    }
+
+    /**
+     * And what the answer looked up, with what memory added on the way.
+     *
+     * These go back to the model on every later turn of the session, so a log that dropped them
+     * would replay a reopened conversation with the looking cut out of every answer - the
+     * failure `ToolHistoryAcrossTurnsTest` pins, one restart later.
+     */
+    @Test
+    fun `the looking comes back with the turn`() {
+        val io = Buffer()
+        PersistentStore(io).appendTurn(
+            ConversationTurn(
+                id = 8,
+                sessionId = 1,
+                at = 1_700_000_000_000,
+                speaker = Speaker.ASSISTANT,
+                text = "孕晚期禁用。",
+                rounds = listOf(
+                    ToolRound(
+                        exchanges = listOf(
+                            ToolExchange(
+                                id = "toolu_01",
+                                name = "search",
+                                input = buildJsonObject { putJsonArray("queries") { add("布洛芬 孕妇") } },
+                                result = "[0] 国家药监局（等级：权威）",
+                            ),
+                            ToolExchange(
+                                id = "toolu_02",
+                                name = "read_page",
+                                input = buildJsonObject { put("url", "https://www.nmpa.gov.cn/x") },
+                                result = "这一页打不开",
+                                isError = true,
+                            ),
+                        ),
+                        known = listOf("- [关于他] 对青霉素过敏"),
+                    ),
+                ),
+            ),
+        )
+
+        val back = PersistentStore(Buffer(io.contents)).recentTurns().single()
+        val round = back.rounds.single()
+        assertEquals(listOf("toolu_01", "toolu_02"), round.exchanges.map { it.id })
+        assertEquals(
+            "布洛芬 孕妇",
+            round.exchanges[0].input["queries"]?.jsonArray?.single()?.jsonPrimitive?.content,
+        )
+        assertEquals("[0] 国家药监局（等级：权威）", round.exchanges[0].result)
+        assertTrue(round.exchanges[1].isError, "a failed result came back as a good one")
+        assertEquals(listOf("- [关于他] 对青霉素过敏"), round.known)
     }
 
     private class Buffer(var contents: String? = null) : SnapshotIo {

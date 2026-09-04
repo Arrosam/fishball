@@ -17,6 +17,7 @@ import org.areel.fishball.core.quote.RejectionReason
 import org.areel.fishball.core.quote.SourceText
 import org.areel.fishball.core.session.Session
 import org.areel.fishball.core.session.SessionDecision
+import org.areel.fishball.core.session.SESSION_CEILING_TOKENS
 import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
 import org.areel.fishball.core.session.SessionManager
 import org.areel.fishball.core.session.estimateTokens
@@ -217,6 +218,10 @@ object BackendSpec {
             sm.decide(current, recently, T0, large, next) is SessionDecision.Continue, "")
         check("§8 stale and large compacts",
             sm.decide(current, hourAgo, T0, large, next) is SessionDecision.RollOver, "")
+        // Amended again once the tool results started riding along: a live conversation can
+        // now outgrow the window, and past the ceiling it folds whether stale or not.
+        check("§8 past the ceiling compacts even while talking",
+            sm.decide(current, recently, T0, SESSION_CEILING_TOKENS, next) is SessionDecision.RollOver, "")
 
         check("§8 an empty session needs no bridge", !sm.needsBridge(1), "")
         check("§8 a real session needs a bridge", sm.needsBridge(2), "")

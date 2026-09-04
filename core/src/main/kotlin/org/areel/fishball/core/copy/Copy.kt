@@ -755,6 +755,9 @@ object UiCopy {
         const val READING = "在看原文……"
         const val DISCONFIRMING = "在查有没有相反的说法……"
         const val COMPOSING = "整理中"
+
+        /** §8's fold, when it lands mid-conversation. One long call, so it is announced. */
+        const val FOLDING = "先把之前聊的整理一下……"
         fun looked(at: String) = "看了$at"
 
         /** One page, opened and read, for the note that stays in the thread. */

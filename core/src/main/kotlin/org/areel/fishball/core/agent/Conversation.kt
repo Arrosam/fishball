@@ -29,6 +29,8 @@ import org.areel.fishball.core.memory.ConversationTurn
 import org.areel.fishball.core.memory.MemoryStore
 import org.areel.fishball.core.memory.PreferenceRecall
 import org.areel.fishball.core.memory.Speaker
+import org.areel.fishball.core.memory.ToolExchange
+import org.areel.fishball.core.memory.ToolRound
 import org.areel.fishball.core.memory.WorldRecall
 import org.areel.fishball.core.quote.QuoteRequest
 import org.areel.fishball.core.quote.QuoteResult
@@ -186,8 +188,9 @@ class Conversation(
          */
         images: List<LlmContent.Image> = emptyList(),
     ): Reply = coroutineScope {
+        val recording = Recording(progress)
         val at = now()
-        rollSession(at)
+        rollSession(at, recording)
 
         store.appendTurn(
             ConversationTurn(
@@ -234,7 +237,6 @@ class Conversation(
             catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
                 .getOrDefault(Remembered.NOTHING)
         }
-        val recording = Recording(progress)
         val reply = try {
             converse(userText, recording, recalled)
         } finally {
@@ -262,6 +264,7 @@ class Conversation(
                 shape = reply.shape,
                 reasoning = reply.thinking,
                 steps = reply.steps,
+                rounds = reply.rounds,
                 sources = reply.sources.map {
                     CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
                 },
@@ -306,6 +309,8 @@ class Conversation(
         // round two is the same page it was in round one.
         val seen = LinkedHashMap<String, Evidence>()
         val verified = mutableMapOf<String, String>()
+        // Every tool round as it went over the wire, for the log. See [ConversationTurn.rounds].
+        val rounds = mutableListOf<ToolRound>()
 
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
@@ -398,6 +403,7 @@ class Conversation(
                     conflict = disputed,
                     thinking = thoughtIn(result.raw),
                     steps = (progress as? Recording)?.lines.orEmpty().toList(),
+                    rounds = rounds.toList(),
                 )
             }
             // Nothing said and nothing asked for. On the closing round that is a model that has
@@ -436,7 +442,6 @@ class Conversation(
                     else -> LlmContent.ToolResult(call.id, "不认识的工具。", isError = true)
                 }
             }
-
             /*
              * The seam. Memory rides in on the back of the tool results, in the same user turn.
              *
@@ -462,6 +467,14 @@ class Conversation(
             thread += LlmMessage(
                 LlmMessage.Role.USER,
                 results + listOfNotNull(late?.let { LlmContent.Text(knownBlock(it)) }),
+            )
+            // For the log, exactly as it went: the calls, what came back, and what memory
+            // added on the back of them. See [ConversationTurn.rounds].
+            rounds += ToolRound(
+                exchanges = result.toolCalls.zip(results) { call, outcome ->
+                    ToolExchange(call.id, call.name, call.input, outcome.content, outcome.isError)
+                },
+                known = late.orEmpty(),
             )
             round++
         }
@@ -1000,7 +1013,7 @@ class Conversation(
 
     // ---- sessions -----------------------------------------------------------------------
 
-    private suspend fun rollSession(at: Long) {
+    private suspend fun rollSession(at: Long, progress: TurnProgress) {
         // §8 — invisible to the user. Crossing the boundary bounds the prompt; it does not
         // clear anything they can see, and the log survives it untouched.
         if (session == null) session = store.loadSession()
@@ -1015,10 +1028,18 @@ class Conversation(
                 begin(Session(decision.newSessionId, at))
 
             is org.areel.fishball.core.session.SessionDecision.RollOver -> {
-                // Both stale and large. Everything said is still in the log; what rides forward
-                // is a paragraph, so a back-reference still resolves without carrying the whole
-                // conversation into every future prompt.
-                val bridge = if (sessions.needsBridge(sofar.size)) summarise(sofar) else null
+                // Both stale and large, or past the ceiling. Everything said is still in the
+                // log; what rides forward is a paragraph, so a back-reference still resolves
+                // without carrying the whole conversation into every future prompt.
+                val bridge = if (sessions.needsBridge(sofar.size)) {
+                    // Said out loud, because it is one long model call before the turn can
+                    // start and it now happens mid-conversation. Unnarrated it is a minute of
+                    // 思考中 with nothing under it, which reads as the app having hung.
+                    progress.step(UiCopy.Narration.FOLDING)
+                    summarise(sofar)
+                } else {
+                    null
+                }
                 begin(Session(decision.newSessionId, at, bridge = bridge))
             }
 
@@ -1042,7 +1063,17 @@ class Conversation(
      * past the window it was being kept inside.
      */
     private fun sentSize(turns: List<ConversationTurn>): Int = estimateTokens(
-        turns.joinToString("\n") { it.text + "\n" + it.reasoning },
+        replay(turns).joinToString("\n") { message ->
+            message.content.joinToString("\n") {
+                when (it) {
+                    is LlmContent.Text -> it.text
+                    is LlmContent.ToolUse -> it.input.toString()
+                    is LlmContent.ToolResult -> it.content
+                    is LlmContent.Opaque -> it.raw.toString()
+                    is LlmContent.Image -> ""
+                }
+            }
+        },
     )
 
     /**
@@ -1095,10 +1126,7 @@ class Conversation(
      * the replayed conversation would change the prefix.
      */
     private suspend fun summarise(turns: List<ConversationTurn>): String? {
-        val replayed = turns.map {
-            if (it.speaker == Speaker.USER) LlmMessage.user(stampOf(it.at) + it.text)
-            else recalled(it)
-        }
+        val replayed = replay(turns)
         val result = llm.complete(
             LlmRequest(
                 system = standingPrompt(),
@@ -1128,13 +1156,50 @@ class Conversation(
      */
     private fun priorTurns(): List<LlmMessage> {
         val open = session ?: return emptyList()
-        return store.turnsInSession(open.id)
-            .dropLast(1)
-            .map {
-                if (it.speaker == Speaker.USER) LlmMessage.user(stampOf(it.at) + it.text)
-                else recalled(it)
-            }
+        return replay(store.turnsInSession(open.id).dropLast(1))
     }
+
+    /**
+     * Turns from the log, as messages the model reads.
+     *
+     * Every answer goes back with the looking that produced it - each round's tool calls as an
+     * assistant turn, their results and whatever memory added on the back of them as the user
+     * turn after it, exactly as they were sent the first time - and only then the answer.
+     * Without that, every answer was replayed as though it had been written from nothing: the
+     * model could see that it had said 孕晚期禁用 and not which page said so, and a follow-up
+     * about that page sent it searching for it again; and what memory had offered mid-turn was
+     * gone with it, so the model that knew about the allergy last turn did not know this one.
+     *
+     * All of it, not a recent window. What keeps the prompt inside the window is §8: the size
+     * measured here is what decides a fold, and [SESSION_CEILING_TOKENS] folds a live session
+     * once it can no longer be carried whole.
+     *
+     * One function for the thread, the checkpoint and the size, so what is measured is what is
+     * sent. See [sentSize].
+     */
+    private fun replay(turns: List<ConversationTurn>): List<LlmMessage> = turns.flatMap { turn ->
+        if (turn.speaker == Speaker.USER) listOf(LlmMessage.user(stampOf(turn.at) + turn.text))
+        else exchanges(turn.rounds) + recalled(turn)
+    }
+
+    /** The tool rounds of one answer, as the assistant/user pairs the provider expects. */
+    private fun exchanges(rounds: List<ToolRound>): List<LlmMessage> = rounds
+        .filter { it.exchanges.isNotEmpty() }
+        .flatMap { round ->
+            listOf(
+                LlmMessage(
+                    LlmMessage.Role.ASSISTANT,
+                    round.exchanges.map { LlmContent.ToolUse(it.id, it.name, it.input) },
+                ),
+                LlmMessage(
+                    LlmMessage.Role.USER,
+                    round.exchanges.map { LlmContent.ToolResult(it.id, it.result, it.isError) } +
+                        listOfNotNull(
+                            round.known.takeIf { it.isNotEmpty() }?.let { LlmContent.Text(knownBlock(it)) },
+                        ),
+                ),
+            )
+        }
 
     /**
      * One assistant turn from the log, with the reasoning that produced it back in front of it.
@@ -1321,6 +1386,8 @@ data class Reply(
     val thinking: String = "",
     /** What the turn narrated on its way here, in the order it said it. */
     val steps: List<String> = emptyList(),
+    /** Every tool round the turn ran, for the log. See [ConversationTurn.rounds]. */
+    val rounds: List<ToolRound> = emptyList(),
 )
 
 data class SourceRef(
