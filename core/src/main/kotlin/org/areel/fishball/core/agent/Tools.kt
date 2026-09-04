@@ -77,7 +77,7 @@ object Tools {
     val search = LlmTool(
         name = SEARCH,
         description = "查资料。一次可以给几条不同的查询，会同时去查；看完结果还可以再查一轮。" +
-            "每条结果都带系统判定的来源等级。",
+            "每条结果都带系统判定的来源等级，并且按跟查询的相关度排好了序，靠前的更对题。",
         inputSchema = obj {
             put("type", "object")
             putJsonObject("properties") {

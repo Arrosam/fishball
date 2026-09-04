@@ -12,6 +12,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import org.areel.fishball.core.answer.AnswerShape
 import org.areel.fishball.core.catching
 import org.areel.fishball.core.copy.AgentPrompt
@@ -46,6 +47,7 @@ import org.areel.fishball.core.session.SessionManager
 import org.areel.fishball.core.session.estimateTokens
 import org.areel.fishball.core.trust.ClaimContext
 import org.areel.fishball.core.trust.Evidence
+import org.areel.fishball.core.trust.SearchHit
 import org.areel.fishball.core.trust.SourceRegistry
 import org.areel.fishball.core.trust.Tier
 import org.areel.fishball.core.trust.Topic
@@ -520,11 +522,23 @@ class Conversation(
             )
         }
 
-        val fresh = responses
+        // Each query's page ranked against that query rather than taken off the top in engine
+        // order, and the best of every angle interleaved, so a call with five queries is not
+        // answered by the first two of them. See [ranked].
+        val ranked = responses
             .filterNot { it.failed }
-            .flatMap { it.hits.take(HITS_PER_QUERY) }
+            .map { response ->
+                async {
+                    val pool = response.hits
+                        .distinctBy { it.url }
+                        .filterNot { seen.containsKey(it.url) }
+                        .take(POOL_PER_QUERY)
+                    ranked(response.query.text, pool).take(HITS_PER_QUERY)
+                }
+            }
+            .awaitAll()
+        val fresh = interleave(ranked)
             .distinctBy { it.url }
-            .filterNot { seen.containsKey(it.url) }
             .take(HITS_PER_CALL)
             .map { Evidence(it, resolver.resolve(it)) }
 
@@ -553,6 +567,44 @@ class Conversation(
             }
         }
         LlmContent.ToolResult(call.id, body)
+    }
+
+    /**
+     * One query's results, best first, as a cross-encoder judges them against the query.
+     *
+     * A search engine's page is ordered by whatever the engine optimises for, and a result's
+     * place on it says little about the page: the live instance merges three engines and hands
+     * back the mainland source a question needs behind five Hong Kong ones. Six results were
+     * taken off the top of each page and the model was left to judge those by eye. The reranker
+     * reads title and snippet against the query and orders the whole page, so what the model
+     * is shown is more of the page and the right end of it.
+     *
+     * Ordered, never filtered. The floor memory uses was measured for "does this answer the
+     * question", which is not the question here, and a floor over a result list would delete
+     * every result on the day the reranker returns zeros. Engine order stands when there is no
+     * reranker, when it fails, and when it takes longer than [RERANK_WAIT_MS]: a slow side call
+     * must not stall the search it was meant to improve, which is the lesson recall taught.
+     */
+    private suspend fun ranked(query: String, hits: List<SearchHit>): List<SearchHit> {
+        val engine = retrieval ?: return hits
+        if (hits.size < 2) return hits
+        val scored = withTimeoutOrNull(RERANK_WAIT_MS) {
+            engine.rerank(query, hits.map { (it.title + "\n" + it.snippet).trim() })
+        } ?: return hits
+        val ordered = scored
+            .sortedByDescending { it.score }
+            .mapNotNull { hits.getOrNull(it.index) }
+            .distinct()
+        // Whatever the reranker did not mention keeps its place at the end, in engine order.
+        return ordered + hits.filterNot { it in ordered }
+    }
+
+    /** The first of every list, then the second of every list, and so on. */
+    private fun <T> interleave(lists: List<List<T>>): List<T> {
+        val out = mutableListOf<T>()
+        val longest = lists.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until longest) lists.forEach { list -> list.getOrNull(i)?.let { out += it } }
+        return out
     }
 
     /**
@@ -1544,9 +1596,22 @@ private const val COMPACT_BUDGET = 8_192
 /** The stamp format, anchored at the start, for taking one back off. See `unstamped`. */
 private val STAMPED = Regex("""^（\d{1,2}月\d{1,2}日 \d{2}:\d{2}）""")
 
-/** How much of one search comes back. Enough to choose from, not enough to drown in. */
-private const val HITS_PER_QUERY = 6
-private const val HITS_PER_CALL = 20
+/**
+ * How much of one search comes back. Enough to choose from, not enough to drown in.
+ *
+ * Ten per query and thirty per call, up from six and twenty. The results are ranked now rather
+ * than taken off the top of the engine's page, so the extra lines are the ones a cross-encoder
+ * thought most relevant, not the next four the engine happened to list - and a search whose
+ * seventh result was the one that mattered used to have it cut before the model saw it.
+ */
+private const val HITS_PER_QUERY = 10
+private const val HITS_PER_CALL = 30
+
+/** How many of a query's results are put in front of the reranker. A SearXNG page, roughly. */
+private const val POOL_PER_QUERY = 30
+
+/** How long a search waits on the reranker before going with engine order. See `ranked`. */
+private const val RERANK_WAIT_MS = 8_000L
 
 /**
  * Bridges the model's deltas onto the turn's progress channels.
