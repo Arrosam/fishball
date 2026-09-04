@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The same name for traditional Chinese. `values-zh` alone does not reach it: Android reads a
+    script-less `zh` as Simplified, so a phone set to zh-TW or zh-HK fell through to the English
+    label - checked with `aapt2 dump badging`, which showed zh-HK and zh-TW still at FishBall.
+    The name itself is the same characters in both scripts.
+-->
+<resources>
+    <string name="app_name">鱼丸AI</string>
+</resources>

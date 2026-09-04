@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Only the name lives here. Every other string in this app is Chinese in the default
+    resources already; the launcher label is the one place the phone's language decides
+    between the product's English name and the one the people it is for actually call it.
+    `values-zh` covers every Chinese locale - simplified, traditional, and the regional
+    variants - rather than pinning one of them.
+-->
+<resources>
+    <string name="app_name">鱼丸AI</string>
+</resources>
