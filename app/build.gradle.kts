@@ -31,11 +31,11 @@ android {
         targetSdk = 35
         // What the update check compares. Monotonic, and never reused: the name is for the
         // person reading the modal, this is the only thing that decides.
-        versionCode = 4
+        versionCode = 5
         // Still short of a 1: the app works end to end, and what it has not had is a second pair
         // of hands using it for a week. 3 was built and installed but never published, so the
-        // published sequence runs 0.2a (2) to this (4).
-        versionName = "0.2.0"
+        // published sequence runs 0.2a (2), 0.2.0 (4), and this (5).
+        versionName = "0.2.0a"
 
         buildConfigField(
             "String",
