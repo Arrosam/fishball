@@ -381,6 +381,16 @@ class HydrogenClient(
         recover: Boolean,
     ): LlmResult {
         val blocks = sortedMapOf<Int, Block>()
+        /*
+         * Whether the service said it had finished, as opposed to the bytes merely stopping.
+         *
+         * The client had no way to tell those apart, and both of its guesses were wrong. A
+         * stream cut off mid-answer ended the read loop and was assembled as though complete;
+         * a stream that finished and *then* lost its socket was thrown away whole. Same root:
+         * `message_stop` was named once in a comment here and never parsed.
+         */
+        var completed = false
+        var stopReason: String? = null
         var failure: LlmResult.Failed? = null
         var refusedModel = false
         var wrongOverride = false
@@ -417,7 +427,19 @@ class HydrogenClient(
                         val event = runCatching {
                             Json.parseToJsonElement(payload).jsonObject
                         }.getOrNull() ?: continue
-                        consume(event, blocks, onDelta)
+                        // Message-level frames here, block-level in [consume]. Either one of
+                        // these means the service reached the end of what it meant to say.
+                        when (event["type"]?.jsonPrimitive?.content) {
+                            "message_stop" -> completed = true
+                            "message_delta" -> {
+                                // Carries `stop_reason` on the frame that ends the message, and
+                                // an explicit null on earlier ones - so it is read leniently.
+                                event["delta"]?.jsonObject?.get("stop_reason")
+                                    ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                                    ?.let { stopReason = it; completed = true }
+                            }
+                            else -> consume(event, blocks, onDelta)
+                        }
                     }
                 }
             }
@@ -425,6 +447,21 @@ class HydrogenClient(
             // The one that mattered: a stopped turn came back as
             // 「这会儿连不上」 rather than as a turn somebody stopped.
             e.notCancellation()
+            /*
+             * A socket that died *after* the message finished is not a failed turn.
+             *
+             * Reported live as `IOException: Software caused connection abort` on a turn the
+             * proxy's own log showed answering - the abort landed on the tail of a stream that
+             * had already said `message_stop`, and every block of a complete answer went in the
+             * bin so the app could say 「这会儿连不上」. The answer was paid for, and most of it
+             * had already been streamed onto the screen.
+             *
+             * Only with the marker. Without it there is no evidence the answer is whole, and
+             * assembling a truncated one is the failure §25 exists to prevent.
+             */
+            if (completed && blocks.isNotEmpty()) {
+                return assemble(blocks, completed = true, stopReason = stopReason)
+            }
             return LlmResult.Failed(
                 "${e::class.simpleName}: ${e.message ?: "no detail"}",
                 retryable = true,
@@ -475,7 +512,7 @@ class HydrogenClient(
                 retryable = true,
             )
         }
-        return assemble(blocks)
+        return assemble(blocks, completed, stopReason)
     }
 
     private fun consume(
@@ -531,7 +568,20 @@ class HydrogenClient(
         }
     }
 
-    private fun assemble(blocks: Map<Int, Block>): LlmResult {
+    /**
+     * [completed] and [stopReason] explain a refusal; they do not decide one.
+     *
+     * The truncation test below reads the content itself, because a backend that omits
+     * `message_stop` must not turn every good turn into a failure. What these two add is *why*,
+     * and the distinction is worth the parameters: `max_tokens` means the model ran out of
+     * budget mid-sentence, which is a different thing to fix from a socket that died, and the
+     * two are indistinguishable from the wreckage they leave.
+     */
+    private fun assemble(
+        blocks: Map<Int, Block>,
+        completed: Boolean,
+        stopReason: String? = null,
+    ): LlmResult {
         val text = StringBuilder()
         val calls = mutableListOf<LlmContent.ToolUse>()
         val raw = mutableListOf<LlmContent>()
@@ -544,9 +594,44 @@ class HydrogenClient(
                 }
 
                 "tool_use" -> {
-                    val input = runCatching {
-                        Json.parseToJsonElement(block.json.toString()).jsonObject
-                    }.getOrDefault(JsonObject(emptyMap()))
+                    /*
+                     * JSON that does not parse is a stream that stopped in the middle of it.
+                     *
+                     * This used to be `getOrDefault(JsonObject(emptyMap()))`, and that default
+                     * is how a cut-off answer reached the screen as a blank one: the reply
+                     * arrives as an `answer` tool call whose `text` argument is streamed in
+                     * fragments, so half a stream is half a JSON object, and substituting `{}`
+                     * turned "the connection died" into "the model called `answer` with no
+                     * text". Silent, and indistinguishable from the model having nothing to say.
+                     *
+                     * It is also the truncation test this client did not otherwise have. On the
+                     * path that matters - every decision in this app is a tool call - unparseable
+                     * arguments prove the stream is incomplete without needing `message_stop`,
+                     * which is what makes this safe against a backend that never sends one.
+                     *
+                     * Blank is left alone: a tool with no arguments is legitimate, and some
+                     * services put the whole input on `content_block_start` instead.
+                     */
+                    val json = block.json.toString()
+                    val input = if (json.isBlank()) {
+                        JsonObject(emptyMap())
+                    } else {
+                        runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull()
+                            ?: return LlmResult.Failed(
+                                "the stream stopped inside a ${block.name} call: " +
+                                    "${json.length} bytes of JSON that do not parse" +
+                                    when {
+                                        // The model was cut off by its own ceiling, not by the
+                                        // network. Named, because raising max_tokens fixes this
+                                        // one and nothing fixes it if the message says "socket".
+                                        stopReason == "max_tokens" -> "; stop_reason=max_tokens"
+                                        stopReason != null -> "; stop_reason=$stopReason"
+                                        completed -> ""
+                                        else -> "; no message_stop either"
+                                    },
+                                retryable = true,
+                            )
+                    }
                     val call = LlmContent.ToolUse(block.id, block.name, unwrap(input))
                     calls += call
                     // The *unwrapped* call goes into the replayed turn as well, and that is the
