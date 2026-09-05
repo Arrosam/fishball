@@ -389,7 +389,8 @@ class Voice(private val context: Context) {
     private val http by lazy {
         HttpClient(OkHttp) {
             install(HttpTimeout) {
-                connectTimeoutMillis = 10_000
+                // The provider's own host, so it gets the same patience the LLM client does.
+                connectTimeoutMillis = 30_000
                 // A few seconds of speech, and the model reads it in about its own duration.
                 requestTimeoutMillis = 120_000
             }

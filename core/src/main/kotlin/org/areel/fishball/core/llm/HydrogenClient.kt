@@ -1030,7 +1030,23 @@ class HydrogenClient(
                  * enough that a wedged stream does not hold a socket and a radio all afternoon.
                  */
                 requestTimeoutMillis = 600_000
-                connectTimeoutMillis = 15_000
+                /*
+                 * Thirty seconds to get a connection up, not fifteen.
+                 *
+                 * This one guards a different thing again: DNS, the TCP handshake and the TLS
+                 * handshake, before a single byte of the request is sent. Fifteen was set when
+                 * every install reached one deployment behind Cloudflare from a good link, and
+                 * a `CN-` code now points a phone in China at a mainland host on a mobile
+                 * network. That first connection is exactly where fifteen seconds is thin.
+                 *
+                 * What it costs is real and worth stating: when a service genuinely is down,
+                 * the gate now spins for thirty seconds before saying 「现在连不上」. That is a
+                 * worse wait than before. It is still the right trade - a slow connection
+                 * reported as a dead service is a person who cannot fix it and concludes the
+                 * product is broken, while a slow honest failure is only tedious. Retune here
+                 * if measurement on a real mainland device says otherwise.
+                 */
+                connectTimeoutMillis = 30_000
                 socketTimeoutMillis = 120_000
             }
         }

@@ -87,7 +87,12 @@ class SearxngGateway(
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 10_000
+                // Thirty, matching the LLM client, and for the same reason: a `CN-` code points
+                // this at a mainland instance reached over a phone's mobile connection. See
+                // `HydrogenClient.defaultClient`. Not raised for the pages a search returns -
+                // those are the open web, there are several per turn, and `HttpPageReader`
+                // deliberately gives up on a slow one rather than stalling the whole turn.
+                connectTimeoutMillis = 30_000
                 socketTimeoutMillis = 30_000
             }
         }
