@@ -57,3 +57,28 @@ tasks.test {
         showStandardStreams = true
     }
 }
+
+/*
+ * Mints a custom-provider activation code.
+ *
+ *     ./gradlew :core:mintProfile -Purl=... -Pkey=... -Psys=... -Pflash=... -Ppro=... -Psearch=...
+ *
+ * Optional: -Pembed= -Prerank= -Pasr= -PsearchKey=. Omitting one says the provider does not offer
+ * it, which has consequences the tool prints back - see MintProfile.
+ *
+ * On the test runtime classpath because the tool lives in the test source set: it is a workbench
+ * tool and must not be reachable from the shipped app.
+ */
+// Read here, at configuration time. Reaching for `project` from inside the task's execution is
+// what the configuration cache forbids, and it fails the build rather than degrading.
+val mintFlags = listOf(
+    "url", "key", "sys", "flash", "pro", "search", "embed", "rerank", "asr", "searchKey",
+).mapNotNull { name -> (project.findProperty(name) as? String)?.let { "--$name=$it" } }
+
+tasks.register<JavaExec>("mintProfile") {
+    group = "fishball"
+    description = "Mint a custom-provider activation code (fb1.…)."
+    mainClass.set("org.areel.fishball.core.config.MintProfile")
+    classpath = sourceSets["test"].runtimeClasspath
+    args = mintFlags
+}
