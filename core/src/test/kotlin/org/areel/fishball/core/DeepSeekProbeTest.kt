@@ -170,10 +170,16 @@ class DeepSeekProbeTest {
      * a spelling only counts as working here when a thinking block actually appears in the
      * stream. An HTTP 200 proves nothing.
      *
-     * The fourth arm asks for nothing, and it is the control: `deepseek-reasoner` reasons on its
-     * own, so without it a run could report all three spellings working and mean none of them
-     * did. Asserts nothing — "it thinks whatever you send and the field is inert" is a finding
-     * for the profile docs, not a failure.
+     * The fourth arm asks for nothing, and it is the control: these models reason on their own,
+     * so without it a run could report all three spellings working and mean none of them did.
+     *
+     * There is a strong prior going in, and it is the reason this arm matters more than it looks.
+     * DeepSeek's compatibility table lists Anthropic's own `thinking` as supported, with
+     * `budget_tokens` ignored — which is the exact spelling the existing proxy answers 400 to,
+     * and the existing proxy wants `output_config.effort`, which is not in DeepSeek's table at
+     * all. If that holds, the spelling is not a constant the client can hold: it is a property
+     * of the provider, and the profile has to carry it. Confirming or killing that is what this
+     * arm is for. It still asserts nothing.
      */
     @Test
     fun `which spelling makes it think`() {
@@ -329,6 +335,12 @@ class DeepSeekProbeTest {
      * A refusal is a finding rather than a failure. The client already gives the marker up on a
      * 400 and retries without it, so a provider that will not take the cacheable shape costs
      * money rather than correctness.
+     *
+     * DeepSeek's table says `cache_control` is *ignored* rather than refused, which is a third
+     * outcome the arm has to be read for: no 400, no marker honoured, and cache hits appearing
+     * anyway because the service caches prefixes automatically and prices them separately. That
+     * would be the good ending — the discount is around thirtyfold — and it is invisible unless
+     * the usage counters are read on the second call. Which is why there is a second call.
      */
     @Test
     fun `does marking the prefix get it cached`() {
@@ -640,13 +652,19 @@ class DeepSeekProbeTest {
         const val ANTHROPIC_VERSION = "2023-06-01"
 
         /**
-         * The two chat ids, read from the environment because they move.
+         * The two chat ids, read from the environment because they move — and they already have.
          *
-         * These are what a profile's `flash` and `pro` fields would hold. Overridable rather
-         * than fixed: the catalogue arm exists partly to say what the current names are, and a
-         * probe that cannot be pointed at them is a probe that goes stale.
+         * These are what a profile's `flash` and `pro` fields would hold. The defaults are the
+         * ids DeepSeek's own model list carries; the previous pair, `deepseek-chat` and
+         * `deepseek-reasoner`, went stale inside a week of this file being written, which is
+         * the whole argument for the override and for the catalogue arm existing at all.
+         *
+         * There is a third, `deepseek-v4-flash-vision-exp`, and it is not idle trivia: §-level
+         * attachments send Anthropic image blocks, so if the plain flash id cannot read a
+         * picture then a profile needs a fourth model role rather than three. Point `DEEPSEEK_FLASH`
+         * at it and re-run to find out.
          */
-        val FLASH: String = System.getenv("DEEPSEEK_FLASH") ?: "deepseek-chat"
-        val PRO: String = System.getenv("DEEPSEEK_PRO") ?: "deepseek-reasoner"
+        val FLASH: String = System.getenv("DEEPSEEK_FLASH") ?: "deepseek-v4-flash"
+        val PRO: String = System.getenv("DEEPSEEK_PRO") ?: "deepseek-v4-pro"
     }
 }
