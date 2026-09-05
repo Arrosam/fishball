@@ -999,8 +999,37 @@ class HydrogenClient(
                 json(Json { ignoreUnknownKeys = true; isLenient = true })
             }
             install(HttpTimeout) {
-                // Long, because a turn can involve a model reading several pages of snippets.
-                requestTimeoutMillis = 120_000
+                /*
+                 * Two timeouts doing two different jobs, and the difference is the whole point.
+                 *
+                 * `socketTimeoutMillis` is the one that detects a dead connection. Ktor's OkHttp
+                 * engine maps it onto OkHttp's read and write timeouts, so it is a *gap*
+                 * timeout: it fires when nothing has arrived for two minutes, and does not care
+                 * how long the call has been running. That covers every way a connection
+                 * actually dies - a peer that closes, a server that hangs with the socket open,
+                 * a network that vanishes so completely that no reset ever comes back.
+                 *
+                 * `requestTimeoutMillis` is a deadline on the whole call, enforced by the core
+                 * plugin rather than the engine, and at 120s it was cutting off work that was
+                 * going fine. The answer call runs at `Effort.MAX` with a `MAIN_BUDGET` ceiling,
+                 * behind a proxy fronting several backends whose time-to-first-token varies; the
+                 * slow tail of that passes two minutes. When it fired the plugin cancelled the
+                 * call, OkHttp closed the socket under an in-flight read, and the turn died with
+                 * a local `ECONNABORTED` - "Software caused connection abort" - while the
+                 * service went on to finish the answer and log it. The app was hanging up on
+                 * replies it had asked for and paid for.
+                 *
+                 * It is contradicted by the product too: a turn is allowed to run as long as it
+                 * needs, and the only one who may say otherwise is the person waiting for it,
+                 * who has a stop button. See `ChatViewModel.turn`.
+                 *
+                 * So it stays, as a backstop rather than a policy. What it is actually for is
+                 * the one death a gap timeout cannot see: a connection that is alive and useless
+                 * - trickling keep-alives, or streaming forever without ever saying
+                 * `message_stop`. Ten minutes is longer than any turn measured here and short
+                 * enough that a wedged stream does not hold a socket and a radio all afternoon.
+                 */
+                requestTimeoutMillis = 600_000
                 connectTimeoutMillis = 15_000
                 socketTimeoutMillis = 120_000
             }
