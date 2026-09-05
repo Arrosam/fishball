@@ -63,6 +63,105 @@ class ActivationCodeTest {
         }
     }
 
+    // ---- the mainland pair --------------------------------------------------------------
+
+    /**
+     * `CN-` is a region marker, not part of the credential.
+     *
+     * The token that goes on the wire has to be the `sk-...` half. A marker left on it would be
+     * sent as the credential and refused, and the refusal would say 激活码无效 - which is true
+     * of the string and false of the code the person was given.
+     */
+    @Test
+    fun `a CN code points at the mainland and hands on the key without the marker`() {
+        val parsed = ActivationCode.parse("CN-sk-hproxy-abcdef0123456789")
+        assertTrue(parsed is Activation.Ok, "did not parse: $parsed")
+        val provider = parsed.provider
+        assertEquals("sk-hproxy-abcdef0123456789", provider.token)
+        assertEquals(Provider.AREEL_CN_LLM, provider.llmUrl)
+        assertEquals(Provider.AREEL_CN_SEARCH, provider.searchUrl)
+        // A region is where the deployment sits, not what it runs.
+        assertEquals(Provider.AREEL_FLASH, provider.flash)
+        assertEquals(Provider.AREEL_PRO, provider.pro)
+        assertEquals(Provider.AREEL_SYSTEM, provider.systemModel)
+        assertEquals(Provider.AREEL_ASR, provider.asrModel)
+        // Not custom: the user was handed this code, they did not choose a server. So no
+        // confirmation panel, and the refusal copy still points at whoever gave it to them.
+        assertTrue(!provider.custom, "a CN code must not read as a custom profile")
+    }
+
+    /**
+     * The trap in the two constants, pinned so it cannot come back.
+     *
+     * The CN endpoints are published as `https://ai.areel.org:25910/v1` and
+     * `https://sear.areel.org:25910/`, and every call site in this app appends its own path -
+     * `/v1/messages`, `/v1/models`, `/v1/audio/transcriptions`, `/search`. Stored as published,
+     * the app would ask for `/v1/v1/messages` and get a 404 that reads like a dead deployment.
+     */
+    @Test
+    fun `the mainland urls are origins, so the appended paths come out right`() {
+        val cn = Provider.areelCn("sk-x")
+        listOf(cn.llmUrl, cn.searchUrl).forEach { url ->
+            assertTrue(!url.endsWith("/"), "trailing slash would double the separator: $url")
+            assertTrue(!url.endsWith("/v1"), "the client appends /v1 itself; this doubles it: $url")
+        }
+        // Built the way HydrogenClient and SearxngGateway build them.
+        assertEquals(
+            "https://ai.areel.org:25910/v1/messages",
+            cn.llmUrl.trimEnd('/') + "/v1/messages",
+        )
+        assertEquals("https://sear.areel.org:25910/search", cn.searchUrl.trimEnd('/') + "/search")
+    }
+
+    @Test
+    fun `the region marker is recognised whatever case it arrives in`() {
+        listOf("CN-sk-abc", "cn-sk-abc", "Cn-sk-abc").forEach { raw ->
+            val parsed = ActivationCode.parse(raw)
+            assertTrue(parsed is Activation.Ok, "$raw did not parse")
+            assertEquals(Provider.AREEL_CN_LLM, parsed.provider.llmUrl, "for $raw")
+            assertEquals("sk-abc", parsed.provider.token, "for $raw")
+        }
+    }
+
+    /**
+     * Only at the start, and only as a whole marker.
+     *
+     * A key that merely contains those characters is a key, and a prefix rule that matched
+     * loosely would strip two characters out of somebody's credential and then report the
+     * service had refused it.
+     */
+    @Test
+    fun `CN elsewhere in a code is part of the code`() {
+        listOf("sk-CN-abc", "CNsk-abc", "XCN-abc").forEach { raw ->
+            val parsed = ActivationCode.parse(raw)
+            assertTrue(parsed is Activation.Ok, "$raw did not parse")
+            assertEquals(raw, parsed.provider.token, "$raw was altered")
+            assertEquals(Provider.AREEL_LLM, parsed.provider.llmUrl, "$raw was sent to the mainland")
+        }
+    }
+
+    /**
+     * Restore reads the stored string back through this same parser, so a mainland install has
+     * to survive the round trip or it silently moves to Hong Kong on the next launch.
+     */
+    @Test
+    fun `a stored CN code still means the mainland when it is read back`() {
+        val raw = "CN-sk-hproxy-abcdef0123456789"
+        val once = ActivationCode.parse(raw)
+        val twice = ActivationCode.parse(raw)
+        assertTrue(once is Activation.Ok && twice is Activation.Ok)
+        assertEquals(once.provider, twice.provider)
+        assertEquals(Provider.AREEL_CN_LLM, twice.provider.llmUrl)
+    }
+
+    /** Which server is answering is the first thing worth knowing when an install misbehaves. */
+    @Test
+    fun `a screen names the host for everything but the default deployment`() {
+        assertTrue(!Provider.areel("sk-x").worthNamingHost())
+        assertTrue(Provider.areelCn("sk-x").worthNamingHost())
+        assertTrue(profile.worthNamingHost())
+    }
+
     // ---- profiles -------------------------------------------------------------------------
 
     @Test

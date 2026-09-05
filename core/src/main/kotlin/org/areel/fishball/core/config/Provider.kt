@@ -92,12 +92,36 @@ data class Provider(
     fun tokenHint(): String =
         if (token.length <= 10) token else token.take(6) + "…" + token.takeLast(4)
 
+    /**
+     * Whether a screen showing this should name the host as well as the token.
+     *
+     * True for anything that is not the default deployment - a custom profile, and a mainland
+     * code. Which server is answering is the first thing worth knowing when an install
+     * misbehaves, and with more than one of them a masked token alone cannot say.
+     */
+    fun worthNamingHost(): Boolean = llmUrl != AREEL_LLM
+
     /** The two chat models, strongest first — what sign-in probes and in what order. */
     fun chatModels(): List<String> = listOf(pro, flash)
 
     companion object {
         const val AREEL_LLM = "https://llm.areel.org"
         const val AREEL_SEARCH = "https://search.areel.org"
+
+        /*
+         * The mainland pair, reached by a code written `CN-sk-...`.
+         *
+         * Origins only, with no `/v1` on the end, and that is the whole trap in these two
+         * strings. They are published as `https://ai.areel.org:25910/v1` and
+         * `https://sear.areel.org:25910/` - the first in the conventional OpenAI base form,
+         * which already carries the version segment. Every call site here appends its own
+         * (`/v1/messages`, `/v1/models`, `/v1/audio/transcriptions`, `/search`), so storing the
+         * published string verbatim would ask for `/v1/v1/messages` and get a 404 that reads
+         * like a dead deployment rather than a doubled path.
+         */
+        const val AREEL_CN_LLM = "https://ai.areel.org:25910"
+        const val AREEL_CN_SEARCH = "https://sear.areel.org:25910"
+
         const val AREEL_SYSTEM = "fish-system"
         const val AREEL_FLASH = "fishball-flash"
         const val AREEL_PRO = "fishball-pro"
@@ -109,8 +133,19 @@ data class Provider(
          * What an ordinary activation code means, which is everything it did before plus a name
          * for each of the things it used to leave implied.
          */
-        fun areel(token: String): Provider = Provider(
-            llmUrl = AREEL_LLM,
+        fun areel(token: String): Provider = areel(token, AREEL_LLM, AREEL_SEARCH)
+
+        /**
+         * The same product, served from the mainland.
+         *
+         * Same catalogue - a region is where the deployment sits, not what it runs - so only the
+         * two hosts differ. If that ever stops being true the gate says so precisely: sign-in
+         * probes the model ids and `KeyCheck.NoModel` reports what the service offered instead.
+         */
+        fun areelCn(token: String): Provider = areel(token, AREEL_CN_LLM, AREEL_CN_SEARCH)
+
+        private fun areel(token: String, llm: String, search: String): Provider = Provider(
+            llmUrl = llm,
             token = token,
             systemModel = AREEL_SYSTEM,
             flash = AREEL_FLASH,
@@ -118,8 +153,11 @@ data class Provider(
             embeddingModel = AREEL_EMBED,
             rerankModel = AREEL_RERANK,
             asrModel = AREEL_ASR,
-            searchUrl = AREEL_SEARCH,
+            searchUrl = search,
             searchToken = null,
+            // Not custom. The user did not choose a server - a code they were handed did, the
+            // way every areel code always has. So no confirmation panel, and the refusal copy
+            // still points at whoever gave them the code rather than at themselves.
             custom = false,
         )
     }
@@ -195,8 +233,30 @@ object ActivationCode {
 
     const val PREFIX = "fb1."
 
+    /**
+     * Mainland, rather than Hong Kong.
+     *
+     * A region marker on an otherwise ordinary activation code: `CN-sk-...` is the same key
+     * against the same product on a different pair of hosts. Stripped here so nothing below
+     * ever sees it - the token that goes on the wire is the `sk-...` half, and a marker left on
+     * it would be sent as part of the credential and refused.
+     *
+     * Matched case-insensitively because these are read off a screen and typed back in. There
+     * is no collision to worry about: areel mints its own codes and none of them begins `cn-`.
+     */
+    const val CN_PREFIX = "CN-"
+
     fun parse(raw: String): Activation {
         val cleaned = clean(raw)
+        if (cleaned.startsWith(CN_PREFIX, ignoreCase = true)) {
+            // Not validated beyond the prefix, deliberately. `CN-` on its own leaves an empty
+            // token, and the service refuses it the way it refuses any other wrong code - the
+            // gate has never been the place an activation code is judged, and starting now
+            // would mean rejecting codes the service would have taken.
+            return Activation.Ok(
+                Provider.areelCn(cleaned.removeRange(0, CN_PREFIX.length)),
+            )
+        }
         if (!cleaned.startsWith(PREFIX, ignoreCase = true)) {
             return Activation.Ok(Provider.areel(cleaned))
         }

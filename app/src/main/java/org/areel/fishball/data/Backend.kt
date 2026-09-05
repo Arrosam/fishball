@@ -128,13 +128,13 @@ class Backend private constructor(
     /**
      * Enough of the code to recognise it by, and not enough to read it off a screen.
      *
-     * A custom profile leads with its host, because that is what identifies which profile is
-     * loaded — one person may hold several, and they differ by where they point long before they
-     * differ by token.
+     * Anything but the default deployment leads with its host — a custom profile, and a
+     * mainland code. That is what identifies which install this is: one person may hold several
+     * codes, and they differ by where they point long before they differ by token.
      */
     fun keyHint(): String {
         val current = provider ?: return ""
-        return if (current.custom) {
+        return if (current.worthNamingHost()) {
             current.llmHost() + "  " + current.tokenHint()
         } else {
             current.tokenHint()
