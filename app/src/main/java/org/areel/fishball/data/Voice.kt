@@ -16,6 +16,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.http.contentType
+import org.areel.fishball.core.config.Provider
 import org.areel.fishball.core.catching
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -332,7 +333,19 @@ class Voice(private val context: Context) {
      * `MultipartShapeTest` sends exactly these bytes to the live service and reads a transcript
      * back, which is the only way to know they are right.
      */
-    suspend fun transcribe(file: File, apiKey: String): String? = withContext(Dispatchers.IO) {
+    suspend fun transcribe(
+        file: File,
+        apiKey: String,
+        /**
+         * The provider's own base URL and ASR model, rather than the areel ones compiled in.
+         *
+         * Passed rather than read from a constant because a custom profile answers somewhere
+         * else, and a recording uploaded to llm.areel.org with a third party's token is both a
+         * transcription that fails and a token sent to a service that was never asked for.
+         */
+        baseUrl: String,
+        model: String,
+    ): String? = withContext(Dispatchers.IO) {
         lastFailure = null
         // `catching`, not `runCatching`: somebody who tapped the fish to stop this told the app
         // to stop, and swallowing that would land 「没听清，再说一遍吧」 under their own decision.
@@ -350,7 +363,7 @@ class Voice(private val context: Context) {
                 ).toByteArray()
             val tail = "\r\n--$boundary--\r\n".toByteArray()
 
-            val response = http.post("${Backend.LLM_URL}/v1/audio/transcriptions") {
+            val response = http.post("${baseUrl.trimEnd('/')}/v1/audio/transcriptions") {
                 header(HttpHeaders.Authorization, "Bearer $apiKey")
                 contentType(ContentType.parse("multipart/form-data; boundary=$boundary"))
                 setBody(head + audio + tail)
@@ -384,7 +397,8 @@ class Voice(private val context: Context) {
     }
 
     private companion object {
-        const val ASR_MODEL = "ASR"
+        /** The areel deployment's name for it. A profile carries its own — see `Provider.asrModel`. */
+        const val ASR_MODEL = Provider.AREEL_ASR
 
         // 16 kHz mono is what speech recognition wants; anything above it is bytes spent on
         // frequencies the model discards.

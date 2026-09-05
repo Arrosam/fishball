@@ -112,6 +112,34 @@
     <string name="gate_unreachable">现在连不上，等一下再试。</string>
     <!-- Key good, service up, neither model on offer. Nothing the user can do, so it says who to tell. -->
     <string name="gate_no_model">服务上没有可用的模型，跟给你激活码的人说一声。</string>
+    <!--
+      The same failure on a profile the user configured themselves. The line above sends them
+      to whoever gave them the code, which on a custom profile is themselves.
+    -->
+    <string name="gate_no_model_custom">这个服务上找不到激活码里写的模型，检查一下模型名字。</string>
+
+    <!--
+      A profile that did not survive the trip, said four ways because only the first is the
+      person's own to fix - and it is by far the likeliest, because codes travel through chat
+      apps and chat apps cut long strings. "再粘贴一次" is advice that works for that one and
+      for no other, so the four must not be collapsed into one sentence.
+    -->
+    <string name="gate_code_incomplete">激活码不完整，再粘贴一次试试。</string>
+    <string name="gate_code_unreadable">这串激活码认不出来。</string>
+    <string name="gate_code_missing">激活码里少了一项内容。</string>
+    <string name="gate_code_insecure">激活码里的地址不安全，必须是 https 开头的。</string>
+
+    <!--
+      Shown once, before a pasted profile is stored: a profile names a server that will receive
+      this person's questions and their token, and §1 means codes arrive from other people. It
+      doubles as the check that the code pasted whole, which is why the model names are on it.
+    -->
+    <string name="gate_profile_title">这个激活码会把鱼丸连到：</string>
+    <string name="gate_profile_llm">模型服务</string>
+    <string name="gate_profile_search">搜索服务</string>
+    <string name="gate_profile_models">模型</string>
+    <string name="gate_profile_go">确认连接</string>
+    <string name="gate_profile_back">取消</string>
 
     <!-- Confidence meter labels (spec §6, approved 2026-08-31). -->
     <string name="confidence_label">置信度</string>

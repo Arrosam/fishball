@@ -3,6 +3,9 @@ package org.areel.fishball.data
 import android.content.Context
 import org.areel.fishball.core.agent.Conversation
 import org.areel.fishball.core.agent.MemoryBus
+import org.areel.fishball.core.config.Activation
+import org.areel.fishball.core.config.ActivationCode
+import org.areel.fishball.core.config.Provider
 import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.core.memory.PersistentStore
@@ -26,7 +29,33 @@ class Backend private constructor(
 
     private val registry by lazy { loadBundledRegistry() }
 
-    private val search by lazy { SearxngGateway(baseUrl = SEARCH_URL) }
+    /**
+     * Where answers come from and what pays for them. Null before the first sign-in.
+     *
+     * An areel activation code produces one of these too — `Provider.areel(token)` — so nothing
+     * below here asks which kind of code was typed. See [org.areel.fishball.core.config.Provider].
+     */
+    var provider: Provider? = null
+        private set
+
+    /**
+     * One HTTP client for whatever SearXNG instance is current.
+     *
+     * Shared rather than built per gateway for the reason [pages] is a singleton: a gateway owns
+     * a connection pool and dispatcher threads, and a profile change that built a new one would
+     * leave the old pool behind with nothing able to close it.
+     */
+    private val searchHttp by lazy { SearxngGateway.defaultClient() }
+
+    /**
+     * Rebuilt when the provider changes, which is the only time the instance can change.
+     *
+     * `lateinit` rather than defaulted to the areel instance. There is no correct value before a
+     * provider exists, and a default would make "searched before anything was activated" read as
+     * a search of search.areel.org with somebody else's profile loaded - silently wrong, which
+     * is the failure this whole change is about. Set by [adopt], which both entry points call.
+     */
+    private lateinit var search: SearxngGateway
 
     /**
      * One reader for the life of the app, not one per conversation.
@@ -50,6 +79,9 @@ class Backend private constructor(
     /** The model in use, as stored. Empty before the first sign-in. */
     val modelId: String get() = prefs().getString(KEY_MODEL, null).orEmpty()
 
+    /** Whether the conversation is running on the professional tier of whatever provider this is. */
+    val isPro: Boolean get() = modelId == provider?.pro
+
     /**
      * Spoken audio, as text. Null when there is nothing usable to send on.
      *
@@ -57,9 +89,19 @@ class Backend private constructor(
      * holds it: the recorder hands over a file, not a credential.
      */
     suspend fun transcribe(file: java.io.File): String? {
-        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return null
-        return voice.transcribe(file, key)
+        val current = provider ?: return null
+        val asr = current.asrModel ?: return null
+        return voice.transcribe(file, current.token, current.llmUrl, asr)
     }
+
+    /**
+     * Whether this install can turn speech into text at all.
+     *
+     * A custom profile need not name an ASR model, and the microphone is hidden rather than left
+     * to fail per recording: a button that does nothing is worse than a button that is not there,
+     * particularly for the person this app is built for.
+     */
+    val canTranscribe: Boolean get() = provider?.asrModel != null
 
     /** The microphone, and the one upload it feeds. */
     val voice by lazy { Voice(context) }
@@ -83,10 +125,20 @@ class Backend private constructor(
     /** For a permission check, which needs a Context and has no business holding the rest. */
     val appContext: Context get() = context
 
-    /** Enough of the code to recognise it by, and not enough to read it off a screen. */
+    /**
+     * Enough of the code to recognise it by, and not enough to read it off a screen.
+     *
+     * A custom profile leads with its host, because that is what identifies which profile is
+     * loaded — one person may hold several, and they differ by where they point long before they
+     * differ by token.
+     */
     fun keyHint(): String {
-        val key = prefs().getString(KEY_API, null).orEmpty()
-        return if (key.length <= 10) key else key.take(6) + "…" + key.takeLast(4)
+        val current = provider ?: return ""
+        return if (current.custom) {
+            current.llmHost() + "  " + current.tokenHint()
+        } else {
+            current.tokenHint()
+        }
     }
 
     /**
@@ -101,16 +153,36 @@ class Backend private constructor(
      * to fold, so the thread is only told about a summary that exists.
      */
     suspend fun setModel(id: String): ModelSwitch {
-        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() }
-            ?: return ModelSwitch(allowed = false)
-        val client = HydrogenClient(apiKey = key, model = id, onModelChanged = ::rememberModel)
+        val current = provider ?: return ModelSwitch(allowed = false)
+        val client = client(current, model = id, onModelChanged = ::rememberModel)
         if (!client.entitled(id)) return ModelSwitch(allowed = false)
 
         rememberModel(id)
         val folded = conversation?.compact() ?: false
-        conversation = talk(key, client)
+        conversation = talk(current, client)
         return ModelSwitch(allowed = true, compacted = folded)
     }
+
+    /**
+     * One client, pointed at one provider.
+     *
+     * Every field a client needs beyond the model now comes from the same object, which is the
+     * whole point of there being one: a call site that forgot the base URL used to still compile
+     * and quietly talk to llm.areel.org with somebody else's token.
+     */
+    private fun client(
+        provider: Provider,
+        model: String,
+        onModelChanged: (String) -> Unit = {},
+    ) = HydrogenClient(
+        baseUrl = provider.llmUrl,
+        apiKey = provider.token,
+        model = model,
+        embeddingModel = provider.embeddingModel,
+        rerankModel = provider.rerankModel,
+        preferred = provider.chatModels(),
+        onModelChanged = onModelChanged,
+    )
 
     /**
      * One conversation, and the memory bus beside it.
@@ -123,11 +195,11 @@ class Backend private constructor(
      * No `onModelChanged` on this one either: the bus discovering it cannot use the fast model
      * must not rewrite the id the *conversation* is restored from.
      */
-    private fun talk(key: String, client: HydrogenClient): Conversation {
+    private fun talk(provider: Provider, client: HydrogenClient): Conversation {
         // Whatever was filing for the outgoing conversation stops now. Its scope would
         // otherwise stay alive and keep writing on behalf of a conversation nobody is having.
         conversation?.memory?.close()
-        val filing = HydrogenClient(apiKey = key, model = FAST)
+        val filing = client(provider, model = provider.flash)
         return Conversation(
             llm = client,
             retrieval = client,
@@ -138,27 +210,56 @@ class Backend private constructor(
             // The professional tier pays for the factorisation in front of memory; the fast
             // one embeds the question as it stands. Read here rather than passed a lambda,
             // because a model switch rebuilds this whole object anyway.
-            expert = modelId == PRO,
-            memory = MemoryBus(llm = filing, retrieval = filing, store = store),
+            expert = modelId == provider.pro,
+            memory = MemoryBus(
+                llm = filing,
+                retrieval = filing,
+                store = store,
+                systemModel = provider.systemModel,
+            ),
         )
     }
 
+    /** What a pasted code says, before anything is stored or any call is made. */
+    fun read(raw: String): Activation = ActivationCode.parse(raw)
+
     /**
-     * Spec §1 — the only thing the user is ever asked for. Checks the key against the proxy,
-     * and on success discovers which model it can drive rather than assuming one.
+     * Spec §1 — the only thing the user is ever asked for. Checks the code against whatever
+     * service it names, and on success discovers which of that service's models it can drive.
+     *
+     * [raw] is stored rather than the parsed object: it is what the user holds and can be asked
+     * to paste again, and parsing it back is exact. Storing the pieces would mean a second
+     * writer of the same facts.
      */
-    suspend fun signIn(key: String): KeyCheck {
-        val client = HydrogenClient(apiKey = key, onModelChanged = ::rememberModel)
+    suspend fun signIn(raw: String, provider: Provider): KeyCheck {
+        val client = client(provider, model = "", onModelChanged = ::rememberModel)
         val check = client.validate()
         if (check is KeyCheck.Valid) {
             // commit, not apply. This is the one write the app cannot afford to lose: apply()
             // returns before the file is written, and the activation screen is precisely where
             // a user finishes and immediately backs out of the app - taking the process, and
             // the unflushed key, with them. They then reopen it and are asked to activate again.
-            prefs().edit().putString(KEY_API, key).putString(KEY_MODEL, check.chosen).commit()
-            conversation = talk(key, client)
+            prefs().edit()
+                .putString(KEY_ACTIVATION, raw)
+                // Kept in step so a build older than this one, or a rollback, still finds a key
+                // where it expects one. It is only ever read as a fallback - see [restore].
+                .putString(KEY_API, provider.token)
+                .putString(KEY_MODEL, check.chosen)
+                .commit()
+            adopt(provider)
+            conversation = talk(provider, client)
         }
         return check
+    }
+
+    /** Point the app at a provider: its search instance comes with it. */
+    private fun adopt(provider: Provider) {
+        this.provider = provider
+        search = SearxngGateway(
+            baseUrl = provider.searchUrl,
+            apiToken = provider.searchToken,
+            http = searchHttp,
+        )
     }
 
     /**
@@ -169,15 +270,36 @@ class Backend private constructor(
      * If the id has since been retired the first turn fails, which the user can act on.
      */
     fun restore(): Boolean {
-        val key = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return false
+        val current = stored() ?: return false
+        adopt(current)
         // A missing model is not a reason to ask for the code again. The key is what the user
         // was asked for and what they have; the model is a cache, and the client re-picks one
         // the moment a turn is refused. Sending them back to the gate over it would be the app
         // forgetting something it was told, to fix something it can work out for itself.
-        val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: FAST
-        val client = HydrogenClient(apiKey = key, model = model, onModelChanged = ::rememberModel)
-        conversation = talk(key, client)
+        val model = prefs().getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: current.flash
+        conversation = talk(current, client(current, model, onModelChanged = ::rememberModel))
         return true
+    }
+
+    /**
+     * The provider this install was left pointed at, or null if it was never activated.
+     *
+     * The fallback is the migration, and it needs no write. An install from before profiles
+     * existed has a bare `api_key` and no activation string, and that *is* the signal: a token
+     * with no profile beside it is an areel code, which is what it always was. Nobody is sent
+     * back to the gate by this change.
+     *
+     * A stored string that no longer parses falls back the same way rather than failing. It
+     * should be impossible - it parsed once, on the way in - but being asked to activate again
+     * is the one outcome worth going to some trouble to avoid.
+     */
+    private fun stored(): Provider? {
+        val raw = prefs().getString(KEY_ACTIVATION, null)?.takeIf { it.isNotBlank() }
+        if (raw != null) {
+            (ActivationCode.parse(raw) as? Activation.Ok)?.let { return it.provider }
+        }
+        val legacy = prefs().getString(KEY_API, null)?.takeIf { it.isNotBlank() } ?: return null
+        return Provider.areel(legacy)
     }
 
     /**
@@ -215,17 +337,19 @@ class Backend private constructor(
 
 
     companion object {
-        const val SEARCH_URL = "https://search.areel.org"
-
-        /** The two the settings screen offers, named there for what they do rather than what they are. */
-        const val FAST = "fishball-flash"
-        const val PRO = "fishball-pro"
-
-        const val LLM_URL = HydrogenClient.DEFAULT_BASE_URL
-
+        /*
+         * SEARCH_URL, LLM_URL, FAST and PRO used to live here, and nothing refers to them now.
+         * They are Provider's: a default install is `Provider.areel(token)`, and a settings
+         * screen asking which tier to run on reads `provider.flash` and `provider.pro`, because
+         * on a custom profile those are whatever the profile said. Leaving aliases behind would
+         * only offer a way to go on hardcoding the areel deployment by accident.
+         */
         private const val MEMORY_FILE = "memory.json"
         private const val PREFS = "fishball"
         private const val KEY_API = "api_key"
+
+        /** The code exactly as it was typed. See `Backend.stored` for why the old key survives. */
+        private const val KEY_ACTIVATION = "activation"
         private const val KEY_MODEL = "model"
         private const val KEY_ALERT = "alert_on_answer"
 

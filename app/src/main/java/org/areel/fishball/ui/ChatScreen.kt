@@ -566,6 +566,7 @@ fun ChatScreen(
                 draft = ""
             },
             voice = voice,
+            canSpeak = vm.backend.canTranscribe,
             attach = attach,
             // Anything that has the app waiting on a service, which from the outside is one
             // state however many kinds of request are behind it.
@@ -649,13 +650,23 @@ private fun Composer(
     onSend: () -> Unit,
     voice: VoiceState,
     attach: AttachState,
+    /**
+     * Whether this provider turns speech into text at all.
+     *
+     * False on a custom profile that named no ASR model, and then the plate is never a
+     * microphone - it stays the send plate, disabled with nothing typed, exactly as it is
+     * mid-turn. Hidden rather than left to fail on release: a control that records, waits, and
+     * then says it did not catch that is worse than no control, and it is worst for the person
+     * this app was built for, who would reasonably conclude they had spoken wrongly.
+     */
+    canSpeak: Boolean,
     /** A turn is running. Distinct from `!enabled`, which is also true while a picture loads. */
     working: Boolean,
     onStop: () -> Unit,
 ) {
     // With nothing typed there is nothing to send, so the plate is a microphone instead. One
     // control, two jobs, and never both at once - which is why it can be the same square.
-    val speaking = value.isEmpty()
+    val speaking = value.isEmpty() && canSpeak
     val recording = voice.phase == VoicePhase.RECORDING
 
     /*

@@ -61,6 +61,14 @@ data class Provider(
      * scores throws away every candidate it was given. See `Conversation.narrowAnswers`.
      */
     val rerankModel: String?,
+    /**
+     * Speech to text, when the provider does it. Null hides the microphone.
+     *
+     * The sixth model id, and the one nobody thinks of until the button does nothing. Hidden
+     * rather than left to fail per recording: for the person this app is built for, a control
+     * that silently does nothing is worse than a control that is not there.
+     */
+    val asrModel: String?,
     /** A SearXNG instance. Required, including in a custom profile — see [ActivationCode]. */
     val searchUrl: String,
     /** Sent as `X-FishBall-Token`. Null for an instance that does not ask for one. */
@@ -95,6 +103,7 @@ data class Provider(
         const val AREEL_PRO = "fishball-pro"
         const val AREEL_EMBED = "embedding"
         const val AREEL_RERANK = "reranker"
+        const val AREEL_ASR = "ASR"
 
         /**
          * What an ordinary activation code means, which is everything it did before plus a name
@@ -108,6 +117,7 @@ data class Provider(
             pro = AREEL_PRO,
             embeddingModel = AREEL_EMBED,
             rerankModel = AREEL_RERANK,
+            asrModel = AREEL_ASR,
             searchUrl = AREEL_SEARCH,
             searchToken = null,
             custom = false,
@@ -215,6 +225,7 @@ object ActivationCode {
                 put("pro", provider.pro)
                 provider.embeddingModel?.let { put("embed", it) }
                 provider.rerankModel?.let { put("rerank", it) }
+                provider.asrModel?.let { put("asr", it) }
             }
             putJsonObject("search") {
                 put("url", provider.searchUrl)
@@ -310,6 +321,7 @@ object ActivationCode {
                 pro = pro,
                 embeddingModel = llm.text("embed"),
                 rerankModel = llm.text("rerank"),
+                asrModel = llm.text("asr"),
                 searchUrl = searchUrl.trimEnd('/'),
                 searchToken = search.text("key"),
                 custom = true,

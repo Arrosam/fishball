@@ -24,9 +24,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
-import org.areel.fishball.core.llm.HydrogenClient
+import org.areel.fishball.core.config.Activation
+import org.areel.fishball.core.config.Provider
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.data.Backend
+import org.areel.fishball.data.ModelSwitch
 import org.areel.fishball.data.Updates
 import org.areel.fishball.ui.ChatScreen
 import org.areel.fishball.ui.ChatViewModel
@@ -79,41 +81,96 @@ private fun FishBallApp() {
     val rejected = stringResource(R.string.gate_key_rejected)
     val unreachable = stringResource(R.string.gate_unreachable)
     val noModel = stringResource(R.string.gate_no_model)
+    val noModelCustom = stringResource(R.string.gate_no_model_custom)
+    val codeIncomplete = stringResource(R.string.gate_code_incomplete)
+    val codeUnreadable = stringResource(R.string.gate_code_unreadable)
+    val codeMissing = stringResource(R.string.gate_code_missing)
+    val codeInsecure = stringResource(R.string.gate_code_insecure)
+
+    /** What a refusal from the service says, given who owns the service. */
+    fun refusal(check: KeyCheck, provider: Provider): Pair<String, String?> = when (check) {
+        is KeyCheck.Valid -> "" to null
+        KeyCheck.Rejected -> rejected to "HTTP 401/403 from ${provider.llmUrl}/v1/models"
+        is KeyCheck.NoModel -> {
+            // Which models were wanted is the profile's own answer now, not a constant, and on
+            // a custom profile it is the line that tells somebody they mistyped one.
+            (if (provider.custom) noModelCustom else noModel) to
+                "wanted " + provider.chatModels().joinToString(" | ") +
+                "   offered " + check.offered.joinToString(", ").ifBlank { "(nothing)" }
+        }
+        is KeyCheck.Unreachable -> unreachable to check.reason
+    }
+
+    /** What a code that never reached the network says. */
+    fun unusable(bad: Activation.Malformed): String = when (bad.reason) {
+        Activation.Reason.TRUNCATED -> codeIncomplete
+        Activation.Reason.UNREADABLE -> codeUnreadable
+        Activation.Reason.MISSING_FIELD -> codeMissing
+        Activation.Reason.INSECURE_URL -> codeInsecure
+    }
 
     if (!signedIn) {
+        // The code as typed, held only while its profile is on screen waiting to be confirmed.
+        // Stored rather than re-derived because what gets written down is what the user pasted.
+        var pendingCode by remember { mutableStateOf<String?>(null) }
+        var pending by remember { mutableStateOf<Provider?>(null) }
+
+        fun activate(raw: String, provider: Provider) {
+            checking = true
+            gateError = null
+            gateDetail = null
+            scope.launch {
+                val check = backend.signIn(raw, provider)
+                if (check is KeyCheck.Valid) {
+                    signedIn = true
+                } else {
+                    val (message, detail) = refusal(check, provider)
+                    gateError = message
+                    gateDetail = detail
+                    // Back to the field. A profile that the service refused is not a profile
+                    // worth confirming again, and leaving the panel up with an error under it
+                    // offers 确认连接 for something that has just been established will not.
+                    pending = null
+                    pendingCode = null
+                }
+                checking = false
+            }
+        }
+
         KeyGate(
             checking = checking,
             error = gateError,
             detail = gateDetail,
-            onSubmit = { key ->
-                checking = true
+            pending = pending,
+            onSubmit = { raw ->
                 gateError = null
                 gateDetail = null
-                scope.launch {
-                    when (val check = backend.signIn(key)) {
-                        is KeyCheck.Valid -> signedIn = true
-
-                        KeyCheck.Rejected -> {
-                            gateError = rejected
-                            gateDetail = "HTTP 401/403 from ${Backend.LLM_URL}/v1/models"
-                        }
-
-                        is KeyCheck.NoModel -> {
-                            gateError = noModel
-                            // The catalogue it did return, so the gap is visible at a glance.
-                            gateDetail = "wanted " +
-                                HydrogenClient.PREFERRED.joinToString(" | ") +
-                                "   offered " +
-                                check.offered.joinToString(", ").ifBlank { "(nothing)" }
-                        }
-
-                        is KeyCheck.Unreachable -> {
-                            gateError = unreachable
-                            gateDetail = check.reason
-                        }
+                when (val read = backend.read(raw)) {
+                    is Activation.Malformed -> {
+                        gateError = unusable(read)
+                        gateDetail = read.reason.name + ": " + read.detail
                     }
-                    checking = false
+                    // A custom profile is shown where it points before anything is stored; an
+                    // areel code goes straight through, because confirming the only destination
+                    // the app has ever had is a question with no content in it.
+                    is Activation.Ok -> if (read.provider.custom) {
+                        pendingCode = raw
+                        pending = read.provider
+                    } else {
+                        activate(raw, read.provider)
+                    }
                 }
+            },
+            onConfirm = {
+                val raw = pendingCode
+                val provider = pending
+                if (raw != null && provider != null) activate(raw, provider)
+            },
+            onCancel = {
+                pending = null
+                pendingCode = null
+                gateError = null
+                gateDetail = null
             },
         )
         return
@@ -217,7 +274,7 @@ private fun FishBallApp() {
         }
 
         Screen.SETTINGS -> {
-            var mode by remember { mutableStateOf(if (backend.modelId == Backend.PRO) Mode.PRO else Mode.FAST) }
+            var mode by remember { mutableStateOf(if (backend.isPro) Mode.PRO else Mode.FAST) }
             var settingsBusy by remember { mutableStateOf(false) }
             var settingsError by remember { mutableStateOf<String?>(null) }
             var keyHint by remember { mutableStateOf(backend.keyHint()) }
@@ -262,8 +319,12 @@ private fun FishBallApp() {
                     compacting = true
                     settingsError = null
                     scope.launch {
-                        val id = if (wanted == Mode.PRO) Backend.PRO else Backend.FAST
-                        val switch = backend.setModel(id)
+                        // The profile's own names for its two tiers - on a custom profile these
+                        // are whatever it said, and on an areel code they are what they always
+                        // were. 快速 / 专业 is a promise about behaviour, not about a model id.
+                        val current = backend.provider
+                        val id = if (wanted == Mode.PRO) current?.pro else current?.flash
+                        val switch = id?.let { backend.setModel(it) } ?: ModelSwitch(allowed = false)
                         if (switch.allowed) {
                             mode = wanted
                             // Only when a summary was actually made. The thread is told the
@@ -278,20 +339,23 @@ private fun FishBallApp() {
                         settingsBusy = false
                     }
                 },
-                onKeyChange = { key ->
-                    settingsBusy = true
+                onKeyChange = { raw ->
                     settingsError = null
-                    scope.launch {
-                        when (val check = backend.signIn(key)) {
-                            is KeyCheck.Valid -> {
-                                keyHint = backend.keyHint()
-                                mode = if (backend.modelId == Backend.PRO) Mode.PRO else Mode.FAST
+                    when (val read = backend.read(raw)) {
+                        is Activation.Malformed -> settingsError = unusable(read)
+                        is Activation.Ok -> {
+                            settingsBusy = true
+                            scope.launch {
+                                val check = backend.signIn(raw, read.provider)
+                                if (check is KeyCheck.Valid) {
+                                    keyHint = backend.keyHint()
+                                    mode = if (backend.isPro) Mode.PRO else Mode.FAST
+                                } else {
+                                    settingsError = refusal(check, read.provider).first
+                                }
+                                settingsBusy = false
                             }
-                            KeyCheck.Rejected -> settingsError = rejected
-                            is KeyCheck.NoModel -> settingsError = noModel
-                            is KeyCheck.Unreachable -> settingsError = unreachable
                         }
-                        settingsBusy = false
                     }
                 },
                 alerting = alerting,

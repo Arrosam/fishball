@@ -24,6 +24,7 @@ class ActivationCodeTest {
         pro = "deepseek-v4-pro",
         embeddingModel = "bge-m3",
         rerankModel = "bge-reranker-v2",
+        asrModel = "whisper-1",
         searchUrl = "https://search.example.com",
         searchToken = "tok-123",
         custom = true,
@@ -73,12 +74,19 @@ class ActivationCodeTest {
 
     @Test
     fun `the optional halves are allowed to be absent`() {
-        val bare = profile.copy(embeddingModel = null, rerankModel = null, searchToken = null)
+        val bare = profile.copy(
+            embeddingModel = null,
+            rerankModel = null,
+            asrModel = null,
+            searchToken = null,
+        )
         val parsed = ActivationCode.parse(ActivationCode.encode(bare))
         assertTrue(parsed is Activation.Ok, "did not parse: $parsed")
         assertEquals(bare, parsed.provider)
         assertNull(parsed.provider.embeddingModel)
         assertNull(parsed.provider.rerankModel)
+        // The one that hides the microphone rather than merely degrading recall.
+        assertNull(parsed.provider.asrModel)
     }
 
     /**

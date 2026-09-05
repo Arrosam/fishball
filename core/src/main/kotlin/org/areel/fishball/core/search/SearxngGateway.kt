@@ -66,14 +66,20 @@ class SearxngGateway(
         )
     }
 
-    private companion object {
-        val VALID_TIME_RANGES = setOf("day", "month", "year")
+    companion object {
+        private val VALID_TIME_RANGES = setOf("day", "month", "year")
 
         /** SearXNG's bot filter rejects non-browser agents with 403. Verified 2026-08-30. */
-        const val USER_AGENT =
+        private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/126.0 Mobile Safari/537.36"
 
+        /**
+         * Public so one client can be shared across gateways, the way `:app` shares its page
+         * reader. A profile changes which instance is searched, and a gateway built per profile
+         * with a client of its own would leave a connection pool and its dispatcher threads
+         * behind on every change, none of them reachable to close.
+         */
         fun defaultClient(): HttpClient = HttpClient(OkHttp) {
             expectSuccess = true
             install(ContentNegotiation) {

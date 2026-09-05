@@ -46,6 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.areel.fishball.R
+import org.areel.fishball.core.config.Provider
 import org.areel.fishball.ui.theme.Areel
 
 /**
@@ -68,7 +69,22 @@ fun KeyGate(
      * this app is built for; for whoever they hand the phone to when it does not work.
      */
     detail: String?,
+    /**
+     * A pasted profile waiting to be confirmed, or null on the ordinary path.
+     *
+     * An areel code is never held here. It points where it has always pointed, and asking
+     * somebody to confirm the only destination the app has ever had is a question with no
+     * content. A profile is different in kind: it names a server that will receive this
+     * person's questions and their token, and §1 means codes arrive from other people - so the
+     * one thing that must not be possible is a paste that silently re-points the app.
+     *
+     * It doubles as the check that the code arrived whole, which is why the model names are on
+     * it. Somebody who pasted the wrong thing sees the wrong host before anything is stored.
+     */
+    pending: Provider?,
     onSubmit: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     var key by remember { mutableStateOf("") }
     var showDetail by remember(error) { mutableStateOf(false) }
@@ -101,11 +117,15 @@ fun KeyGate(
             }
             CheckerBand()
 
-            ActivationField(
-                value = key,
-                onValueChange = { key = it },
-                onSubmit = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
-            )
+            if (pending == null) {
+                ActivationField(
+                    value = key,
+                    onValueChange = { key = it },
+                    onSubmit = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
+                )
+            } else {
+                Destination(pending)
+            }
 
             // Whatever went wrong, said in one line without a status code - the person reading
             // it cannot act on "401". The detail is one tap underneath rather than absent,
@@ -150,8 +170,14 @@ fun KeyGate(
             }
 
             Button(
-                onClick = { if (key.isNotBlank() && !checking) onSubmit(key.trim()) },
-                enabled = key.isNotBlank() && !checking,
+                onClick = {
+                    if (pending != null) {
+                        if (!checking) onConfirm()
+                    } else if (key.isNotBlank() && !checking) {
+                        onSubmit(key.trim())
+                    }
+                },
+                enabled = (pending != null || key.isNotBlank()) && !checking,
                 shape = RectangleShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Areel.Magenta,
@@ -162,8 +188,23 @@ fun KeyGate(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    stringResource(R.string.gate_confirm),
+                    stringResource(
+                        if (pending != null) R.string.gate_profile_go else R.string.gate_confirm,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
+                )
+            }
+
+            // Only while something is pending. A gate with a permanent 取消 on it invites the
+            // question of what there is to cancel out of, on a screen with one thing to do.
+            if (pending != null) {
+                Text(
+                    stringResource(R.string.gate_profile_back),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Areel.Ink60,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .pressable(Feel.TOGGLE, enabled = !checking) { onCancel() },
                 )
             }
         }
@@ -263,6 +304,62 @@ private fun ActivationField(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onSubmit() }),
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * Where a pasted profile would point, shown before it is stored.
+ *
+ * Hosts rather than full URLs: the host is the part that identifies a service and the part
+ * somebody can recognise as right or wrong, and a path on the end only makes the line harder
+ * to read. The model names are here for a different reason - they are the cheapest proof that
+ * the code arrived whole, since a truncated one either fails the checksum or, on the paste that
+ * happens to survive it, shows names that are visibly not what was expected.
+ *
+ * Same glass pane and ink frame as the field it replaces, so the screen does not appear to
+ * rebuild itself between the two steps.
+ */
+@Composable
+private fun Destination(provider: Provider) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .glassSurface(framed = false)
+            .border(2.dp, Areel.Ink)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            stringResource(R.string.gate_profile_title),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Areel.Ink,
+        )
+        DestinationRow(stringResource(R.string.gate_profile_llm), provider.llmHost())
+        DestinationRow(stringResource(R.string.gate_profile_search), provider.searchHost())
+        DestinationRow(
+            stringResource(R.string.gate_profile_models),
+            provider.flash + " / " + provider.pro,
+        )
+    }
+}
+
+@Composable
+private fun DestinationRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = Areel.Ink40,
+            modifier = Modifier.width(64.dp),
+        )
+        // Mono-ish and unwrapped-looking, like the error detail: this is a machine's name for
+        // something, and it is read character by character or not at all.
+        Text(
+            value,
+            style = MaterialTheme.typography.labelMedium,
+            color = Areel.Ink,
+            modifier = Modifier.weight(1f),
         )
     }
 }
