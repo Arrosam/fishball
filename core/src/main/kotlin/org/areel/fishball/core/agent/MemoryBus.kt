@@ -64,6 +64,18 @@ class MemoryBus(
     private val llm: LlmClient,
     private val retrieval: Retrieval?,
     private val store: MemoryStore,
+    /**
+     * The model the filing runs on, when it should not be the one [llm] points at.
+     *
+     * Was `fish-system` spelled at each call site, which was right while every install talked to
+     * the same deployment. A custom profile names its own, so the name arrives from outside.
+     *
+     * Null sends no override and the filing runs on [llm]'s own model — which is what a profile
+     * naming no side model means, and is already the behaviour when the id is one the key cannot
+     * reach: an override the service refuses quietly becomes an ordinary call rather than a
+     * failed one. See `HydrogenClient.wrongModel`.
+     */
+    private val systemModel: String? = SYSTEM_MODEL,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("memory-bus")),
@@ -207,7 +219,7 @@ class MemoryBus(
                     tools = listOf(Tools.recallTerms),
                     forceTool = Tools.RECALL,
                     maxTokens = TOOL_BUDGET,
-                    model = SYSTEM_MODEL,
+                    model = systemModel,
                     effort = Effort.HIGH,
                     call = org.areel.fishball.core.llm.Call.RECALL,
                 ),
@@ -315,7 +327,7 @@ class MemoryBus(
                 tools = listOf(tool),
                 forceTool = force,
                 maxTokens = TOOL_BUDGET,
-                model = SYSTEM_MODEL,
+                model = systemModel,
                 effort = Effort.HIGH,
                 call = call,
             ),

@@ -145,11 +145,19 @@ class SearchRankingTest {
             documents.indices.map { Scored(it, 1.0 - it * 0.1) }
     }
 
-    /** What `HydrogenClient.rerank` returns when the service is down: original order, no scores. */
+    /**
+     * What `HydrogenClient.rerank` returns when there is no reranker: null, meaning nothing was
+     * ranked.
+     *
+     * It used to return the original order with every score zeroed, and this fake said so. That
+     * was the shape of a real defect rather than a harmless stand-in - a caller cannot tell
+     * those zeros from a verdict that none of the documents are any good, and memory recall
+     * read them as one. Search was always safe because it orders and never filters, which is
+     * what the tests below check.
+     */
     private object Dead : Retrieval {
         override suspend fun embed(texts: List<String>) = emptyList<List<Float>>()
-        override suspend fun rerank(query: String, documents: List<String>) =
-            documents.indices.map { Scored(it, 0.0) }
+        override suspend fun rerank(query: String, documents: List<String>): List<Scored>? = null
     }
 
     private object NoClient : LlmClient {

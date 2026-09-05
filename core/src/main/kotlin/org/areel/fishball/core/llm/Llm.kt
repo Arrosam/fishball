@@ -230,9 +230,17 @@ interface Retrieval {
      *
      * A second opinion on top of the vectors: cosine finds things in the same neighbourhood,
      * which for a cache of answers is not the same as finding the question that was asked.
-     * Returns the original order on failure, so a dead reranker degrades to cosine alone.
+     *
+     * **Null means nothing was ranked** — no reranker configured, or the call failed — and it is
+     * a separate answer from a list of low scores. This used to return the documents in their
+     * original order with every score set to zero, which reads as "ranked, and all of it is
+     * worthless". Search survived that because it orders and never filters, but memory recall
+     * filters on a floor of 0.5, so every world memory was silently discarded the moment the
+     * reranker was unreachable — and a custom profile that names no reranker would have been in
+     * that state permanently, with no error anywhere. A caller handed null must skip its floor,
+     * not apply one to zeros.
      */
-    suspend fun rerank(query: String, documents: List<String>): List<Scored>
+    suspend fun rerank(query: String, documents: List<String>): List<Scored>?
 }
 
 data class Scored(val index: Int, val score: Double)

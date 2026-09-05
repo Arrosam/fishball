@@ -93,7 +93,9 @@ class Conversation(
      * can pass one thing; `:app` gives it a client pinned to the fast model, because filing
      * should not cost what answering costs.
      */
-    val memory: MemoryBus = MemoryBus(llm, retrieval, store, now),
+    // Named, not positional. MemoryBus grew a parameter in front of this one and the call still
+    // compiled, binding the clock to it - which a default argument is exactly able to hide.
+    val memory: MemoryBus = MemoryBus(llm, retrieval, store, now = now),
 ) {
 
     private val resolver = TrustResolver(registry)
@@ -610,6 +612,8 @@ class Conversation(
     private suspend fun ranked(query: String, hits: List<SearchHit>): List<SearchHit> {
         val engine = retrieval ?: return hits
         if (hits.size < 2) return hits
+        // Two nulls, one meaning: the timeout's, and the reranker's own for "I did not rank
+        // this". Engine order stands for both, which is what this function already did.
         val scored = withTimeoutOrNull(RERANK_WAIT_MS) {
             engine.rerank(query, hits.map { (it.title + "\n" + it.snippet).trim() })
         } ?: return hits
@@ -931,7 +935,14 @@ class Conversation(
     private suspend fun narrowAnswers(question: String, world: List<WorldRecall>): List<WorldRecall> {
         if (world.isEmpty()) return emptyList()
         val engine = retrieval ?: return emptyList()
-        return engine.rerank(question, world.map { it.fact.question + "。" + it.fact.answer })
+        // Null is "nothing ranked this", which is not a verdict and must not be read as one.
+        // The floor applied to an unranked list throws away every candidate, and that is how a
+        // provider with no reranker - or a reranker that is merely down - used to end up with
+        // an app that silently remembered nothing it had ever looked up. Cosine already chose
+        // these and already ordered them; without a second opinion its order stands.
+        val scored = engine.rerank(question, world.map { it.fact.question + "。" + it.fact.answer })
+            ?: return world.take(KEPT_MEMORIES)
+        return scored
             .filter { it.score >= RERANK_FLOOR }
             .take(KEPT_MEMORIES)
             .mapNotNull { world.getOrNull(it.index) }

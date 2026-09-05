@@ -59,9 +59,22 @@ class HydrogenClient(
      * Named separately from the chat model because they are separate deployments on the proxy
      * and do not move together: the conversation switches between fast and pro, retrieval does
      * not switch at all.
+     *
+     * Null means the provider offers none, which a custom profile is allowed to say. The call is
+     * then skipped rather than made and refused — a 404 per turn is a round trip spent learning
+     * something the profile already stated.
      */
-    private val embeddingModel: String = EMBEDDING_MODEL,
-    private val rerankModel: String = RERANK_MODEL,
+    private val embeddingModel: String? = EMBEDDING_MODEL,
+    private val rerankModel: String? = RERANK_MODEL,
+    /**
+     * The chat models this key is meant to drive, strongest first.
+     *
+     * Was a constant, and could be while every key reached the same deployment. A custom profile
+     * names its own two, and this is the parameter that makes sign-in probe *those* — without
+     * it, a perfectly good third-party key lists a catalogue with no `fishball-*` in it and the
+     * gate reports `NoModel`, which is the gate refusing a profile that works.
+     */
+    private val preferred: List<String> = PREFERRED,
     /**
      * Called when a turn had to re-pick the model, so the caller can persist the new one.
      * Without it the recovery below would repeat on every single turn forever.
@@ -97,7 +110,7 @@ class HydrogenClient(
                 var working: String? = null
                 val tried = mutableListOf<String>()
 
-                for (candidate in candidates(ids)) {
+                for (candidate in candidates(ids, preferred)) {
                     if (working != null) break
                     val (code, body) = probe(candidate)
                     if (code in 200..299) {
@@ -131,6 +144,9 @@ class HydrogenClient(
 
     override suspend fun embed(texts: List<String>): List<List<Float>> {
         if (texts.isEmpty()) return emptyList()
+        // A profile that names no embedding model is not a failure to retry every turn. Recall
+        // falls back to word overlap, which the store already does when a vector is missing.
+        val embeddingModel = embeddingModel ?: return emptyList()
         return try {
             val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/embeddings") {
                 authHeaders()
@@ -158,9 +174,16 @@ class HydrogenClient(
         }
     }
 
-    override suspend fun rerank(query: String, documents: List<String>): List<Scored> {
+    /**
+     * Null throughout when nothing was ranked — see [Retrieval.rerank].
+     *
+     * It used to hand back the original order with every score zeroed, which a caller cannot
+     * tell from a genuine verdict that none of the documents are any good. Memory recall reads
+     * those scores against a floor, so the zeros deleted every candidate.
+     */
+    override suspend fun rerank(query: String, documents: List<String>): List<Scored>? {
         if (documents.isEmpty()) return emptyList()
-        val untouched = documents.indices.map { Scored(it, 0.0) }
+        val rerankModel = rerankModel ?: return null
         return try {
             val response: HttpResponse = http.post("${baseUrl.trimEnd('/')}/v1/rerank") {
                 authHeaders()
@@ -173,19 +196,19 @@ class HydrogenClient(
                     }.toString(),
                 )
             }
-            if (!response.status.isSuccess()) return untouched
+            if (!response.status.isSuccess()) return null
             val results = Json.parseToJsonElement(response.bodyAsText())
-                .jsonObject["results"]?.jsonArray ?: return untouched
+                .jsonObject["results"]?.jsonArray ?: return null
             results.mapNotNull { entry ->
                 val row = entry as? JsonObject ?: return@mapNotNull null
                 val index = row["index"]?.jsonPrimitive?.content?.toIntOrNull()
                     ?: return@mapNotNull null
                 val score = row["relevance_score"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0
                 Scored(index, score)
-            }.ifEmpty { untouched }
+            }.ifEmpty { null }
         } catch (e: Exception) {
             e.notCancellation()
-            untouched
+            null
         }
     }
 
@@ -861,16 +884,24 @@ class HydrogenClient(
 
         /**
          * Exact id first, then a prefix match, so a dated or suffixed id
-         * (`fishball-pro-2026-08`) still resolves. Null means neither is on offer — which is a
+         * (`fishball-pro-2026-08`) still resolves. Empty means neither is on offer — which is a
          * deployment answer, not a fallback to be papered over.
+         *
+         * [wanted] defaults to the areel pair and is the profile's own two otherwise. It is the
+         * caller's list rather than this object's, because whose catalogue this is has become a
+         * question with more than one answer.
          */
-        internal fun candidates(ids: List<String>): List<String> = PREFERRED.mapNotNull { want ->
+        internal fun candidates(
+            ids: List<String>,
+            wanted: List<String> = PREFERRED,
+        ): List<String> = wanted.mapNotNull { want ->
             ids.firstOrNull { it.equals(want, ignoreCase = true) }
                 ?: ids.firstOrNull { it.startsWith(want, ignoreCase = true) }
         }
 
         /** The one that would be tried first. Entitlement still decides which is used. */
-        internal fun pickModel(ids: List<String>): String? = candidates(ids).firstOrNull()
+        internal fun pickModel(ids: List<String>, wanted: List<String> = PREFERRED): String? =
+            candidates(ids, wanted).firstOrNull()
 
         private fun Iterable<*>?.orEmpty(): List<kotlinx.serialization.json.JsonElement> =
             (this as? JsonArray) ?: emptyList()
