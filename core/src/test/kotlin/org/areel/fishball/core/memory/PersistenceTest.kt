@@ -319,6 +319,42 @@ class PersistenceTest {
         assertEquals(fat, disk.open().recentTurns().single().text, "compaction lost the turn")
     }
 
+    /**
+     * And fat is measured in what the file is measured in.
+     *
+     * The counter used to add up `String.length`, which is UTF-16 units. Read off a real install
+     * that was 1.77MB of turns.jsonl, it reported 602K of waste and sat there - because the
+     * conversations are Chinese, where a character costs three bytes, so a threshold named for a
+     * megabyte did not fire until three. This is that install in miniature: over the limit on
+     * disk, under it by a factor of three in characters.
+     */
+    @Test
+    fun `a log fat in bytes but not in characters is compacted anyway`() {
+        val disk = Disk()
+        // Three checkpoints of one answer, seeded straight into the log so the writing of them
+        // is not itself what trips the threshold: 1.62MB on disk, 1.08MB of it superseded, and
+        // only 360K characters of that.
+        val fat = "料".repeat(180_000)
+        repeat(3) {
+            disk.turns.append(
+                """{"id":1,"sessionId":1,"at":1000,"speaker":"ASSISTANT","text":"$fat"}""",
+            )
+        }
+
+        // One small write, which is all it should take: the waste was already on disk when the
+        // store opened, and a counter that starts from zero every launch never sees it.
+        disk.open().appendTurn(turn(2, Speaker.USER, "还有别的吗"))
+
+        assertEquals(
+            2,
+            disk.turns.lines().size,
+            "the log was left fat: under a million characters, over a million bytes",
+        )
+        val back = disk.open().recentTurns()
+        assertEquals(2, back.size, "compaction lost a turn")
+        assertEquals(fat, back.first { it.id == 1L }.text, "compaction lost the answer")
+    }
+
     /** Ids handed out before a crash must not be handed out again. */
     @Test
     fun `the id sequence never rewinds`() {

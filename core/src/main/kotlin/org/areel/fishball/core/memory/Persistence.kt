@@ -230,12 +230,12 @@ class PersistentStore(
         val live = HashMap<Long, Int>()
         var onDisk = 0L
         turnLog.lines().forEach { line ->
-            onDisk += line.length
+            onDisk += line.weight()
             runCatching {
                 json.decodeFromString(TurnDto.serializer(), line)
             }.getOrNull()?.let {
                 logged[it.id] = it
-                live[it.id] = line.length
+                live[it.id] = line.weight()
             }
         }
 
@@ -313,7 +313,7 @@ class PersistentStore(
         runCatching {
             val line = json.encodeToString(TurnDto.serializer(), turn.toDto())
             turnLog.append(line)
-            appended += line.length
+            appended += line.weight()
             if (appended > REWRITE_AFTER) compactLog()
         }
         Unit
@@ -428,22 +428,34 @@ class PersistentStore(
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
         /**
-         * Characters appended before the log is written out whole.
+         * Bytes appended before the log is written out whole.
          *
-         * Characters rather than bytes, which for this app's Chinese is roughly a third of the
-         * file size - the count is a proxy chosen because it is free, and the number is set
-         * against what it actually measures rather than against a round number of megabytes.
+         * It used to count characters, on the reasoning that the unit was free and the number
+         * could be set against whatever it happened to measure. That held right up until it was
+         * read off a real install: 1.77MB of turns.jsonl reported 602K of waste, because this
+         * app's conversations are Chinese and a character there is three bytes of UTF-8. A
+         * ceiling on a file has to be counted in what the file is counted in, or its name is
+         * off by whatever the language happens to cost.
          *
          * Amortisation, not tidiness. A researched answer measured 414K characters of appends
-         * across its nine checkpoints on a real install, so this compacts about every second
-         * such question, and what it rewrites is the log alone - the turns, not the embeddings.
-         * That holds the total written to a small multiple of what was appended, whatever shape
-         * the conversation takes, while leaving an ordinary short exchange to append and nothing
-         * more.
+         * across its nine checkpoints on a real install - about 1.2MB of them - so this compacts
+         * roughly once per such question, and what it rewrites is the log alone: the turns, not
+         * the embeddings. That holds the total written to a small multiple of what was appended,
+         * whatever shape the conversation takes, while leaving an ordinary short exchange to
+         * append and nothing more.
          */
         const val REWRITE_AFTER = 1_000_000L
     }
 }
+
+/**
+ * What a line costs the file it is written to, in bytes.
+ *
+ * Not [String.length], which counts UTF-16 units. The two agree on ASCII and disagree by a
+ * factor of three on the Chinese this app is actually used in, which is the whole reason
+ * [PersistentStore.REWRITE_AFTER] is measured this way - see its note.
+ */
+private fun String.weight(): Int = toByteArray().size
 
 // ---- mapping ------------------------------------------------------------------------------
 
