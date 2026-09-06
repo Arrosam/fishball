@@ -393,8 +393,14 @@ diagnostic_self_question 只在他问「我是不是得了某某病」这种关�
 【还没做完的事】
 - [他要求过但还没给他的]
 
+【出过什么岔子】
+- [查不到的、打不开的、试过不管用的。写下来是为了后面不要再试一遍]
+
 【现在在聊什么】
 - [这一刻正在进行的那件事]
+
+【下一步】
+- [接着该做的那件事。没有就写无]
 
 【要注意的】
 - [他纠正过你的地方、他的偏好、还没弄清楚的问题]
@@ -619,6 +625,24 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
 先别急——记忆那边刚查完，下面这几件事你写答案的时候还没看到。
 看一眼再交一次：用得上就照顾进去，用不上就把刚才那版原样再交一遍，不用重写。
 """.trim()
+
+    /**
+     * The folded part of the conversation, as the model is handed it.
+     *
+     * Tagged rather than run in as prose, which is DSH's shape and worth copying for two
+     * reasons. It marks where the summary ends and the verbatim turns begin, on a thread where
+     * everything after this point is quoted exactly - without the closing tag the boundary is
+     * a blank line and the model has to guess which side of it a sentence came from. And a tag
+     * is one of the few shapes this model does not imitate: labelled prose in an assistant turn
+     * taught it to write labels, and Markdown headings taught it to write Markdown, both of them
+     * caught on real devices.
+     *
+     * The sentence in front of the tag is [Label.BRIDGE] and stays: it says to treat this as
+     * something already known rather than as news, and a summary announced as a summary gets
+     * acknowledged in the next answer.
+     */
+    fun compacted(summary: String): String =
+        Label.BRIDGE + "<compacted-summary>\n" + summary.trim() + "\n</compacted-summary>"
 
     /** One search result, as the model sees it. The index is what `select_evidence` reports back. */
     fun evidenceLine(

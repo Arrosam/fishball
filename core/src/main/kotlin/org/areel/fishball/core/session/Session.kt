@@ -13,8 +13,23 @@ const val SESSION_IDLE_TIMEOUT_MS = 3_600_000L // 1 hour, spec §8
 data class Session(
     val id: Long,
     val startedAt: Long,
-    /** Carried from the previous session: what was being discussed, what was unresolved. */
+    /**
+     * The conversation so far, folded — everything up to [compactedThrough], in one paragraph.
+     *
+     * Two things arrive here and they are the same thing. A session that rolled over on the
+     * clock puts the whole of the previous session in it, so a back-reference still resolves
+     * three hours later. A session under context pressure puts its own oldest turns in it and
+     * goes on running. See `Conversation.compress`.
+     */
     val bridge: String? = null,
+    /**
+     * The last turn folded into [bridge]. Everything after it is still replayed word for word.
+     *
+     * Zero means nothing has been folded, which is every session that has not yet grown large
+     * enough to need it. The turns themselves are never touched: this marks where the *prompt*
+     * stops quoting the log, and §9's record is the log.
+     */
+    val compactedThrough: Long = 0L,
 )
 
 /**
@@ -32,18 +47,42 @@ data class Session(
 const val SESSION_COMPACT_TOKENS = 128_000
 
 /**
- * And where it has to fold whether or not anybody has stopped talking.
+ * The window a turn actually has to fit inside.
  *
- * Every turn now goes back with the tool calls that produced it - each search's results, each
- * page that was opened - which is tens of thousands of tokens on a researched question. A
- * conversation somebody is still having can therefore outgrow the window in an afternoon, and
- * a session that only ever folds once it is stale would go on sending a prompt the model can no
- * longer take. So past this line it folds at once, in the middle of things, which is the one
- * place §8 did not want a boundary: the bridge is what makes that bearable.
+ * Everything below is a fraction of this, so moving to a model with a different window is one
+ * number rather than three that have to be kept in step with each other.
+ */
+const val CONTEXT_WINDOW_TOKENS = 128_000
+
+/**
+ * Where the conversation starts being folded, and how much of the recent end is never folded.
  *
- * Five eighths of the window, not the whole of it. The count is [estimateTokens], which is
- * rough and undercounts URL-heavy text, and the turn about to start has its own searching to
- * fit on top of what is replayed.
+ * These are DeepSeek Harness's `thresholdRatio` and `retainRatio`, at their shipped defaults of
+ * 0.8 and 0.16, and the mechanism they belong to is theirs as well - see `Conversation.compress`.
+ * The point of the pair is that compaction is not a fold: everything since the seam is still
+ * sent word for word, tool calls, tool results and reasoning included, and only the oldest span
+ * is replaced by a summary of itself.
+ *
+ * Leaving 20% of the window clear above the trigger is what makes that safe. The turn that
+ * crosses the line still has to run - several rounds of search results and a page or two - and a
+ * threshold at the window itself would compact only after the request it was meant to protect
+ * had already been rejected.
+ */
+val COMPACT_AT_TOKENS = (CONTEXT_WINDOW_TOKENS * 0.8).toInt()
+val COMPACT_RETAIN_TOKENS = (CONTEXT_WINDOW_TOKENS * 0.16).toInt()
+
+/**
+ * And where a session has to be given up on whether or not anybody has stopped talking.
+ *
+ * A backstop now, and it was the main event. Every turn goes back with the tool calls that
+ * produced it - each search's results, each page that was opened, and the reasoning behind every
+ * round of it - so a conversation somebody is still having can outgrow the window in an
+ * afternoon, and this line existed to fold the whole thing the moment it did.
+ *
+ * `Conversation.compress` reaches that growth first and deals with it properly, at 80% of the
+ * window and without discarding the recent end. What is measured against these two lines is the
+ * compacted context, so a session only arrives here if a summary plus the retained tail is
+ * itself enormous - which is a session worth starting again rather than compacting again.
  */
 const val SESSION_CEILING_TOKENS = 160_000
 

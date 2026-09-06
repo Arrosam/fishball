@@ -202,7 +202,7 @@ class InMemoryStore : MemoryStore {
      * disk instead of there being a second one that has to behave identically.
      */
     fun snapshot() = MemorySnapshot(
-        session = current?.let { SessionDto(it.id, it.startedAt, it.bridge) },
+        session = current?.let { SessionDto(it.id, it.startedAt, it.bridge, it.compactedThrough) },
         world = world.map { it.toDto() },
         preferences = preferences.map { it.toDto() },
         turns = turns.map { it.toDto() },
@@ -216,7 +216,9 @@ class InMemoryStore : MemoryStore {
         // Never rewind: ids handed out before a crash must not be handed out again, so this
         // takes the larger of the recorded sequence and anything actually present.
         current = snapshot.session?.let {
-            org.areel.fishball.core.session.Session(it.id, it.startedAt, it.bridge)
+            org.areel.fishball.core.session.Session(
+                it.id, it.startedAt, it.bridge, it.compactedThrough,
+            )
         }
         idSeq.set(
             maxOf(

@@ -43,6 +43,8 @@ import org.areel.fishball.core.search.PageGateway
 import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.session.Session
+import org.areel.fishball.core.session.COMPACT_AT_TOKENS
+import org.areel.fishball.core.session.COMPACT_RETAIN_TOKENS
 import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
 import org.areel.fishball.core.session.SessionManager
 import org.areel.fishball.core.session.estimateTokens
@@ -1122,7 +1124,7 @@ class Conversation(
      */
     private fun bridgeMessage(): List<LlmMessage> {
         val bridge = session?.bridge?.takeIf { it.isNotBlank() } ?: return emptyList()
-        return listOf(LlmMessage.user(AgentPrompt.Label.BRIDGE + bridge))
+        return listOf(LlmMessage.user(AgentPrompt.compacted(bridge)))
     }
 
     /**
@@ -1232,8 +1234,25 @@ class Conversation(
         // §8 — invisible to the user. Crossing the boundary bounds the prompt; it does not
         // clear anything they can see, and the log survives it untouched.
         if (session == null) session = store.loadSession()
-        val sofar = session?.let { store.turnsInSession(it.id) }.orEmpty()
-        val size = sentSize(sofar)
+        /*
+         * Compaction first, and the two lines below are backstops behind it.
+         *
+         * Order is the whole of it. Measured against a context that has not been compacted yet,
+         * [SESSION_CEILING_TOKENS] fires on a session that needed nothing more than its oldest
+         * span replacing - and folds the recent end that compaction exists to keep. Run in this
+         * order a session only reaches those lines if a summary plus the retained tail is itself
+         * enormous, which is a session worth starting again rather than compacting again.
+         *
+         * Also before the question is written down, so the seam is never asked to consider a
+         * turn that has not happened yet.
+         */
+        compress(progress)
+
+        // What is actually sent, which since compaction is not the whole session: the summary
+        // standing in for the folded head plus the turns still quoted after it.
+        val open = session
+        val sofar = open?.let { carried(it) }.orEmpty()
+        val size = (open?.let { bridgeSize(it) } ?: 0) + sentSize(sofar)
 
         when (
             val decision =
@@ -1251,7 +1270,12 @@ class Conversation(
                     // start and it now happens mid-conversation. Unnarrated it is a minute of
                     // 思考中 with nothing under it, which reads as the app having hung.
                     progress.step(UiCopy.Narration.FOLDING)
-                    summarise(sofar)
+                    // A summary that could not be written is not a reason to throw the
+                    // conversation away. This used to hand the null straight to the new session,
+                    // which then had no bridge and no turns - every word of a long conversation
+                    // deleted because one call failed. Staying put costs an over-budget prompt
+                    // for one turn, which is the cheaper of the two by a distance.
+                    summarise(sofar) ?: return
                 } else {
                     null
                 }
@@ -1270,8 +1294,9 @@ class Conversation(
     /**
      * What a session actually costs to replay, which is not what was said in it.
      *
-     * §8's threshold has to be measured against what [priorTurns] puts on the wire, and since
-     * the reasoning started riding along with each assistant turn that is mostly not the text.
+     * The compaction threshold has to be measured against what [priorTurns] puts on the wire,
+     * and since the reasoning started riding along with each assistant turn - and now with each
+     * round of each assistant turn - that is mostly not the text.
      * Measured in this file's own notes at over four thousand characters of thinking against a
      * few hundred of answer, so sizing on `text` alone undercounted the prompt several times
      * over: the rollover never fired, [compact] always returned false, and a conversation ran
@@ -1307,19 +1332,92 @@ class Conversation(
      */
     suspend fun compact(): Boolean {
         val open = session ?: store.loadSession() ?: return false
-        val sofar = store.turnsInSession(open.id)
+        val sofar = carried(open)
         // Nothing has been said in this session, so there is nothing to fold and no reason to
         // start another one - the session it would open is the session it is already in.
         // Switching model twice in a row used to roll a fresh empty session each time and
         // announce a compaction that had not happened.
         if (sofar.isEmpty()) return false
-        if (sentSize(sofar) < SESSION_COMPACT_TOKENS) {
+        if (bridgeSize(open) + sentSize(sofar) < SESSION_COMPACT_TOKENS) {
             return false
         }
 
-        begin(Session(store.nextId(), now(), bridge = summarise(sofar)))
+        // A summary that could not be written is not a reason to throw the conversation away.
+        // This used to hand the null straight to the new session, which started it with no
+        // bridge and no turns - the whole conversation deleted because one call failed.
+        val folded = summarise(sofar) ?: return false
+        begin(Session(store.nextId(), now(), bridge = folded))
         return true
     }
+
+    /**
+     * Context pressure, handled the way DeepSeek Harness handles it.
+     *
+     * The fold this app had was all or nothing: past a line, the entire session was replaced by
+     * one paragraph and every tool call, every page read and every line of reasoning behind them
+     * went with it. That is a large price paid in one instalment, and it is paid on the
+     * conversation somebody is in the middle of.
+     *
+     * DSH's `compaction-basic` does the same job without the cliff, and this is its shape.
+     * Nothing happens until the replayed context crosses [COMPACT_AT_TOKENS] - 80% of the window
+     * - and what happens then is that the *oldest* span is replaced by a summary of itself while
+     * the most recent [COMPACT_RETAIN_TOKENS] stay word for word. So an ordinary conversation is
+     * never compacted at all, and a long one keeps its recent looking intact and loses only the
+     * detail of what it was doing an hour ago.
+     *
+     * Three properties are load-bearing and each was a defect in the old one.
+     *
+     * The seam falls on a whole turn, and never between a question and its answer. DSH states
+     * this as tool pairing - no unanswered assistant tool call may cross the edge - and here a
+     * turn's rounds are all inside the turn, so keeping turns whole gives it for free. Trailing
+     * questions are pushed back into the retained side rather than folded away from the answer
+     * they were asked of.
+     *
+     * The summary is written by replaying the shadowed span exactly as it was sent, under the
+     * same system prompt and the same tools, with the instruction last. DSH is explicit that
+     * this is what lets the provider's warm prefix be reused up to that trailing instruction;
+     * a summariser prompt of its own would cost the entire cache to save a few hundred tokens.
+     * See [summarise], which already worked this way.
+     *
+     * And a summary that fails to arrive changes nothing. The seam does not move, the context
+     * stays over budget for a turn, and the conversation is still there to try again with -
+     * which is the opposite of what a failed fold used to do.
+     */
+    private suspend fun compress(progress: TurnProgress) {
+        val open = session ?: return
+        val live = carried(open)
+        if (bridgeSize(open) + sentSize(live) < COMPACT_AT_TOKENS) return
+
+        // The tail kept verbatim, newest first, until the retain budget is spent. The newest
+        // turn is kept whatever it costs: a single turn larger than the whole budget is a turn
+        // there is nothing useful to do about, and dropping it would fold away the thing being
+        // talked about right now.
+        var budget = COMPACT_RETAIN_TOKENS
+        var kept = 0
+        for (turn in live.asReversed()) {
+            val cost = sentSize(listOf(turn))
+            if (kept > 0 && cost > budget) break
+            budget -= cost
+            kept++
+        }
+
+        // Never a question without the answer it got. Anything trailing on the shadowed side
+        // stays on the retained side instead, which is the only direction that is safe.
+        var shadowed = live.dropLast(kept)
+        while (shadowed.isNotEmpty() && shadowed.last().speaker == Speaker.USER) {
+            shadowed = shadowed.dropLast(1)
+        }
+        if (shadowed.isEmpty()) return
+
+        // Said out loud: it is one long model call in front of a turn that has not started, and
+        // unnarrated it reads as the app having hung.
+        progress.step(UiCopy.Narration.FOLDING)
+        val summary = summarise(shadowed) ?: return
+        begin(open.copy(bridge = summary, compactedThrough = shadowed.last().id))
+    }
+
+    /** What the standing summary costs, since it is part of what is sent. */
+    private fun bridgeSize(open: Session): Int = estimateTokens(open.bridge.orEmpty())
 
     /**
      * Fold a session, by asking the conversation itself.
@@ -1371,7 +1469,19 @@ class Conversation(
      */
     private fun priorTurns(): List<LlmMessage> {
         val open = session ?: return emptyList()
-        return replay(store.turnsInSession(open.id).dropLast(1))
+        return replay(carried(open).dropLast(1))
+    }
+
+    /**
+     * The turns still quoted in full: everything after the compaction seam.
+     *
+     * What is in front of the seam is not gone. It is in the log, it is searchable with
+     * `read_log`, and the summary standing in its place was written from it - what changed is
+     * only that the prompt has stopped quoting it word for word. See [compress].
+     */
+    private fun carried(open: Session): List<ConversationTurn> {
+        val turns = store.turnsInSession(open.id)
+        return if (open.compactedThrough == 0L) turns else turns.filter { it.id > open.compactedThrough }
     }
 
     /**
@@ -1385,9 +1495,10 @@ class Conversation(
      * about that page sent it searching for it again; and what memory had offered mid-turn was
      * gone with it, so the model that knew about the allergy last turn did not know this one.
      *
-     * All of it, not a recent window. What keeps the prompt inside the window is §8: the size
-     * measured here is what decides a fold, and [SESSION_CEILING_TOKENS] folds a live session
-     * once it can no longer be carried whole.
+     * All of it, back to the compaction seam, and not a recent window. What keeps the prompt
+     * inside the model's is [compress]: past 80% of the window the oldest span is replaced by a
+     * summary of itself and the seam moves up, so what this function is handed is already
+     * bounded. Everything it is handed, it quotes.
      *
      * One function for the thread, the checkpoint and the size, so what is measured is what is
      * sent. See [sentSize].

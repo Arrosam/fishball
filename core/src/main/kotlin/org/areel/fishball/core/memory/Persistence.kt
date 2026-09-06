@@ -33,7 +33,14 @@ data class MemorySnapshot(
 )
 
 @Serializable
-data class SessionDto(val id: Long, val startedAt: Long, val bridge: String? = null)
+data class SessionDto(
+    val id: Long,
+    val startedAt: Long,
+    val bridge: String? = null,
+    // Defaulted, so a session written before compaction had a seam reads back as one that has
+    // never been compacted - which is what it is.
+    val compactedThrough: Long = 0L,
+)
 
 /*
  * DTOs rather than @Serializable on the domain types.
