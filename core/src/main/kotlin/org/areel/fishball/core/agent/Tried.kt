@@ -1,7 +1,9 @@
 package org.areel.fishball.core.agent
 
 import kotlinx.serialization.json.JsonObject
+import org.areel.fishball.core.agent.Tools
 import org.areel.fishball.core.copy.AgentPrompt
+import org.areel.fishball.core.memory.ToolRound
 
 /**
  * What this turn has already tried, so it cannot spend the rest of itself trying it again.
@@ -41,6 +43,31 @@ internal class Tried {
      */
     var blocked: Int = 0
         private set
+
+    /**
+     * What an earlier run of this same turn already did, put back.
+     *
+     * A turn the app was killed in the middle of comes back with its rounds, and without this it
+     * came back with none of what they taught: the page that would not open was fetched again,
+     * and the three futile rounds it takes to notice were spent again. The rounds are the record
+     * of exactly what this index is for, so they are read straight out of it.
+     *
+     * The reason a page failed is not kept on the exchange, only the sentence the model was
+     * handed - so the address is buried under [AgentPrompt.EARLIER_FAILURE] rather than a
+     * reconstruction of what went wrong. What matters is that it is dead, not how.
+     */
+    fun recall(rounds: List<ToolRound>) {
+        rounds.forEach { round ->
+            round.exchanges.forEach { done ->
+                record(done.name, done.input)
+                if (done.isError && done.name == Tools.READ) {
+                    done.input["url"]?.let { url ->
+                        bury(url.toString().trim('"'), AgentPrompt.EARLIER_FAILURE)
+                    }
+                }
+            }
+        }
+    }
 
     /** The rejection for a call already made word for word, or null to go ahead and make it. */
     fun repeat(name: String, input: JsonObject): String? {

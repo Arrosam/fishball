@@ -21,6 +21,8 @@ import org.areel.fishball.core.llm.LlmRequest
 import org.areel.fishball.core.llm.LlmResult
 import org.areel.fishball.core.memory.InMemoryStore
 import org.areel.fishball.core.memory.Speaker
+import org.areel.fishball.core.search.PageContent
+import org.areel.fishball.core.search.PageGateway
 import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.search.SearchResponse
@@ -109,6 +111,67 @@ class ResumeTest {
         assertEquals(1, store.recentTurns().last().rounds.size)
     }
 
+    /**
+     * But a turn that is still running is not "left over", and abandon must not touch it.
+     *
+     * The stop button races a send through here: `stop()` joins the turn it cancelled and then
+     * abandons, while the send that caused the stop has already opened a row of its own. An
+     * abandon that swept the whole session would leave the turn that is actually running
+     * unmarked, so a kill a second later would not offer it back - the feature undone by the
+     * button next to it.
+     */
+    @Test
+    fun `a turn that is still running is not abandoned out from under itself`() {
+        val store = InMemoryStore()
+        died(store)
+
+        val llm = Stalls()
+        val conversation = conversation(llm, store)
+        runBlocking {
+            val second = launch { conversation.resume() }
+            llm.stalled.await()
+            // Where `stop()` lands: the earlier turn is over, this one is mid-round.
+            conversation.abandon()
+            assertTrue(
+                store.recentTurns().last().inFlight,
+                "the running turn was unmarked, so a kill here would lose it",
+            )
+            second.cancelAndJoin()
+        }
+        // And once it is not running any more, the same call does take the offer away.
+        conversation.abandon()
+        assertFalse(store.recentTurns().last().inFlight, "a stopped turn stayed resumable")
+    }
+
+    /**
+     * What the interrupted turn learned comes back with it.
+     *
+     * The 404 loop is what `Tried` defends against, and a resume walked straight back into it: a
+     * fresh guard meant the dead page was fetched over the network again and the futile counter
+     * started from nothing. The rounds are the record of what was tried, so they are read out of.
+     */
+    @Test
+    fun `a page that would not open before the kill is not fetched again after it`() {
+        val store = InMemoryStore()
+        val pages = Broken()
+        val llm = Opens()
+        runBlocking {
+            val turn = launch { conversation(llm, store, pages).ask("布洛芬孕妇能吃吗") }
+            llm.stalled.await()
+            turn.cancelAndJoin()
+        }
+        assertEquals(listOf(DEAD_URL), pages.opened.toList(), "the first read did not happen once")
+
+        // Resumed, and it asks for the same page again - which it is told about rather than sent
+        // to fetch.
+        runBlocking { conversation(Opens(thenAnswer = true), store, pages).resume() }
+        assertEquals(
+            listOf(DEAD_URL),
+            pages.opened.toList(),
+            "a page known not to open was fetched again after the resume",
+        )
+    }
+
     /** And neither is one from long enough ago that nobody is waiting on it. */
     @Test
     fun `a turn from an hour ago is left where it is`() {
@@ -140,14 +203,69 @@ class ResumeTest {
         assertTrue(left.inFlight, "the turn was not left marked as running: " + left)
     }
 
-    private fun conversation(llm: LlmClient, store: InMemoryStore) = Conversation(
+    private fun conversation(
+        llm: LlmClient,
+        store: InMemoryStore,
+        pages: PageGateway = Broken(),
+    ) = Conversation(
         llm = llm,
         search = OneHit,
+        pages = pages,
         registry = loadBundledRegistry(),
         store = store,
         now = { NOW },
         memory = MemoryBus(Dead, null, store, now = { NOW }),
     )
+
+    /**
+     * Opens the same dead page, then either stalls where a kill would land or gives up and
+     * answers - which is what the resumed half of the test needs it to do so the turn can end.
+     */
+    private class Opens(private val thenAnswer: Boolean = false) : LlmClient {
+        val stalled = CompletableDeferred<Unit>()
+        private var calls = 0
+
+        override suspend fun complete(request: LlmRequest, onDelta: (LlmDelta) -> Unit): LlmResult {
+            if (calls++ > 0) {
+                if (!thenAnswer) {
+                    stalled.complete(Unit)
+                    awaitCancellation()
+                }
+                val done = LlmContent.ToolUse(
+                    "a1",
+                    Tools.ANSWER,
+                    buildJsonObject { put("text", "那一页打不开，查不到。") },
+                )
+                return LlmResult.Ok(
+                    text = "",
+                    toolCalls = listOf(done),
+                    raw = LlmMessage(LlmMessage.Role.ASSISTANT, listOf(done)),
+                )
+            }
+            val call = LlmContent.ToolUse(
+                "r1",
+                Tools.READ,
+                buildJsonObject { put("url", DEAD_URL) },
+            )
+            return LlmResult.Ok(
+                text = "",
+                toolCalls = listOf(call),
+                raw = LlmMessage(LlmMessage.Role.ASSISTANT, listOf(call)),
+            )
+        }
+
+        override suspend fun validate() = KeyCheck.Rejected
+    }
+
+    /** Every page is a 404, and it remembers who asked. */
+    private class Broken : PageGateway {
+        val opened = CopyOnWriteArrayList<String>()
+
+        override suspend fun read(url: String): PageContent {
+            opened += url
+            return PageContent(url, failed = true, reason = "HTTP 404")
+        }
+    }
 
     /** Searches, writes the round down, then never comes back — where a kill would land. */
     private class Stalls : LlmClient {
@@ -212,5 +330,6 @@ class ResumeTest {
     private companion object {
         const val NOW = 1_760_000_000_000L
         const val HIT_URL = "https://www.nmpa.gov.cn/ibuprofen"
+        const val DEAD_URL = "https://www.nmpa.gov.cn/gone"
     }
 }

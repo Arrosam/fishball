@@ -178,8 +178,15 @@ class InMemoryStore : MemoryStore {
             } +
             // The tool results are most of what a researched answer weighs now that they are
             // kept, and a size that left them out would barely move when the log is cleared.
+            // The reasoning is the other half of that and was being left out: a turn that
+            // searched six times keeps six blocks of it, measured elsewhere in this codebase at
+            // thousands of characters against a few hundred of answer. Both are counted, or the
+            // number offered before somebody clears their history understates by more than it
+            // reports.
+            turn.reasoning.length.toLong() +
             turn.rounds.sumOf { round ->
-                round.exchanges.sumOf { (it.input.toString().length + it.result.length).toLong() }
+                round.thinking.length.toLong() +
+                    round.exchanges.sumOf { (it.input.toString().length + it.result.length).toLong() }
             }
     }
 

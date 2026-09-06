@@ -727,6 +727,15 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
             "所以这次没去执行，上一次的结果就在上面那一轮里。\n" +
             "换个做法：换个搜索词再查一轮、点开还没看过的那几条、或者就用手上已经有的资料把答案写出来。"
 
+    /**
+     * Why a page is dead, on a turn that only knows it from its own record.
+     *
+     * A resumed turn reads what it tried out of its rounds, and those keep the sentence the model
+     * was handed rather than the status code behind it. Saying so plainly beats reconstructing a
+     * reason out of a translated error message.
+     */
+    const val EARLIER_FAILURE = "被打断之前就没打开"
+
     /** A page that would not open, the first time. The address is dead, and saying so is the point. */
     fun unopenable(reason: String): String =
         "这一页打不开（" + reason + "）。这个网址不用再试了，换一条资料看。"

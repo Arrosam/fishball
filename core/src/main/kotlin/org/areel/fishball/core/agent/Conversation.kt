@@ -124,6 +124,19 @@ class Conversation(
      */
     private var lastFailure: String? = null
 
+    /**
+     * The row a turn is writing to right now, or null between turns.
+     *
+     * [abandon] exists to take the resume offer off whatever a newer event has superseded, and
+     * it used to clear every marked row in the session - including one a turn was still writing
+     * to. The stop button races a send through it: `stop()` joins the cancelled turn and then
+     * abandons, while the send that caused the stop has already opened and checkpointed a row of
+     * its own, so the turn that is actually running comes out unmarked and is not offered back
+     * if the app dies. Naming the live row is the cheapest way to make abandon mean what it
+     * says: everything left over, and nothing that is still happening.
+     */
+    private var writing: Long? = null
+
     /** The pictures on this turn. Replaced by the next [ask], so they never carry over. */
     private var attached: List<LlmContent.Image> = emptyList()
 
@@ -218,6 +231,15 @@ class Conversation(
         /** Every tool round as it went over the wire. See [ConversationTurn.rounds]. */
         val rounds = done.toMutableList()
 
+        init {
+            writing = id
+        }
+
+        /** This row is nobody's live row any more, however the turn ended. See [writing]. */
+        fun released() {
+            if (writing == id) writing = null
+        }
+
         /** What has happened so far, on the record before the next round is asked for. */
         fun checkpoint() = store.replaceTurn(
             ConversationTurn(
@@ -290,13 +312,7 @@ class Conversation(
      * nobody is waiting on the answer to.
      */
     fun unfinished(): Unfinished? {
-        val open = session ?: store.loadSession() ?: return null
-        val turns = store.turnsInSession(open.id)
-        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT && it.inFlight }
-            ?: return null
-        if (now() - answer.at >= SESSION_IDLE_TIMEOUT_MS) return null
-        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
-            ?: return null
+        val (answer, asked) = resumable() ?: return null
         return Unfinished(
             id = answer.id,
             question = asked.text,
@@ -304,6 +320,28 @@ class Conversation(
             steps = answer.steps,
             rounds = answer.rounds.size,
         )
+    }
+
+    /**
+     * The half-finished answer and the question it belongs to, or null if there is no such pair.
+     *
+     * One reader, because there were two and they drifted: [resume] found the row with its own
+     * copy of this and left the hour bound out of it, so the guard that stops a model request
+     * firing on launch for yesterday's question existed on only one of the two ways in. What
+     * counts as resumable is one decision and belongs in one place.
+     */
+    private fun resumable(): Pair<ConversationTurn, ConversationTurn>? {
+        val open = session ?: store.loadSession() ?: return null
+        val turns = store.turnsInSession(open.id)
+        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT && it.inFlight }
+            ?: return null
+        // Past the hour a session goes stale in, nobody is waiting on this answer and it is not
+        // worth a model call on launch to produce.
+        if (now() - answer.at >= SESSION_IDLE_TIMEOUT_MS) return null
+        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
+            ?: return null
+        session = open
+        return answer to asked
     }
 
     /**
@@ -324,13 +362,20 @@ class Conversation(
         progress: TurnProgress = TurnProgress.Silent,
         images: List<LlmContent.Image> = emptyList(),
     ): Reply? {
-        val open = session ?: store.loadSession() ?: return null
-        val turns = store.turnsInSession(open.id)
-        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT && it.inFlight }
-            ?: return null
-        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
-            ?: return null
-        session = open
+        val (answer, asked) = resumable() ?: return null
+        /*
+         * A picture question with no picture is not resumable, it is a different question.
+         *
+         * The log keeps the names and the caller turns them back into bytes; when the files have
+         * gone - cleared with the history, or reclaimed - what comes back is short, and carrying
+         * on regardless would ask 「这个能吃吗」 with nothing to look at and get a confident
+         * answer about nothing. Abandoned rather than left marked, so it is not offered again on
+         * every launch until the hour runs out.
+         */
+        if (images.size < asked.images.size) {
+            abandon()
+            return null
+        }
         memory.turnStarted()
         try {
             return turn(asked.text, progress, images, resuming = answer)
@@ -350,7 +395,8 @@ class Conversation(
     fun abandon() {
         val open = session ?: store.loadSession() ?: return
         store.turnsInSession(open.id)
-            .filter { it.inFlight }
+            // Everything left over, and nothing that is still happening. See [writing].
+            .filter { it.inFlight && it.id != writing }
             .forEach { store.replaceTurn(it.copy(inFlight = false)) }
     }
 
@@ -370,7 +416,25 @@ class Conversation(
     ): Reply = coroutineScope {
         val recording = Recording(progress, said = resuming?.steps.orEmpty())
         val at = resuming?.at ?: now()
-        rollSession(at, recording)
+
+        /*
+         * Both rows on the record before anything long happens, and that ordering is the whole
+         * of this block.
+         *
+         * [rollSession] used to come first. It now compacts, which is a full summarisation call
+         * of twenty or forty seconds, and it ran before the question was written down and before
+         * the answer's row existed - so a turn stopped in that window left nothing at all in the
+         * log. The screen showed the question and 「那就先不查了」, and reopening the app showed
+         * neither. The thread somebody can see and the record §9 keeps are supposed to be the
+         * same thing.
+         *
+         * So the session is opened here rather than there, the question is written, and the row
+         * is claimed; only then is the long call allowed to happen. [rollSession] can still roll
+         * a session over underneath all three, which is a backstop compaction makes effectively
+         * unreachable - see the note on SESSION_CEILING_TOKENS.
+         */
+        if (session == null) session = store.loadSession()
+        if (session == null) begin(Session(store.nextId(), at))
 
         if (resuming == null) {
             // Anything left over from a turn that died is not going to be picked up now: this
@@ -389,19 +453,24 @@ class Conversation(
         // be lost whenever the search failed or they closed the app mid-thought.
         memory.noteUser(userText)
 
-        attached = images
-        lastFailure = null
-        // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
-        // Two dropped on a resume rather than one: the question is put back by [converse], and
-        // the half-written answer is this turn's own row rather than history.
-        thread = (bridgeMessage() + priorTurns(drop = if (resuming == null) 1 else 2)).toMutableList()
-
         // Claimed before the work starts and written to as it goes. See [Answering].
         val answering = if (resuming == null) {
             Answering(store.nextId(), session!!.id, at, recording)
         } else {
             Answering(resuming.id, session!!.id, resuming.at, recording, done = resuming.rounds)
         }
+        answering.checkpoint()
+
+        // Compaction and §8's backstops, now that there is something on the record to survive
+        // them. See the note above.
+        rollSession(at, recording)
+
+        attached = images
+        lastFailure = null
+        // Rebuilt from the log every turn, so nothing an earlier turn left behind survives. The
+        // last two are always this turn's own - the question, which [converse] puts back, and
+        // the row being written into - so they are never history.
+        thread = (bridgeMessage() + priorTurns()).toMutableList()
 
         /*
          * §10 — what is already known, started here and read later.
@@ -432,18 +501,6 @@ class Conversation(
         // the seam it lands at - see [converse] - so the panel never claims a fact was in front
         // of the model on a turn that answered before the lookup came back.
         recording.step(UiCopy.Narration.RECALLING)
-        /*
-         * The row exists before the first model call does.
-         *
-         * Checkpointing only at the end of a round was not enough, and the gap is the one that
-         * matters most: measured on a device, a turn force-stopped nine seconds in - still
-         * inside its first search - left the question in the log with no answer row at all, so
-         * there was nothing marked as running and nothing to pick up. The first round is the
-         * longest thing a turn does and the likeliest moment to be killed in.
-         *
-         * One extra write per turn, and it buys the whole of that case.
-         */
-        answering.checkpoint()
         val recalled = async {
             catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
                 .getOrDefault(Remembered.NOTHING)
@@ -461,6 +518,7 @@ class Conversation(
              * inside a coroutine that has already been cancelled.
              */
             answering.checkpoint()
+            answering.released()
             throw stopped
         } finally {
             // Whatever is left of it is work nobody is waiting for: the turn is over, and this
@@ -478,6 +536,7 @@ class Conversation(
             sources = reply.sources.map { it.url },
         )
         answering.close(now(), reply)
+        answering.released()
         reply
     }
 
@@ -523,7 +582,9 @@ class Conversation(
         // is written from. See [ConversationTurn.rounds].
         val rounds = answering.rounds
         // What has already been asked for, so a round cannot be spent asking for it again.
-        val tried = Tried()
+        // Seeded from the rounds a resumed turn is carrying, or the guard would start empty on
+        // exactly the turn most likely to be stuck in a loop already.
+        val tried = Tried().apply { recall(rounds) }
 
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
@@ -574,7 +635,12 @@ class Conversation(
         // What memory offered, once it is in front of the model, and null until then. It is the
         // difference between "memory found nothing" and "memory has not answered yet", and the
         // guard below turns on exactly that distinction.
-        var known: Remembered? = null
+        //
+        // Already delivered, on a turn being picked back up whose replayed rounds carry the
+        // block: the seam would otherwise hand the same facts over a second time, under a
+        // heading that says memory has just come back, when it came back before the app died.
+        var known: Remembered? =
+            if (rounds.any { it.known.isNotEmpty() }) Remembered.NOTHING else null
         while (true) {
             // Three states, and the model is never told to stop - only offered less to do with
             // the turn. Given no tools at all it writes prose, and prose is an answer.
@@ -677,13 +743,22 @@ class Conversation(
             // be told from one that did something. See [Tried.blocked].
             val turnedAway = tried.blocked
             val results = result.toolCalls.map { call ->
-                // Word for word the same call as one already in this thread. Not run: what it
-                // returns is a few lines up, and the round would buy nothing but the chance to
-                // ask for it a third time. See [Tried].
-                tried.repeat(call.name, call.input)?.let { said ->
-                    return@map LlmContent.ToolResult(call.id, said, isError = true)
+                /*
+                 * Word for word the same call as one already in this thread. Not run: what it
+                 * returns is a few lines up, and the round would buy nothing but the chance to
+                 * ask for it a third time. See [Tried].
+                 *
+                 * Except `answer`, which is not looked up but submitted. A second attempt at it
+                 * is the model fixing a call that would not read, and telling it to try a
+                 * different search word instead is the unactionable feedback [AgentPrompt.badCall]
+                 * exists to avoid - which is what it gets below, having been let through.
+                 */
+                if (call.name != Tools.ANSWER) {
+                    tried.repeat(call.name, call.input)?.let { said ->
+                        return@map LlmContent.ToolResult(call.id, said, isError = true)
+                    }
+                    tried.record(call.name, call.input)
                 }
-                tried.record(call.name, call.input)
                 when (call.name) {
                     Tools.SEARCH -> lookUp(call, seen, progress)
                     Tools.READ -> openPage(call, seen, progress, tried)
@@ -1380,13 +1455,11 @@ class Conversation(
          * Also before the question is written down, so the seam is never asked to consider a
          * turn that has not happened yet.
          */
-        compress(progress)
-
         // What is actually sent, which since compaction is not the whole session: the summary
-        // standing in for the folded head plus the turns still quoted after it.
-        val open = session
-        val sofar = open?.let { carried(it) }.orEmpty()
-        val size = (open?.let { bridgeSize(it) } ?: 0) + sentSize(sofar)
+        // standing in for the folded head plus the turns still quoted after it. Taken from
+        // [compress], which had to measure it to decide whether to fold - measuring it again
+        // here meant replaying every tool result of the session twice on the turn path.
+        val size = compress(progress)
 
         when (
             val decision =
@@ -1399,6 +1472,9 @@ class Conversation(
                 // Both stale and large, or past the ceiling. Everything said is still in the
                 // log; what rides forward is a paragraph, so a back-reference still resolves
                 // without carrying the whole conversation into every future prompt.
+                // Read only on this branch, which compaction makes effectively unreachable -
+                // no reason to walk the log for it on every ordinary turn.
+                val sofar = session?.let { carried(it) }.orEmpty()
                 val bridge = if (sessions.needsBridge(sofar.size)) {
                     // Said out loud, because it is one long model call before the turn can
                     // start and it now happens mid-conversation. Unnarrated it is a minute of
@@ -1517,10 +1593,11 @@ class Conversation(
      * stays over budget for a turn, and the conversation is still there to try again with -
      * which is the opposite of what a failed fold used to do.
      */
-    private suspend fun compress(progress: TurnProgress) {
-        val open = session ?: return
+    private suspend fun compress(progress: TurnProgress): Int {
+        val open = session ?: return 0
         val live = carried(open)
-        if (bridgeSize(open) + sentSize(live) < COMPACT_AT_TOKENS) return
+        val size = bridgeSize(open) + sentSize(live)
+        if (size < COMPACT_AT_TOKENS) return size
 
         // The tail kept verbatim, newest first, until the retain budget is spent. The newest
         // turn is kept whatever it costs: a single turn larger than the whole budget is a turn
@@ -1541,13 +1618,16 @@ class Conversation(
         while (shadowed.isNotEmpty() && shadowed.last().speaker == Speaker.USER) {
             shadowed = shadowed.dropLast(1)
         }
-        if (shadowed.isEmpty()) return
+        if (shadowed.isEmpty()) return size
 
         // Said out loud: it is one long model call in front of a turn that has not started, and
         // unnarrated it reads as the app having hung.
         progress.step(UiCopy.Narration.FOLDING)
-        val summary = summarise(shadowed) ?: return
+        val summary = summarise(shadowed) ?: return size
         begin(open.copy(bridge = summary, compactedThrough = shadowed.last().id))
+        // What is left, measured once, for the caller that has to decide against it.
+        val folded = session!!
+        return bridgeSize(folded) + sentSize(carried(folded))
     }
 
     /** What the standing summary costs, since it is part of what is sent. */
@@ -1601,9 +1681,11 @@ class Conversation(
      * The final entry is dropped: it is the question being answered right now, already written
      * into this turn's own prompt.
      */
-    private fun priorTurns(drop: Int = 1): List<LlmMessage> {
+    private fun priorTurns(): List<LlmMessage> {
         val open = session ?: return emptyList()
-        return replay(carried(open).dropLast(drop))
+        // Two, always: the question being answered right now and the row its answer is being
+        // written into, both of which this turn puts back itself. See [turn].
+        return replay(carried(open).dropLast(2))
     }
 
     /**

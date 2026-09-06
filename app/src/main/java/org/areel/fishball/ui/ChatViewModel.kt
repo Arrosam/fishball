@@ -264,15 +264,26 @@ class ChatViewModel(
             narration += said
             thinking = ""
             streamed = ""
-            // Held for exactly as long as the turn, so the system does not reclaim the app out
-            // from under a question somebody asked and then put the phone down over.
-            backend.awake.hold()
 
             try {
                 val conversation = backend.conversation
                 val reply = if (conversation == null) {
                     Reply(UiCopy.SERVICE_UNAVAILABLE)
                 } else {
+                    /*
+                     * Held for exactly as long as the turn, so the system does not reclaim the
+                     * app out from under a question somebody asked and then put the phone down
+                     * over.
+                     *
+                     * Inside the branch that actually does work, not in front of it. There is no
+                     * suspension on the unsigned-in path, so raising the service and stopping it
+                     * again landed in the same continuation - and a foreground service told to
+                     * stop before it has been created is how an app gets
+                     * ForegroundServiceDidNotStartInTimeException thrown at it by the framework,
+                     * where the runCatching in [Awake] cannot see it. `withContext` guarantees a
+                     * real hop either way.
+                     */
+                    backend.awake.hold()
                     // The driver blocks on network and writes the memory file; neither belongs
                     // on the frame thread. Narration hops back to the main thread to be shown.
                     withContext(Dispatchers.IO) { body(conversation, progress) }
