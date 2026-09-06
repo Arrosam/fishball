@@ -686,6 +686,56 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
         "这个 $tool 调用读不出参数。要的是 $want，收到的是 $got。照前面那个格式再调一次。"
 
     /**
+     * A call the turn has already made, word for word, handed back unrun.
+     *
+     * Live, a page that answered 404 was opened eleven times in a row: the tool said the page
+     * would not open, which is true and says nothing about what to do instead, so the model read
+     * it as a transient failure and did the only thing it had been told about. The fix is not a
+     * sterner refusal - it is naming the alternatives, the same lesson [badCall] records. What is
+     * said here is therefore mostly a list of other things to do.
+     *
+     * The previous result is not repeated. It is a few lines up in the same thread, and quoting
+     * it back would pay for it twice on the one round that has already been established as
+     * wasted.
+     */
+    fun repeatedCall(tool: String, times: Int): String =
+        "这个 $tool 你上面已经用一模一样的参数调过了（这是第 $times 次）。同一轮里再调结果不会变，" +
+            "所以这次没去执行，上一次的结果就在上面那一轮里。\n" +
+            "换个做法：换个搜索词再查一轮、点开还没看过的那几条、或者就用手上已经有的资料把答案写出来。"
+
+    /** A page that would not open, the first time. The address is dead, and saying so is the point. */
+    fun unopenable(reason: String): String =
+        "这一页打不开（" + reason + "）。这个网址不用再试了，换一条资料看。"
+
+    /**
+     * The same page, asked for again.
+     *
+     * Keyed on the address rather than on the call, because varying `find` produces a different
+     * call and the same dead fetch - which is exactly how the eleven rounds happened.
+     */
+    fun deadPage(url: String, reason: String, times: Int, others: List<String>): String = buildString {
+        append("这个网址上面就打不开（").append(reason).append("），这是第 ").append(times)
+        append(" 次试了，所以这次没再去取：").append(url)
+        if (others.isNotEmpty()) {
+            append("\n这几个也打不开：").append(others.joinToString("、"))
+        }
+        append("\n别再开这一个了。看看搜索结果里别的那几条，或者换个说法再查一轮；都不行就直说查不到。")
+    }
+
+    /**
+     * Said once, on the round the looking-up tools are taken away for spinning.
+     *
+     * The tools simply stopping being offered is visible to the model and is what actually ends
+     * the loop; this says why, because a capability that disappears without explanation is
+     * something these models narrate as a fault - see [WIND_DOWN_AT]'s note in `Conversation`
+     * about a forced answer inventing a broken search.
+     */
+    val STOP_SPINNING = """
+你已经连着好几轮在重复同样的动作了，没有新东西进来。查资料的工具从这一轮起不再给你了。
+用手上已经有的东西把答案写出来；确实查不到，就直说查不到，别把它说成工具坏了。
+""".trim()
+
+    /**
      * An answer turn that never got as far as an answer, as the next turn reads it.
      *
      * A stopped turn keeps its looking - the calls and what came back are on the record - and

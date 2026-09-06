@@ -401,6 +401,8 @@ class Conversation(
         // Every tool round as it went over the wire, for the log and for the checkpoint the log
         // is written from. See [ConversationTurn.rounds].
         val rounds = answering.rounds
+        // What has already been asked for, so a round cannot be spent asking for it again.
+        val tried = Tried()
 
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
@@ -418,6 +420,21 @@ class Conversation(
         // nothing - the only way out is to stop counting on it.
         var idle = 0
         var round = 0
+        /*
+         * Rounds in a row in which every single call was handed back unrun, and whether that has
+         * already cost the turn its looking-up tools.
+         *
+         * A repeat is not idleness - the model is talking, asking for things and getting answers
+         * back - so [idle] never sees it, and [LAST_ROUND] is a hundred rounds away. Measured
+         * live: one page answering 404, opened eleven times in a row, every round billed.
+         *
+         * The latch does not unlatch. Three rounds of pure repetition is a model that has run out
+         * of ideas about where to look, and handing the tools back only lets it have the same
+         * idea again; what is left worth doing is writing an answer out of what is already in
+         * front of it, which is exactly what taking them away leaves.
+         */
+        var futile = 0
+        var spinning = false
         // What memory offered, once it is in front of the model, and null until then. It is the
         // difference between "memory found nothing" and "memory has not answered yet", and the
         // guard below turns on exactly that distinction.
@@ -426,7 +443,7 @@ class Conversation(
             // Three states, and the model is never told to stop - only offered less to do with
             // the turn. Given no tools at all it writes prose, and prose is an answer.
             val closing = round >= LAST_ROUND || idle >= IDLE_LIMIT
-            val winding = round >= WIND_DOWN_AT
+            val winding = round >= WIND_DOWN_AT || spinning
             val result = llm.complete(
                 LlmRequest(
                     system = standingPrompt(),
@@ -520,10 +537,20 @@ class Conversation(
             idle = 0
 
             thread += result.raw
+            // Read either side of the round, so a round in which every call was turned away can
+            // be told from one that did something. See [Tried.blocked].
+            val turnedAway = tried.blocked
             val results = result.toolCalls.map { call ->
+                // Word for word the same call as one already in this thread. Not run: what it
+                // returns is a few lines up, and the round would buy nothing but the chance to
+                // ask for it a third time. See [Tried].
+                tried.repeat(call.name, call.input)?.let { said ->
+                    return@map LlmContent.ToolResult(call.id, said, isError = true)
+                }
+                tried.record(call.name, call.input)
                 when (call.name) {
                     Tools.SEARCH -> lookUp(call, seen, progress)
-                    Tools.READ -> openPage(call, seen, progress)
+                    Tools.READ -> openPage(call, seen, progress, tried)
                     Tools.HISTORY -> readLog(call)
                     Tools.QUOTE -> checkQuote(call, seen, verified)
                     // Reached only when `answer` came back with nothing in it - a full one
@@ -563,9 +590,21 @@ class Conversation(
                 null
             }
 
+            // Nothing in this round was actually run. Three of those and the looking-up tools
+            // come off the table - see [futile].
+            if (tried.blocked - turnedAway == result.toolCalls.size) futile++ else futile = 0
+            val latched = !spinning && futile >= FUTILE_LIMIT
+            if (latched) spinning = true
+
             thread += LlmMessage(
                 LlmMessage.Role.USER,
-                results + listOfNotNull(late?.let { LlmContent.Text(knownBlock(it)) }),
+                results +
+                    listOfNotNull(late?.let { LlmContent.Text(knownBlock(it)) }) +
+                    // Once, on the round it happens. The tools going away is what ends the loop;
+                    // this is why, so the model does not narrate it as a broken search.
+                    listOfNotNull(
+                        AgentPrompt.STOP_SPINNING.takeIf { latched }?.let { LlmContent.Text(it) },
+                    ),
             )
             // For the log, exactly as it went: the calls, what came back, and what memory
             // added on the back of them. See [ConversationTurn.rounds].
@@ -725,6 +764,14 @@ class Conversation(
         call: LlmContent.ToolUse,
         seen: LinkedHashMap<String, Evidence>,
         progress: TurnProgress,
+        /**
+         * The turn's dead addresses.
+         *
+         * Kept here as well as over the whole call, because `find` makes two attempts at one
+         * unreachable page into two different calls - and varying `find` is precisely what a
+         * model does when a page will not open.
+         */
+        tried: Tried,
     ): LlmContent.ToolResult {
         val url = call.input.str("url").orEmpty().trim()
         if (url.isEmpty() || !url.startsWith("http")) {
@@ -734,16 +781,17 @@ class Conversation(
                 isError = true,
             )
         }
+        // Before the fetch, not after it. A page that would not open will not open on the third
+        // ask either, and the round spent finding that out again is the loop this exists to end.
+        tried.deadEnd(url)?.let { return LlmContent.ToolResult(call.id, it, isError = true) }
         progress.step(UiCopy.Narration.READING)
 
         val page = pages.read(url)
         if (page.failed || page.text.isBlank()) {
+            val reason = page.reason ?: "没有正文"
+            tried.bury(url, reason)
             progress.searched(UiCopy.Narration.unread(url))
-            return LlmContent.ToolResult(
-                call.id,
-                "这一页打不开（" + (page.reason ?: "没有正文") + "）。换一条资料看看。",
-                isError = true,
-            )
+            return LlmContent.ToolResult(call.id, AgentPrompt.unopenable(reason), isError = true)
         }
 
         // Already-seen keeps its slot in the numbering and gains the page; a followed link joins
@@ -1654,6 +1702,15 @@ private const val LAST_ROUND = 100
 /** Rounds in a row that said nothing and asked for nothing. See the loop for why. */
 private const val IDLE_LIMIT = 3
 
+/**
+ * Rounds in a row in which every call was one the turn had already made.
+ *
+ * Three, which is two more than it takes to establish the pattern and few enough that a turn
+ * cannot spend real money on it. Deliberately not one: the model asks for several things at once
+ * and a round that repeats one call while making three new ones is not spinning, it is working -
+ * only a round in which nothing at all was run counts here.
+ */
+private const val FUTILE_LIMIT = 3
 
 /**
  * How much of one page goes back to the model, and how far in front of a `find` match it starts.
