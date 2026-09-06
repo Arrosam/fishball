@@ -187,6 +187,18 @@ class PersistentStore(
 
     override fun appendTurn(turn: ConversationTurn): Long = inner.appendTurn(turn).also { flush() }
 
+    /**
+     * Written through like everything else, and that is the point of it.
+     *
+     * This is what a turn calls at the end of every tool round, so the cost is one snapshot per
+     * round on a turn that is doing real work - paid deliberately, because the alternative is
+     * that a turn interrupted after twenty rounds of searching left nothing behind at all.
+     */
+    override fun replaceTurn(turn: ConversationTurn) {
+        inner.replaceTurn(turn)
+        flush()
+    }
+
     override fun turnsInSession(sessionId: Long): List<ConversationTurn> = inner.turnsInSession(sessionId)
 
     override fun searchTurns(query: String, from: Long?, to: Long?, limit: Int): List<ConversationTurn> =

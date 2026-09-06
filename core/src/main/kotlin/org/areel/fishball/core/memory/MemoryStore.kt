@@ -70,6 +70,19 @@ interface MemoryStore {
 
     fun appendTurn(turn: ConversationTurn): Long
 
+    /**
+     * A turn already in the log, written again.
+     *
+     * The answer's row is claimed when the question is asked and written to as the turn runs, so
+     * everything the model looked up is on the record the moment it comes back rather than only
+     * once an answer exists. A turn that is stopped, or whose process is killed, then still has
+     * its looking - which is the whole of what the next question has to steer with.
+     *
+     * A turn whose id is not in the log yet is appended, so a caller never has to know which of
+     * the two it is doing.
+     */
+    fun replaceTurn(turn: ConversationTurn)
+
     fun turnsInSession(sessionId: Long): List<ConversationTurn>
 
     /** Spec §9 - "what did I ask you yesterday". Optional time window, newest first. */

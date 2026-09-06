@@ -135,6 +135,18 @@ class InMemoryStore : MemoryStore {
         return turn.id
     }
 
+    /**
+     * In place, keeping the turn's position in the log.
+     *
+     * Position rather than timestamp, because a checkpoint and the answer it grows into share an
+     * id and not a clock: the row is claimed when the question is asked and closed when the
+     * answer lands, and re-appending it would move the answer behind anything filed in between.
+     */
+    override fun replaceTurn(turn: ConversationTurn) {
+        val index = turns.indexOfFirst { it.id == turn.id }
+        if (index >= 0) turns[index] = turn else turns += turn
+    }
+
     override fun turnsInSession(sessionId: Long): List<ConversationTurn> =
         turns.filter { it.sessionId == sessionId }.sortedBy { it.at }
 
