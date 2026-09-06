@@ -438,6 +438,11 @@ fun ChatScreen(
                                 steps = narration.toList(),
                                 thinking = vm.thinking,
                                 streamed = vm.streamed,
+                                // Still, the moment they start typing. The movement is there to
+                                // fill a wait, and somebody writing the next question beside it
+                                // has stopped waiting - what is left is motion next to a field
+                                // they are trying to read what they typed in.
+                                animate = draft.isEmpty(),
                             )
                         }
                     }
@@ -560,7 +565,6 @@ fun ChatScreen(
                 voice.dismissNotice()
                 draft = it
             },
-            enabled = !busy,
             onSend = {
                 send(draft)
                 draft = ""
@@ -646,7 +650,6 @@ private fun JumpToEnd(visible: Boolean, modifier: Modifier, onClick: () -> Unit)
 private fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
-    enabled: Boolean,
     onSend: () -> Unit,
     voice: VoiceState,
     attach: AttachState,
@@ -660,13 +663,33 @@ private fun Composer(
      * this app was built for, who would reasonably conclude they had spoken wrongly.
      */
     canSpeak: Boolean,
-    /** A turn is running. Distinct from `!enabled`, which is also true while a picture loads. */
+    /**
+     * A turn is running.
+     *
+     * It no longer disables anything. The composer used to be dead for the whole of a turn -
+     * field greyed, plate turned over into a stop button - which meant the only thing anybody
+     * could do about a turn going the wrong way was stop it, look at what was left, and start
+     * again. It is live throughout now, and typing into it is how a turn gets redirected: see
+     * [typed] below and `ChatViewModel.send`.
+     */
     working: Boolean,
     onStop: () -> Unit,
 ) {
     // With nothing typed there is nothing to send, so the plate is a microphone instead. One
     // control, two jobs, and never both at once - which is why it can be the same square.
     val speaking = value.isEmpty() && canSpeak
+
+    /*
+     * There is something written, so the plate is a send button - whatever else is going on.
+     *
+     * This is the whole of the mid-flight change at this end. The plate has always been one
+     * square with one job at a time, decided by what is in the field and what the app is doing;
+     * all that is new is that "there is something to send" now outranks "something is running",
+     * because sending it is what the person holding the phone has plainly decided to do. What
+     * that send *means* while a turn is in flight - stop this one, keep what it found, ask the
+     * new question of a model that can see it - is `ChatViewModel.send`'s half.
+     */
+    val typed = value.isNotEmpty()
     val recording = voice.phase == VoicePhase.RECORDING
 
     /*
@@ -678,6 +701,9 @@ private fun Composer(
      * that look identical and one stop button that works on Tuesdays.
      */
     val waiting = working || voice.phase == VoicePhase.TRANSCRIBING
+
+    // ...and the plate is the way to call it off only while there is nothing to send instead.
+    val stopping = waiting && !typed
 
     /*
      * The bar is one height, always, and two separate things were moving it.
@@ -811,7 +837,6 @@ private fun Composer(
                             Feel.TOGGLE,
                             interaction = plusPress,
                             indication = null,
-                            enabled = enabled,
                             onClick = attach::toggle,
                         ),
                     contentAlignment = Alignment.Center,
@@ -939,7 +964,6 @@ private fun Composer(
                         BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    enabled = enabled,
                     // Not single-line any more, but still capped: at the cap the field holds
                     // its height and BasicTextField scrolls the text within it, which is the
                     // behaviour wanted - the last line typed stays in view.
@@ -992,12 +1016,9 @@ private fun Composer(
                 Modifier
                     .requiredSize(48.dp + TOUCH_SLOP * 2)
                     .then(
-                        if (waiting) {
+                        if (stopping) {
                             // Clicky, and deliberately the same weight as sending: stopping a
                             // turn is the other irreversible thing this plate does.
-                            //
-                            // Not gated on [enabled] - it is false for the whole of a running
-                            // turn, which is precisely when this has a job.
                             Modifier.pressable(Feel.CLICKY, indication = null) {
                                 dead += kills++
                                 onStop()
@@ -1008,8 +1029,7 @@ private fun Composer(
                             // promise. tryAwaitRelease returns on a lifted finger and on a
                             // cancelled gesture alike, which is the behaviour wanted: sliding
                             // off the button still ends the recording rather than orphaning it.
-                            Modifier.pointerInput(enabled) {
-                                if (!enabled) return@pointerInput
+                            Modifier.pointerInput(Unit) {
                                 val reach = CANCEL_REACH.toPx()
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -1033,7 +1053,7 @@ private fun Composer(
                             // beyond doing the thing.
                             Modifier.pressable(
                                 Feel.CLICKY,
-                                enabled = enabled,
+                                enabled = typed,
                                 indication = null,
                                 onClick = ::submit,
                             )
@@ -1049,22 +1069,26 @@ private fun Composer(
                         .background(
                             when {
                                 // Held: inverted, so the control that is doing something looks
-                                // pressed rather than merely coloured. Waiting for the same
-                                // reason, and it outranks the disabled grey: the plate is not
-                                // dead while a turn runs, it is the way to stop one.
-                                held || waiting -> Areel.Ink
-                                !enabled -> Areel.Ink20
+                                // pressed rather than merely coloured. Stopping for the same
+                                // reason, and it outranks the dead grey: the plate is not dead
+                                // while a turn runs, it is the way to stop one.
+                                held || stopping -> Areel.Ink
+                                // Nothing written, nothing running and no microphone to offer -
+                                // the one arrangement in which this square has no job at all.
+                                !typed && !speaking -> Areel.Ink20
                                 else -> Areel.Magenta
                             },
                             RectangleShape,
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (waiting) {
-                        // Turning over, the way a fish does. The plate is not a control for as
-                        // long as this runs - a second recording started here would take the
-                        // microphone from under the words still being fetched - and something
-                        // that is plainly busy says so better than a greyed-out square.
+                    if (stopping) {
+                        // Turning over, the way a fish does. While there is nothing written the
+                        // plate is not a send button - a second recording started here would
+                        // take the microphone from under the words still being fetched - and
+                        // something that is plainly busy says so better than a greyed-out
+                        // square. The moment anything is typed it goes back to being the send
+                        // plate, because there is then something to send.
                         val turning = rememberInfiniteTransition(label = "fish")
                         val face by turning.animateFloat(
                             initialValue = 0f,
@@ -1095,7 +1119,7 @@ private fun Composer(
                             contentDescription = stringResource(
                                 if (speaking) R.string.voice_hold else R.string.send,
                             ),
-                            tint = if (enabled) Areel.Paper else Areel.Ink40,
+                            tint = if (typed || speaking) Areel.Paper else Areel.Ink40,
                             modifier = Modifier.size(24.dp),
                         )
                     }

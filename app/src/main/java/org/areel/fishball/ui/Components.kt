@@ -1084,20 +1084,38 @@ fun PendingBubble(
     thinking: String = "",
     /** The reply itself, once it starts arriving. Replaces the reasoning when it does. */
     streamed: String = "",
+    /**
+     * Whether any of this moves.
+     *
+     * Everything animated in here - the lap running round the border, the pulse on the live
+     * step, the bubbles off the fish - is there to fill a wait. Somebody typing the next
+     * question into the composer has stopped waiting and started writing, and three separate
+     * things moving next to the field they are reading back is no longer patience, it is
+     * distraction. So the placeholder stays, with everything it is narrating, and holds still.
+     *
+     * Read through `.value` inside the `if` rather than with a `by` delegate on purpose: not
+     * reading an animated state is what stops it invalidating this composable every frame, so
+     * the still version costs nothing to draw as well as nothing to look at.
+     */
+    animate: Boolean = true,
 ) {
     val transition = rememberInfiniteTransition(label = "pending")
-    val phase by transition.animateFloat(
+    val lap = transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(5600, easing = LinearEasing)),
         label = "lap",
     )
-    val pulse by transition.animateFloat(
+    val beat = transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
         label = "pulse",
     )
+    val phase = if (animate) lap.value else 0f
+    // Full rather than dim when still: the dot marks which step is the live one, and that is
+    // true whether or not it is breathing.
+    val pulse = if (animate) beat.value else 1f
 
     // Hoisted so the lap costs a stroke redraw per frame, not two allocations per frame.
     val outline = remember { Path() }
@@ -1113,13 +1131,15 @@ fun PendingBubble(
             .drawBehind { hatch(hatchClip) }
             .drawWithContent {
                 drawContent()
-                drawLap(phase, outline, measure, segment)
+                // No lap at all while still. A frozen segment of magenta parked somewhere on
+                // the border reads as a rendering fault rather than as a paused animation.
+                if (animate) drawLap(phase, outline, measure, segment)
             }
             .padding(16.dp),
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Bubbling()
+                Bubbling(animate)
                 Text(
                     stringResource(R.string.thinking),
                     style = MaterialTheme.typography.labelSmall,
@@ -1195,7 +1215,7 @@ fun PendingBubble(
  * a model is reading a conversation and will take a moment about it.
  */
 @Composable
-fun Bubbling() {
+fun Bubbling(animate: Boolean = true) {
     val transition = rememberInfiniteTransition(label = "bubbles")
     val rise = List(BUBBLE_COUNT) { i ->
         transition.animateFloat(
@@ -1215,8 +1235,11 @@ fun Bubbling() {
                 .align(Alignment.BottomStart),
             body = Areel.Ink,
         )
+        // Still, the fish is just the mark: the bubbles are all the way faded out rather than
+        // frozen mid-climb, which is what `p = 1` gives - a bubble at the top of its rise is a
+        // bubble that has already popped. See [PendingBubble.animate].
         rise.forEachIndexed { i, phase ->
-            val p = phase.value
+            val p = if (animate) phase.value else 1f
             Box(
                 Modifier
                     .align(Alignment.TopEnd)

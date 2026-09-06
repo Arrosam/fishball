@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.areel.fishball.core.agent.Reply
@@ -108,6 +109,21 @@ class ChatViewModel(
      */
     private var turn: Job? = null
 
+    /**
+     * Which send owns the screen.
+     *
+     * A stopped turn cleans up after itself - narration cleared, [busy] false, [turn] forgotten -
+     * and when the stop came from a *new* send, that cleanup lands underneath the turn that
+     * replaced it: the placeholder disappears, the stop button reverts, and [stop] loses its
+     * handle on a turn that is still running. So each send takes a number, and only the turn
+     * still holding the latest one is allowed to put the screen back to idle.
+     *
+     * A counter rather than the job itself, because the coroutine body can begin before `launch`
+     * has returned the job to assign - `viewModelScope` dispatches on `Main.immediate`, which
+     * does not dispatch at all when the caller is already on the main thread.
+     */
+    private var generation = 0
+
     /** The model's reasoning for the turn in flight. Cleared when it lands, and kept in the log. */
     var thinking by mutableStateOf("")
         private set
@@ -118,17 +134,20 @@ class ChatViewModel(
 
     fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
         val question = text.trim()
-        if (question.isEmpty() || busy) return
+        if (question.isEmpty()) return
 
-        messages += ChatMessage(
-            fromUser = true,
-            text = question,
-            images = images.mapNotNull { it.handle },
-        )
-        busy = true
-        narration.clear()
-        thinking = ""
-        streamed = ""
+        /*
+         * A turn already running is steered, not queued and not refused.
+         *
+         * This used to return on [busy], which is why the composer was dead for the whole of a
+         * turn: there was nothing useful for it to do. Now sending while one is in flight stops
+         * it where it stands and asks the new question in its place - and the stop is cheap,
+         * because everything the turn looked up is already on the record and replays with the
+         * next question. That is the whole of what steering is: the model sees how far it got,
+         * and then sees what it should have been doing instead.
+         */
+        val mine = ++generation
+        val previous = turn
 
         // Written straight from the IO thread. Compose snapshot state is safe to write from
         // anywhere - it is recomposition that is confined to the main thread - so hopping per
@@ -158,6 +177,29 @@ class ChatViewModel(
         }
 
         turn = viewModelScope.launch {
+            /*
+             * The turn being replaced has to finish unwinding first, and nothing may be put on
+             * the screen until it has.
+             *
+             * It is still writing its last round to the log, and this turn's thread is rebuilt
+             * from that log - started underneath it, the new question would be asked without
+             * the looking the old turn had just done, which is the one thing steering is for.
+             * It also says 「那就先不查了」 on its way out, and that belongs above the new
+             * question rather than after it.
+             */
+            previous?.cancelAndJoin()
+            if (generation != mine) return@launch
+
+            messages += ChatMessage(
+                fromUser = true,
+                text = question,
+                images = images.mapNotNull { it.handle },
+            )
+            busy = true
+            narration.clear()
+            thinking = ""
+            streamed = ""
+
             try {
                 val conversation = backend.conversation
                 val reply = if (conversation == null) {
@@ -207,11 +249,16 @@ class ChatViewModel(
                 // In `finally` so a stopped turn cleans up exactly like a finished one. The
                 // placeholder is driven by [busy], and a cancelled coroutine that left it true
                 // would strand a bubble on screen with nothing behind it.
-                narration.clear()
-                thinking = ""
-                streamed = ""
-                busy = false
-                turn = null
+                //
+                // Unless something has already taken its place: a turn stopped by the next send
+                // must not hand the screen back to idle on the way out. See [generation].
+                if (generation == mine) {
+                    narration.clear()
+                    thinking = ""
+                    streamed = ""
+                    busy = false
+                    turn = null
+                }
             }
             // Nothing about memory here any more. The bus files on its own, off the fast model,
             // and a screen should not have to remember to remember.
