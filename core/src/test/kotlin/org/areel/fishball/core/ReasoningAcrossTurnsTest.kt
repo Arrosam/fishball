@@ -77,6 +77,67 @@ class ReasoningAcrossTurnsTest {
         )
     }
 
+    /**
+     * And so does the reasoning behind each round of looking, not only behind the answer.
+     *
+     * Two different things get called reasoning here. `ConversationTurn.reasoning` is the
+     * thinking that produced the answer; `ToolRound.thinking` is the thinking that produced one
+     * round of searching. A turn that searched six times thought six times, and until the round
+     * kept its own, five of those were dropped at the turn boundary - the next question got six
+     * queries with the reason for wording them cut out from between them.
+     */
+    @Test
+    fun `every round of looking replays with the thinking that chose it`() {
+        val store = InMemoryStore()
+        val session = store.nextId()
+        store.saveSession(org.areel.fishball.core.session.Session(session, NOW))
+        store.appendTurn(ConversationTurn(store.nextId(), session, NOW, Speaker.USER, "布洛芬能吃吗"))
+        store.appendTurn(
+            ConversationTurn(
+                store.nextId(), session, NOW, Speaker.ASSISTANT, "可以，但孕晚期不行。",
+                reasoning = "说明书把孕晚期列为禁忌。",
+                rounds = listOf(
+                    round("s1", "说明书最权威，先查它。"),
+                    round("s2", "只看到正面的说法，再查一轮副作用。"),
+                ),
+            ),
+        )
+        store.appendTurn(ConversationTurn(store.nextId(), session, NOW, Speaker.USER, "那儿童呢"))
+
+        val llm = Recorder()
+        runBlocking { conversation(llm, store).ask("那儿童呢") }
+
+        val looking = llm.seen.first().messages
+            .filter { m -> m.content.any { it is LlmContent.ToolUse } }
+        assertEquals(2, looking.size, "a round of looking was lost")
+        assertEquals(
+            listOf("说明书最权威，先查它。", "只看到正面的说法，再查一轮副作用。"),
+            looking.map { m ->
+                m.content.filterIsInstance<LlmContent.Opaque>()
+                    .single()
+                    .raw["thinking"]?.jsonPrimitive?.content
+            },
+            "a round replayed without the thinking that chose it: " + looking,
+        )
+        // Ahead of the call, because the call continues it - the same order the answer keeps.
+        assertTrue(
+            looking.all { it.content.first() is LlmContent.Opaque },
+            "the thinking landed after the tool call it explains",
+        )
+    }
+
+    private fun round(id: String, thinking: String) = org.areel.fishball.core.memory.ToolRound(
+        exchanges = listOf(
+            org.areel.fishball.core.memory.ToolExchange(
+                id = id,
+                name = "search",
+                input = kotlinx.serialization.json.buildJsonObject { },
+                result = "结果 " + id,
+            ),
+        ),
+        thinking = thinking,
+    )
+
     @Test
     fun `a turn logged before reasoning was kept replays as it always did`() {
         val store = InMemoryStore()

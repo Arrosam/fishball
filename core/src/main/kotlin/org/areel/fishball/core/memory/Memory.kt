@@ -198,6 +198,20 @@ data class ConversationTurn(
 data class ToolRound(
     val exchanges: List<ToolExchange>,
     /**
+     * What the model worked out before it asked for these, in its own words.
+     *
+     * Kept for the same reason [ConversationTurn.reasoning] is, and it is not the same thing:
+     * that one is the thinking behind the answer, and this is the thinking behind the looking.
+     * A turn that searched six times thought six times, and until this was recorded five of
+     * those were dropped the moment the turn ended - the next question got the calls and the
+     * results with the reason for making them cut out from between them, which is the half that
+     * says why the fourth search was worded the way it was.
+     *
+     * Empty on rounds the model asked for a tool without thinking first, and on every round
+     * logged before this was kept.
+     */
+    val thinking: String = "",
+    /**
      * What memory offered on the back of this round's results, when it landed here.
      *
      * The lines as the model was shown them. Memory is looked up beside the turn and folded in

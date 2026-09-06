@@ -613,6 +613,9 @@ class Conversation(
                     ToolExchange(call.id, call.name, call.input, outcome.content, outcome.isError)
                 },
                 known = late.orEmpty(),
+                // And why it asked for them. Inside the turn this rides along in [result.raw];
+                // across turns it only survives if it is written down here.
+                thinking = thoughtIn(result.raw),
             )
             // And on the record before the next round is asked for, so a turn stopped from here
             // on keeps everything it has already done. See [Answering].
@@ -1394,14 +1397,22 @@ class Conversation(
         else exchanges(turn.rounds) + recalled(turn)
     }
 
-    /** The tool rounds of one answer, as the assistant/user pairs the provider expects. */
+    /**
+     * The tool rounds of one answer, as the assistant/user pairs the provider expects.
+     *
+     * Each round goes back with the thinking that preceded it, the same way the answer goes back
+     * with the thinking that preceded that. Without it the model reads six searches it made for
+     * reasons it can no longer see, and a follow-up about why something was ruled out has only
+     * the query text to work it out from.
+     */
     private fun exchanges(rounds: List<ToolRound>): List<LlmMessage> = rounds
         .filter { it.exchanges.isNotEmpty() }
         .flatMap { round ->
             listOf(
                 LlmMessage(
                     LlmMessage.Role.ASSISTANT,
-                    round.exchanges.map { LlmContent.ToolUse(it.id, it.name, it.input) },
+                    listOfNotNull(thinkingBlock(round.thinking)) +
+                        round.exchanges.map { LlmContent.ToolUse(it.id, it.name, it.input) },
                 ),
                 LlmMessage(
                     LlmMessage.Role.USER,
@@ -1437,18 +1448,26 @@ class Conversation(
         // provider is entitled to reject, and a silent one leaves the model to work out for
         // itself why it stopped mid-search. See [Answering] and [AgentPrompt.INTERRUPTED].
         val said = unstamped(turn.text).ifBlank { AgentPrompt.INTERRUPTED }
-        if (turn.reasoning.isBlank()) return LlmMessage.assistant(said)
-        return LlmMessage(
-            LlmMessage.Role.ASSISTANT,
-            listOf(
-                LlmContent.Opaque(
-                    buildJsonObject {
-                        put("type", THINKING)
-                        put(THINKING, turn.reasoning)
-                    },
-                ),
-                LlmContent.Text(said),
-            ),
+        val thought = thinkingBlock(turn.reasoning) ?: return LlmMessage.assistant(said)
+        return LlmMessage(LlmMessage.Role.ASSISTANT, listOf(thought, LlmContent.Text(said)))
+    }
+
+    /**
+     * Reasoning, in the shape the model produced it, or null when there was none.
+     *
+     * [LlmContent.Opaque] holding the provider's own JSON rather than labelled text, and that is
+     * not a free choice: this app rewrote reasoning into a labelled *text* block once, and the
+     * model read its own replayed turn as a template and began emitting the label, the reasoning
+     * and a `</think>` tag into answers the user could see. Anything put in an assistant turn is
+     * something the model may imitate; a thinking block is the one shape it should imitate.
+     */
+    private fun thinkingBlock(reasoning: String): LlmContent? {
+        if (reasoning.isBlank()) return null
+        return LlmContent.Opaque(
+            buildJsonObject {
+                put("type", THINKING)
+                put(THINKING, reasoning)
+            },
         )
     }
 

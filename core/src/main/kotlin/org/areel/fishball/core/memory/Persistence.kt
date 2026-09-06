@@ -94,6 +94,9 @@ data class TurnDto(
 data class ToolRoundDto(
     val exchanges: List<ToolExchangeDto> = emptyList(),
     val known: List<String> = emptyList(),
+    // Defaulted like the rest: a log written before a round's own reasoning was kept replays
+    // its rounds as it always did, with the calls and none of the thinking behind them.
+    val thinking: String = "",
 )
 
 @Serializable
@@ -277,8 +280,11 @@ internal fun ConversationTurn.toDto() = TurnDto(
     steps,
     rounds.map { round ->
         ToolRoundDto(
-            round.exchanges.map { ToolExchangeDto(it.id, it.name, it.input, it.result, it.isError) },
-            round.known,
+            exchanges = round.exchanges.map {
+                ToolExchangeDto(it.id, it.name, it.input, it.result, it.isError)
+            },
+            known = round.known,
+            thinking = round.thinking,
         )
     },
 )
@@ -295,8 +301,11 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     steps = steps,
     rounds = rounds.map { round ->
         ToolRound(
-            round.exchanges.map { ToolExchange(it.id, it.name, it.input, it.result, it.isError) },
-            round.known,
+            exchanges = round.exchanges.map {
+                ToolExchange(it.id, it.name, it.input, it.result, it.isError)
+            },
+            known = round.known,
+            thinking = round.thinking,
         )
     },
     sources = sources.map {
