@@ -119,6 +119,9 @@ class Backend private constructor(
 
     val alert by lazy { Alert(context) }
 
+    /** What stops the system reclaiming the app out from under a running turn. See [Awake]. */
+    val awake by lazy { Awake(context) }
+
     /** Pictures, on their way from the gallery or the camera to the model. */
     val attachments by lazy { Attachments(context) }
 

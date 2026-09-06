@@ -109,6 +109,24 @@ class Attachments(private val context: Context) {
     }.getOrNull()
 
     /**
+     * A kept picture, back in the shape the model takes it in.
+     *
+     * For a turn being picked up after the app was killed: the log keeps the names, and `:core`
+     * has no filesystem, so somebody has to turn one back into bytes before the question can be
+     * asked again with the thing it was asked about. Read, not re-encoded - what was written is
+     * already the shrunk JPEG that was sent the first time, and decoding and recompressing it
+     * would hand the model a second-generation copy of its own input.
+     */
+    fun reload(name: String): LlmContent.Image? = runCatching {
+        val bytes = File(File(context.filesDir, PICTURES), name).readBytes()
+        LlmContent.Image(
+            mediaType = "image/jpeg",
+            base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+            handle = name,
+        )
+    }.getOrNull()
+
+    /**
      * Forget every kept picture.
      *
      * Called when the conversation log is cleared, because a photograph is the most personal

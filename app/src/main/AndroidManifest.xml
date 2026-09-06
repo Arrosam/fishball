@@ -26,6 +26,16 @@
     -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      Staying alive while a question is being answered. A turn is minutes of network on something
+      the person asked and then put the phone down over, and a backgrounded process with nothing
+      to show for itself is the first thing Android reclaims - on the shells this app is actually
+      used on, within seconds. The service does no work; it exists so the process is one the
+      system leaves alone. See data/Awake.kt.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -47,6 +57,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_paths" />
         </provider>
+
+        <!--
+          Runs only while a turn does, started and stopped by the screen that owns the turn.
+          `dataSync` because that is what it is: a network transfer on the user's behalf, which
+          from API 34 has to be declared before the service may put itself in the foreground.
+        -->
+        <service
+            android:name=".data.TurnService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!--
           Portrait only. The layout is built around a single column - a masthead, a thread,

@@ -13,7 +13,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.areel.fishball.core.agent.Conversation
 import org.areel.fishball.core.agent.Reply
+import org.areel.fishball.core.agent.Unfinished
 import org.areel.fishball.core.agent.TurnProgress
 import org.areel.fishball.core.agent.SourceRef
 import org.areel.fishball.core.answer.AnswerShape
@@ -72,11 +74,21 @@ class ChatViewModel(
     val messages = mutableStateListOf<ChatMessage>()
 
     init {
-        // Redrawn from the log, not held in memory. The thread the user sees and the record
-        // §9 keeps are the same thing, so closing the app cannot lose one without losing the
-        // other - and reopening it lands them back where they were rather than on a blank
-        // screen that implies the app forgot them.
-        messages += backend.store.recentTurns().map { it.toMessage(stoppedNotice) }
+        /*
+         * Redrawn from the log, not held in memory. The thread the user sees and the record
+         * §9 keeps are the same thing, so closing the app cannot lose one without losing the
+         * other - and reopening it lands them back where they were rather than on a blank
+         * screen that implies the app forgot them.
+         *
+         * With one row left out, when there is one: the half-written answer of a turn the app
+         * was killed in the middle of. Drawn, it would say 「那就先不查了」 above a placeholder
+         * that is plainly still going. It is about to be picked up instead.
+         */
+        val unfinished = backend.conversation?.unfinished()
+        messages += backend.store.recentTurns()
+            .filterNot { it.id == unfinished?.id }
+            .map { it.toMessage(stoppedNotice) }
+        if (unfinished != null) carryOn(unfinished)
     }
 
     /** Spec §21 — what the app is doing right now, in plain language. */
@@ -135,11 +147,55 @@ class ChatViewModel(
     fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
         val question = text.trim()
         if (question.isEmpty()) return
+        begin(
+            asked = ChatMessage(
+                fromUser = true,
+                text = question,
+                images = images.mapNotNull { it.handle },
+            ),
+            said = emptyList(),
+        ) { conversation, progress -> conversation.ask(question, progress, images) }
+    }
 
+    /**
+     * A turn the app was killed in the middle of, carried on from where it stopped.
+     *
+     * Not a re-ask: the question is the one already in the thread, the rounds it got through go
+     * back to the model as the calls and results they were, and what the user sees is the
+     * placeholder they were looking at when the app went away - the same narration, picked up
+     * mid-list. The pictures have to be handed back from here because the log keeps only their
+     * names and `:core` cannot read a file.
+     */
+    private fun carryOn(unfinished: Unfinished) {
+        begin(asked = null, said = unfinished.steps) { conversation, progress ->
+            // Read here rather than at the call site: this runs on IO, and base64-ing a
+            // photograph back out of a file is not something to do on the frame the app is
+            // starting up in.
+            conversation.resume(
+                progress,
+                unfinished.images.mapNotNull { backend.attachments.reload(it) },
+            )
+        }
+    }
+
+    /**
+     * One turn on the screen, however it was started.
+     *
+     * [asked] is the bubble to put in the thread first, and null when the question is already
+     * there - which it is for a turn being resumed. [said] is what the placeholder starts with,
+     * for the same reason. [body] is the one line that differs between asking and resuming; it
+     * returns null when there turned out to be nothing to resume, which is a race rather than a
+     * failure and is reported as nothing at all.
+     */
+    private fun begin(
+        asked: ChatMessage?,
+        said: List<String>,
+        body: suspend (Conversation, TurnProgress) -> Reply?,
+    ) {
         /*
          * A turn already running is steered, not queued and not refused.
          *
-         * This used to return on [busy], which is why the composer was dead for the whole of a
+         * [send] used to return on [busy], which is why the composer was dead for the whole of a
          * turn: there was nothing useful for it to do. Now sending while one is in flight stops
          * it where it stands and asks the new question in its place - and the stop is cheap,
          * because everything the turn looked up is already on the record and replays with the
@@ -190,15 +246,15 @@ class ChatViewModel(
             previous?.cancelAndJoin()
             if (generation != mine) return@launch
 
-            messages += ChatMessage(
-                fromUser = true,
-                text = question,
-                images = images.mapNotNull { it.handle },
-            )
+            asked?.let { messages += it }
             busy = true
             narration.clear()
+            narration += said
             thinking = ""
             streamed = ""
+            // Held for exactly as long as the turn, so the system does not reclaim the app out
+            // from under a question somebody asked and then put the phone down over.
+            backend.awake.hold()
 
             try {
                 val conversation = backend.conversation
@@ -207,27 +263,33 @@ class ChatViewModel(
                 } else {
                     // The driver blocks on network and writes the memory file; neither belongs
                     // on the frame thread. Narration hops back to the main thread to be shown.
-                    withContext(Dispatchers.IO) { conversation.ask(question, progress, images) }
+                    withContext(Dispatchers.IO) { body(conversation, progress) }
                 }
-                // Also to logcat. The tap-to-expand is for whoever is holding the phone; this
-                // is for whoever is holding a laptop, and it costs one line.
-                reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
-                messages += reply.toMessage()
-                    .copy(steps = narration.toList(), thinking = thinking)
-                /*
-                 * Only for an answer, and only if they asked to be told.
-                 *
-                 * `detail` is set exactly when the turn failed, so it is the honest test: a
-                 * notification headed 「鱼丸查好了」 that opens onto 「这会儿连不上」 is a small
-                 * lie told to somebody who walked away trusting it. They find out when they come
-                 * back, which is no worse than never having been promised anything.
-                 *
-                 * A stopped turn is not news either - they stopped it - and it leaves through
-                 * the cancellation path without reaching here at all.
-                 */
-                if (backend.alerting && reply.detail == null) {
-                    backend.alert.bubble()
-                    if (!watching) backend.alert.answered(reply.text)
+                // Null only from a resume that found nothing left to resume - something else
+                // finished or abandoned the turn in between. Nothing happened, so nothing is
+                // said about it.
+                if (reply != null) {
+                    // Also to logcat. The tap-to-expand is for whoever is holding the phone;
+                    // this is for whoever is holding a laptop, and it costs one line.
+                    reply.detail?.let { Log.w("FishBall", "turn failed: $it") }
+                    messages += reply.toMessage()
+                        .copy(steps = narration.toList(), thinking = thinking)
+                    /*
+                     * Only for an answer, and only if they asked to be told.
+                     *
+                     * `detail` is set exactly when the turn failed, so it is the honest test: a
+                     * notification headed 「鱼丸查好了」 that opens onto 「这会儿连不上」 is a
+                     * small lie told to somebody who walked away trusting it. They find out when
+                     * they come back, which is no worse than never having been promised
+                     * anything.
+                     *
+                     * A stopped turn is not news either - they stopped it - and it leaves
+                     * through the cancellation path without reaching here at all.
+                     */
+                    if (backend.alerting && reply.detail == null) {
+                        backend.alert.bubble()
+                        if (!watching) backend.alert.answered(reply.text)
+                    }
                 }
             } catch (stopped: CancellationException) {
                 // Said out loud, because the alternative is a question sitting in the thread
@@ -258,6 +320,7 @@ class ChatViewModel(
                     streamed = ""
                     busy = false
                     turn = null
+                    backend.awake.release()
                 }
             }
             // Nothing about memory here any more. The bus files on its own, off the fast model,
@@ -274,7 +337,33 @@ class ChatViewModel(
      * were true before anybody got impatient.
      */
     fun stop() {
-        turn?.cancel()
+        val running = turn ?: return
+        viewModelScope.launch {
+            running.cancelAndJoin()
+            /*
+             * Stopped on purpose, so nothing is going to pick it up again.
+             *
+             * The driver marks a turn as running on every checkpoint and only clears it when the
+             * turn closes, which is what lets the next launch tell a turn the app lost from one
+             * that ended - so a turn somebody stopped has to say so, or it would be resumed
+             * under them when they next open the app. After the join, because the checkpoint the
+             * cancellation writes has to land before this clears it.
+             */
+            withContext(Dispatchers.IO) { backend.conversation?.abandon() }
+        }
+    }
+
+    /**
+     * The screen is gone, and the turn on its scope went with it.
+     *
+     * The hold is let go here as well as in the turn's own `finally`, because a cancelled
+     * `viewModelScope` may not run that: an ongoing notification for a turn that no longer
+     * exists is worse than no notification at all. What the turn was doing is not lost - its
+     * row is still marked as running, and the next launch picks it up.
+     */
+    override fun onCleared() {
+        backend.awake.release()
+        super.onCleared()
     }
 
     /**
