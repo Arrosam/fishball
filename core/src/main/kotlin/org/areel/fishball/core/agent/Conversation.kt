@@ -432,6 +432,18 @@ class Conversation(
         // the seam it lands at - see [converse] - so the panel never claims a fact was in front
         // of the model on a turn that answered before the lookup came back.
         recording.step(UiCopy.Narration.RECALLING)
+        /*
+         * The row exists before the first model call does.
+         *
+         * Checkpointing only at the end of a round was not enough, and the gap is the one that
+         * matters most: measured on a device, a turn force-stopped nine seconds in - still
+         * inside its first search - left the question in the log with no answer row at all, so
+         * there was nothing marked as running and nothing to pick up. The first round is the
+         * longest thing a turn does and the likeliest moment to be killed in.
+         *
+         * One extra write per turn, and it buys the whole of that case.
+         */
+        answering.checkpoint()
         val recalled = async {
             catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
                 .getOrDefault(Remembered.NOTHING)
