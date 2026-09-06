@@ -31,11 +31,14 @@ android {
         targetSdk = 35
         // What the update check compares. Monotonic, and never reused: the name is for the
         // person reading the modal, this is the only thing that decides.
-        versionCode = 7
+        versionCode = 8
         // Still short of a 1: the app works end to end, and what it has not had is a second pair
-        // of hands using it for a week. 3 was built and installed but never published, so the
-        // published sequence runs 0.2a (2), 0.2.0 (4), 0.2.0a (5), 0.2.1a (6), and this (7).
-        versionName = "0.2.2a"
+        // of hands using it for a week. A minor rather than a patch, because an interrupted turn
+        // is now steered instead of restarted and a turn outlives the app being killed - the
+        // agent behaves differently, not just better. 3 was built and installed but never
+        // published and 7 was tagged but not released, so the published sequence runs 0.2a (2),
+        // 0.2.0 (4), 0.2.0a (5), 0.2.1a (6), and this (8).
+        versionName = "0.3.0a"
 
         buildConfigField(
             "String",
