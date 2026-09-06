@@ -347,8 +347,16 @@ fun ChatScreen(
         vm.send(text, images)
     }
 
-    // Spoken input joins the thread through the same door typing does: what comes back from
-    // ASR is sent as the question, not offered as a draft to confirm.
+    /*
+     * Spoken input joins the thread through the same door typing does: what comes back from ASR
+     * is sent as the question, not offered as a draft to confirm.
+     *
+     * The same `send` the composer's plate calls, deliberately and by construction rather than
+     * by two paths that happen to agree. Everything sending has learned since - the attachments
+     * riding along, following the thread back to the end, and now offering the text to a running
+     * turn as a correction before treating it as a new question - a spoken message gets for free.
+     * Voice is send with a transcription in front of it, and nothing else.
+     */
     val voice = rememberVoiceState(backend = vm.backend, onText = { send(it) })
 
     Column(
@@ -522,15 +530,26 @@ fun ChatScreen(
              * be clear.
              */
             WorkingPlate(
-                visible = (busy || voice.phase == VoicePhase.TRANSCRIBING) &&
-                    voice.phase != VoicePhase.RECORDING,
+                visible = (busy || voice.phase == VoicePhase.TRANSCRIBING) && !voice.holding,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 12.dp, bottom = 8.dp)
                     .size(48.dp),
                 onStop = {
-                    vm.stop()
-                    voice.abandon()
+                    /*
+                     * One of the two, not both.
+                     *
+                     * It used to be both, and that was right while they were mutually exclusive:
+                     * the one plate was a fish for a running turn and for a transcription alike,
+                     * and only one of those could be happening. A turn now keeps running while
+                     * somebody speaks over it, so cancelling both would mean calling off a
+                     * recording quietly killed the answer being written underneath it.
+                     *
+                     * The fish is the agent's. A transcription that has no turn behind it is the
+                     * only case where this plate is standing in for the old one, and there it
+                     * still calls the transcription off.
+                     */
+                    if (busy) vm.stop() else voice.abandon()
                 },
             )
 

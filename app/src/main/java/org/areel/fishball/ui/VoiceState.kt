@@ -97,6 +97,17 @@ class VoiceState internal constructor(
     internal var awaitingPermission = false
 
     /**
+     * Whether the voice control has the finger and the space above the plate.
+     *
+     * The stop button rides directly over the microphone, and [CancelBeam] grows upward out of
+     * that same plate to say *slide up to cancel* - so for as long as somebody is holding the
+     * button, nothing else may be up there. Asked of the voice control rather than worked out
+     * from its phase at the call site, because the rule belongs to the thing that owns the
+     * gesture: whatever else the screen puts over this plate, it goes away while this is true.
+     */
+    val holding: Boolean get() = phase == VoicePhase.RECORDING
+
+    /**
      * Drop the line under the field.
      *
      * Sending anything at all answers it. The notice is what the microphone said last time and
