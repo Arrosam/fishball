@@ -8,6 +8,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -179,6 +180,67 @@ class Conversation(
         override fun answer(delta: String) = inner.answer(delta)
     }
 
+    /**
+     * The answer's row in the log, opened when the question is asked rather than when there is
+     * an answer to put in it.
+     *
+     * It used to be written once, at the end. Everything a turn had looked up lived in a local
+     * list until then, so a turn that was stopped - and a turn whose app was killed under it -
+     * left the question in the log with nothing after it: twenty rounds of searching, reading and
+     * quoting, gone, and the next question asked of a model that had never done any of it. From
+     * the outside that reads as the app having thrown the work away, because it had.
+     *
+     * So the row is claimed up front and rewritten at the end of every round. What that buys is
+     * not tidiness in the log; it is the ability to interrupt. A stopped turn now replays as what
+     * it was - the calls, what came back, and a line saying it was cut off - so the next thing
+     * the user types is a course correction rather than a fresh start. See [replay].
+     *
+     * Blank [ConversationTurn.text] is the marker for a turn that never reached an answer, and it
+     * is read in two places: [recalled] puts [AgentPrompt.INTERRUPTED] in its mouth for the model,
+     * and the screen draws it as the notice it showed at the time.
+     */
+    private inner class Answering(
+        private val id: Long,
+        private val sessionId: Long,
+        private val startedAt: Long,
+        private val recording: Recording,
+    ) {
+
+        /** Every tool round as it went over the wire. See [ConversationTurn.rounds]. */
+        val rounds = mutableListOf<ToolRound>()
+
+        /** What has happened so far, on the record before the next round is asked for. */
+        fun checkpoint() = store.replaceTurn(
+            ConversationTurn(
+                id = id,
+                sessionId = sessionId,
+                at = startedAt,
+                speaker = Speaker.ASSISTANT,
+                text = "",
+                steps = recording.lines.toList(),
+                rounds = rounds.toList(),
+            ),
+        )
+
+        /** The turn, finished. [at] is when the answer landed, not when the question was asked. */
+        fun close(at: Long, reply: Reply) = store.replaceTurn(
+            ConversationTurn(
+                id = id,
+                sessionId = sessionId,
+                at = at,
+                speaker = Speaker.ASSISTANT,
+                text = reply.text,
+                shape = reply.shape,
+                reasoning = reply.thinking,
+                steps = reply.steps,
+                rounds = reply.rounds,
+                sources = reply.sources.map {
+                    CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
+                },
+            ),
+        )
+    }
+
     suspend fun ask(
         userText: String,
         progress: TurnProgress = TurnProgress.Silent,
@@ -229,6 +291,9 @@ class Conversation(
         // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
         thread = (bridgeMessage() + priorTurns()).toMutableList()
 
+        // Claimed before the work starts and written to as it goes. See [Answering].
+        val answering = Answering(store.nextId(), session!!.id, at, recording)
+
         /*
          * §10 — what is already known, started here and read later.
          *
@@ -263,7 +328,19 @@ class Conversation(
                 .getOrDefault(Remembered.NOTHING)
         }
         val reply = try {
-            converse(userText, recording, recalled)
+            converse(userText, recording, recalled, answering)
+        } catch (stopped: CancellationException) {
+            /*
+             * Stopped is not lost.
+             *
+             * Every finished round is already on the record; this closes the row over whatever
+             * the round in flight had narrated, so the thread redraws with the working panel it
+             * had on screen at the moment the button was pressed. Nothing here suspends - the
+             * store is a plain synchronous write - which is the only reason it can run at all
+             * inside a coroutine that has already been cancelled.
+             */
+            answering.checkpoint()
+            throw stopped
         } finally {
             // Whatever is left of it is work nobody is waiting for: the turn is over, and this
             // scope would otherwise sit here until a lookup for an answer already on screen
@@ -279,22 +356,7 @@ class Conversation(
             tier = reply.sources.maxOfOrNull { it.tier } ?: Tier.LOW,
             sources = reply.sources.map { it.url },
         )
-        store.appendTurn(
-            ConversationTurn(
-                id = store.nextId(),
-                sessionId = session!!.id,
-                at = now(),
-                speaker = Speaker.ASSISTANT,
-                text = reply.text,
-                shape = reply.shape,
-                reasoning = reply.thinking,
-                steps = reply.steps,
-                rounds = reply.rounds,
-                sources = reply.sources.map {
-                    CitedSource(it.url, it.displayName, it.explanation, it.tier, it.quote)
-                },
-            ),
-        )
+        answering.close(now(), reply)
         reply
     }
 
@@ -329,13 +391,16 @@ class Conversation(
          * facts are in front of the model before a single word of the answer is served.
          */
         recalled: Deferred<Remembered>,
+        /** Where each round is written down as it finishes. See [Answering]. */
+        answering: Answering,
     ): Reply {
         // Insertion-ordered, so the numbering the model sees is stable across rounds - [3] in
         // round two is the same page it was in round one.
         val seen = LinkedHashMap<String, Evidence>()
         val verified = mutableMapOf<String, String>()
-        // Every tool round as it went over the wire, for the log. See [ConversationTurn.rounds].
-        val rounds = mutableListOf<ToolRound>()
+        // Every tool round as it went over the wire, for the log and for the checkpoint the log
+        // is written from. See [ConversationTurn.rounds].
+        val rounds = answering.rounds
 
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
@@ -389,9 +454,15 @@ class Conversation(
                 progress.forward(answer = true, thinking = true),
             )
             if (result !is LlmResult.Ok) {
+                // Carrying what the turn did before it failed. The rounds are checkpointed and
+                // [Answering.close] is about to write this reply over them, so a Reply that
+                // carried none would delete the record of six good searches because the seventh
+                // call to the model timed out.
                 return Reply(
                     UiCopy.SERVICE_UNAVAILABLE,
                     detail = (result as? LlmResult.Failed)?.reason,
+                    steps = (progress as? Recording)?.lines.orEmpty().toList(),
+                    rounds = rounds.toList(),
                 )
             }
 
@@ -438,6 +509,8 @@ class Conversation(
                     return Reply(
                         UiCopy.SERVICE_UNAVAILABLE,
                         detail = "the model wrote neither an answer nor a tool call",
+                        steps = (progress as? Recording)?.lines.orEmpty().toList(),
+                        rounds = rounds.toList(),
                     )
                 }
                 idle++
@@ -502,6 +575,9 @@ class Conversation(
                 },
                 known = late.orEmpty(),
             )
+            // And on the record before the next round is asked for, so a turn stopped from here
+            // on keeps everything it has already done. See [Answering].
+            answering.checkpoint()
             round++
         }
     }
@@ -773,6 +849,9 @@ class Conversation(
             to = dayEnd(call.input.str("to")),
             limit = LOG_HITS,
         )
+            // A turn that was stopped before it wrote a word is on the record so the model can
+            // replay its looking - it is not a thing that was said. See [Answering].
+            .filter { it.text.isNotBlank() }
         if (found.isEmpty()) {
             return LlmContent.ToolResult(call.id, AgentPrompt.LOG_EMPTY)
         }
@@ -1304,7 +1383,12 @@ class Conversation(
      * Turns logged before reasoning was kept carry none, and come back as they always did.
      */
     private fun recalled(turn: ConversationTurn): LlmMessage {
-        val said = unstamped(turn.text)
+        // Blank text is a turn that never reached an answer - it was stopped, or the app was
+        // killed under it - and its rounds are on the record all the same. Something has to
+        // stand in its place: an assistant turn whose text block is empty is a thread the
+        // provider is entitled to reject, and a silent one leaves the model to work out for
+        // itself why it stopped mid-search. See [Answering] and [AgentPrompt.INTERRUPTED].
+        val said = unstamped(turn.text).ifBlank { AgentPrompt.INTERRUPTED }
         if (turn.reasoning.isBlank()) return LlmMessage.assistant(said)
         return LlmMessage(
             LlmMessage.Role.ASSISTANT,
@@ -1569,6 +1653,7 @@ private const val LAST_ROUND = 100
 
 /** Rounds in a row that said nothing and asked for nothing. See the loop for why. */
 private const val IDLE_LIMIT = 3
+
 
 /**
  * How much of one page goes back to the model, and how far in front of a `find` match it starts.

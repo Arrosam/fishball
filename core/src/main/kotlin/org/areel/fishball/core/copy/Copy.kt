@@ -685,6 +685,16 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
     fun badCall(tool: String, want: String, got: String): String =
         "这个 $tool 调用读不出参数。要的是 $want，收到的是 $got。照前面那个格式再调一次。"
 
+    /**
+     * An answer turn that never got as far as an answer, as the next turn reads it.
+     *
+     * A stopped turn keeps its looking - the calls and what came back are on the record - and
+     * that record has to replay as a well-formed assistant turn or the provider rejects the
+     * thread. So the turn says what happened to it. Which is also what makes steering work: the
+     * next question arrives after a turn the model can see it was part-way through.
+     */
+    const val INTERRUPTED = "（这一轮做到这里被叫停了，答案没写出来。）"
+
     private const val READ_NAME = "read_page"
 
     /** One line of the conversation log, for a §9 lookback. */

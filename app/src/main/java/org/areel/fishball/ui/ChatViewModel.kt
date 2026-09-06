@@ -75,7 +75,7 @@ class ChatViewModel(
         // §9 keeps are the same thing, so closing the app cannot lose one without losing the
         // other - and reopening it lands them back where they were rather than on a blank
         // screen that implies the app forgot them.
-        messages += backend.store.recentTurns().map { it.toMessage() }
+        messages += backend.store.recentTurns().map { it.toMessage(stoppedNotice) }
     }
 
     /** Spec §21 — what the app is doing right now, in plain language. */
@@ -191,7 +191,17 @@ class ChatViewModel(
                 // Said out loud, because the alternative is a question sitting in the thread
                 // with nothing under it and no way to tell a stopped turn from a lost one.
                 // The user's own message stays: they did ask it, and §9 has already filed it.
-                messages += ChatMessage(fromUser = false, text = stoppedNotice)
+                //
+                // With the working under it, which is the point of stopping rather than the
+                // consolation prize. The driver has already written every finished round to the
+                // log, so this is the same bubble the thread redraws on the next launch - and
+                // the next thing typed is answered by a model that can see how far this got.
+                messages += ChatMessage(
+                    fromUser = false,
+                    text = stoppedNotice,
+                    steps = narration.toList(),
+                    thinking = thinking,
+                )
                 throw stopped
             } finally {
                 // In `finally` so a stopped turn cleans up exactly like a finished one. The
@@ -291,12 +301,21 @@ private fun Reply.toMessage() = ChatMessage(
     detail = detail,
 )
 
-private fun ConversationTurn.toMessage() = ChatMessage(
+/**
+ * One logged turn, as a bubble.
+ *
+ * [stopped] is what a turn that never reached an answer is drawn as. The driver leaves those in
+ * the log with their tool rounds and an empty text - that emptiness is the marker - so that the
+ * next question can be asked of a model that remembers being interrupted. Drawn blank it would be
+ * a bubble with nothing in it under a panel full of working, which reads as a bug rather than as
+ * the turn somebody stopped.
+ */
+private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     fromUser = speaker == Speaker.USER,
     // Stripped, because a build that stamped assistant turns on the way to the model taught it
     // to write the stamp into its answers, and those answers are in the log. See
     // `Conversation.unstamped` - this is the same cleaning, for the half the user reads.
-    text = STAMPED.replaceFirst(text, ""),
+    text = STAMPED.replaceFirst(text, "").ifBlank { if (speaker == Speaker.USER) "" else stopped },
     images = images,
     // The working panel, restored. Both halves: the reasoning the model wrote and the lines the
     // app narrated while it ran. Held only in memory before this, so reopening the app left an
