@@ -394,129 +394,184 @@ fun ChatScreen(
         val settle = remember { Animatable(0f) }
         LaunchedEffect(Unit) { settle.animateTo(1f, tween(RETURN_FADE_MS)) }
 
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .graphicsLayer { alpha = settle.value }
-                .clipToBounds(),
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                // 32dp of top padding, not 16: the checker is an overlay now rather than a
-                // row in the Column above, so the list has to leave its height clear or the
-                // first message would start life half-hidden under it.
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 32.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+        /*
+         * An unclipped layer over the thread, for the one thing that has to leave it.
+         *
+         * The list's own box clips, and that is load-bearing - see the note above. But the stop
+         * plate now lives over that box, and the fish it throws when it is pressed is documented
+         * to fall past the bottom of the screen; inside the clip it was cut off at the composer's
+         * top edge after about 56dp and then went on animating, invisible, for the rest of its
+         * second. The plate is also laid out partly below this edge while it rises, and a clip
+         * takes the taps on that part with it.
+         *
+         * So the clip stays exactly where it was needed and this layer sits outside it.
+         */
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = settle.value }
+                    .clipToBounds(),
             ) {
-                itemsIndexed(messages) { index, message ->
-                    Arriving(animate = index >= alreadyThere) {
-                        if (message.fromUser) {
-                            UserBubble(
-                                text = message.text,
-                                images = remember(message.images) {
-                                    message.images.mapNotNull {
-                                        vm.backend.attachments.recall(it)?.asImageBitmap()
-                                    }
-                                },
-                                onImage = { i ->
-                                    viewing = message.images.getOrNull(i)
-                                        ?.let { vm.backend.attachments.recall(it) }
-                                },
-                            )
-                        } else {
-                            AssistantBubble(
-                                text = message.text,
-                                confidence = message.confidence,
-                                conflict = message.conflict,
-                                sources = message.sources,
-                                detail = message.detail,
-                                steps = message.steps,
-                                thinking = message.thinking,
-                            )
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    // 32dp of top padding, not 16: the checker is an overlay now rather than a
+                    // row in the Column above, so the list has to leave its height clear or the
+                    // first message would start life half-hidden under it.
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 32.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    itemsIndexed(messages) { index, message ->
+                        Arriving(animate = index >= alreadyThere) {
+                            if (message.fromUser) {
+                                UserBubble(
+                                    text = message.text,
+                                    images = remember(message.images) {
+                                        message.images.mapNotNull {
+                                            vm.backend.attachments.recall(it)?.asImageBitmap()
+                                        }
+                                    },
+                                    onImage = { i ->
+                                        viewing = message.images.getOrNull(i)
+                                            ?.let { vm.backend.attachments.recall(it) }
+                                    },
+                                )
+                            } else {
+                                AssistantBubble(
+                                    text = message.text,
+                                    confidence = message.confidence,
+                                    conflict = message.conflict,
+                                    sources = message.sources,
+                                    detail = message.detail,
+                                    steps = message.steps,
+                                    thinking = message.thinking,
+                                )
+                            }
+                        }
+                    }
+                    // §21 inline: the placeholder sits where the answer will, and is replaced in place.
+                    if (pending) {
+                        item {
+                            Arriving(animate = true) {
+                                PendingBubble(
+                                    steps = narration.toList(),
+                                    thinking = vm.thinking,
+                                    streamed = vm.streamed,
+                                    // Still, the moment they start typing. The movement is there to
+                                    // fill a wait, and somebody writing the next question beside it
+                                    // has stopped waiting - what is left is motion next to a field
+                                    // they are trying to read what they typed in.
+                                    animate = draft.isEmpty(),
+                                )
+                            }
                         }
                     }
                 }
-                // §21 inline: the placeholder sits where the answer will, and is replaced in place.
-                if (pending) {
-                    item {
-                        Arriving(animate = true) {
-                            PendingBubble(
-                                steps = narration.toList(),
-                                thinking = vm.thinking,
-                                streamed = vm.streamed,
-                                // Still, the moment they start typing. The movement is there to
-                                // fill a wait, and somebody writing the next question beside it
-                                // has stopped waiting - what is left is motion next to a field
-                                // they are trying to read what they typed in.
-                                animate = draft.isEmpty(),
-                            )
-                        }
-                    }
+
+                // Nothing said yet. It lives in the thread's box rather than in the list, so it
+                // neither scrolls nor rubber-bands with content that does not exist.
+                if (messages.isEmpty() && narration.isEmpty()) {
+                    EmptyThread(Modifier.align(Alignment.Center))
                 }
-            }
 
-            // Nothing said yet. It lives in the thread's box rather than in the list, so it
-            // neither scrolls nor rubber-bands with content that does not exist.
-            if (messages.isEmpty() && narration.isEmpty()) {
-                EmptyThread(Modifier.align(Alignment.Center))
-            }
+                // The masthead's checker, over the thread rather than above it. The squares that
+                // are not ink are left unpainted, so a message scrolled up under the band shows
+                // through the gaps instead of disappearing behind a grey chequerboard - which is
+                // the whole reason the strip is a checker and not a rule.
+                CheckerBand(Modifier.align(Alignment.TopCenter))
 
-            // The masthead's checker, over the thread rather than above it. The squares that
-            // are not ink are left unpainted, so a message scrolled up under the band shows
-            // through the gaps instead of disappearing behind a grey chequerboard - which is
-            // the whole reason the strip is a checker and not a rule.
-            CheckerBand(Modifier.align(Alignment.TopCenter))
+                /*
+                 * The way back down, and only when there is a way back down.
+                 *
+                 * [atTail] is the position rather than the intent, which is what this needs: the
+                 * question here is "is the end off screen", not "did they mean to leave it". It
+                 * appears while scrolled up whether they scrolled up on purpose or an arriving
+                 * answer grew the thread past them.
+                 *
+                 * Glass rather than the magenta of the send plate. It is a convenience sitting
+                 * directly above the one control in the app that does something irreversible, and
+                 * two magenta squares stacked in a corner would be one target read as two halves
+                 * of the same thing.
+                 */
+                // Anywhere that is not the row or the button that opened it. The masthead's menu
+                // gets this free by living in a Popup; this one is drawn in the layout, so the
+                // catcher has to be explicit. It takes the tap rather than passing it on: a tap
+                // that both dismissed a menu and pressed what was underneath it would be one
+                // gesture doing two things.
+                if (attach.open) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .pointerInput(Unit) { detectTapGestures { attach.close() } },
+                    )
+                }
 
-            /*
-             * The way back down, and only when there is a way back down.
-             *
-             * [atTail] is the position rather than the intent, which is what this needs: the
-             * question here is "is the end off screen", not "did they mean to leave it". It
-             * appears while scrolled up whether they scrolled up on purpose or an arriving
-             * answer grew the thread past them.
-             *
-             * Glass rather than the magenta of the send plate. It is a convenience sitting
-             * directly above the one control in the app that does something irreversible, and
-             * two magenta squares stacked in a corner would be one target read as two halves
-             * of the same thing.
-             */
-            // Anywhere that is not the row or the button that opened it. The masthead's menu
-            // gets this free by living in a Popup; this one is drawn in the layout, so the
-            // catcher has to be explicit. It takes the tap rather than passing it on: a tap
-            // that both dismissed a menu and pressed what was underneath it would be one
-            // gesture doing two things.
-            if (attach.open) {
+                // The same catcher for the masthead menu, and the same reason: a tap on the
+                // conversation closes it, and it takes that tap rather than passing it on.
+                if (menuOpen) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .pointerInput(Unit) { detectTapGestures { menuOpen = false } },
+                    )
+                }
+
+                // The attach choices, floating over the thread rather than sitting in the bar.
+                // They are a menu, not part of the composer, and a menu that reflows the layout it
+                // is drawn over reads as the app rearranging itself around a question nobody asked.
+                AttachRow(
+                    open = attach.open,
+                    full = attach.full,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 12.dp, bottom = 10.dp),
+                    onImage = attach::pickImage,
+                    onCamera = attach::takePhoto,
+                )
+
+                JumpToEnd(
+                    visible = !atTail,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 22.dp),
+                    onClick = {
+                        // Following again, not just scrolled: landing at the end and then being
+                        // left behind by the next answer would undo the trip.
+                        following = true
+                        scope.launch {
+                            // Ticking while it travels, so the trip is felt as distance rather than
+                            // as one event. Light, and often enough to read as texture rather than
+                            // as a series of separate taps.
+                            val ticking = launch {
+                                while (isActive) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    delay(JUMP_TICK_MS)
+                                }
+                            }
+                            toEnd(smooth = true)
+                            ticking.cancel()
+                            // And one firmer one on arrival. The texture stops, something solid
+                            // happens: that is the end of the conversation, felt.
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    },
+                )
+
+                // The shade the composer casts on the thread running under it. Modifier.shadow on
+                // the bar alone is not enough: Android throws elevation shadows downward, so a bar
+                // pinned to the bottom gets almost nothing above it. Drawn over the list rather
+                // than inside the bar, because the shade belongs to what passes beneath.
                 Box(
                     Modifier
-                        .matchParentSize()
-                        .pointerInput(Unit) { detectTapGestures { attach.close() } },
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .background(
+                            Brush.verticalGradient(listOf(Color.Transparent, Areel.Ink10)),
+                        ),
                 )
             }
-
-            // The same catcher for the masthead menu, and the same reason: a tap on the
-            // conversation closes it, and it takes that tap rather than passing it on.
-            if (menuOpen) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .pointerInput(Unit) { detectTapGestures { menuOpen = false } },
-                )
-            }
-
-            // The attach choices, floating over the thread rather than sitting in the bar.
-            // They are a menu, not part of the composer, and a menu that reflows the layout it
-            // is drawn over reads as the app rearranging itself around a question nobody asked.
-            AttachRow(
-                open = attach.open,
-                full = attach.full,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 12.dp, bottom = 10.dp),
-                onImage = attach::pickImage,
-                onCamera = attach::takePhoto,
-            )
 
             /*
              * The stop control, over the send plate rather than in it.
@@ -537,64 +592,21 @@ fun ChatScreen(
                     .size(48.dp),
                 onStop = {
                     /*
-                     * One of the two, not both.
+                     * Whatever is in flight, and both is safe here.
                      *
-                     * It used to be both, and that was right while they were mutually exclusive:
-                     * the one plate was a fish for a running turn and for a transcription alike,
-                     * and only one of those could be happening. A turn now keeps running while
-                     * somebody speaks over it, so cancelling both would mean calling off a
-                     * recording quietly killed the answer being written underneath it.
-                     *
-                     * The fish is the agent's. A transcription that has no turn behind it is the
-                     * only case where this plate is standing in for the old one, and there it
-                     * still calls the transcription off.
+                     * The worry that made this an either/or was that cancelling a recording
+                     * would kill the answer underneath it - but this plate is not up while the
+                     * microphone is held, so that is not a state it can be pressed in. What it
+                     * can be pressed in is a turn *and* a transcription, and stopping only the
+                     * turn left the transcription to finish and then ask, as a brand new
+                     * question, the words the user had just called off.
                      */
-                    if (busy) vm.stop() else voice.abandon()
+                    vm.stop()
+                    voice.abandon()
                 },
-            )
-
-            JumpToEnd(
-                visible = !atTail,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 22.dp),
-                onClick = {
-                    // Following again, not just scrolled: landing at the end and then being
-                    // left behind by the next answer would undo the trip.
-                    following = true
-                    scope.launch {
-                        // Ticking while it travels, so the trip is felt as distance rather than
-                        // as one event. Light, and often enough to read as texture rather than
-                        // as a series of separate taps.
-                        val ticking = launch {
-                            while (isActive) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                delay(JUMP_TICK_MS)
-                            }
-                        }
-                        toEnd(smooth = true)
-                        ticking.cancel()
-                        // And one firmer one on arrival. The texture stops, something solid
-                        // happens: that is the end of the conversation, felt.
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    }
-                },
-            )
-
-            // The shade the composer casts on the thread running under it. Modifier.shadow on
-            // the bar alone is not enough: Android throws elevation shadows downward, so a bar
-            // pinned to the bottom gets almost nothing above it. Drawn over the list rather
-            // than inside the bar, because the shade belongs to what passes beneath.
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(14.dp)
-                    .background(
-                        Brush.verticalGradient(listOf(Color.Transparent, Areel.Ink10)),
-                    ),
             )
         }
+
 
         Composer(
             value = draft,
@@ -615,16 +627,6 @@ fun ChatScreen(
             voice = voice,
             canSpeak = vm.backend.canTranscribe,
             attach = attach,
-            // Anything that has the app waiting on a service, which from the outside is one
-            // state however many kinds of request are behind it.
-            working = busy,
-            onStop = {
-                // Both, without asking which is running. They are mutually exclusive in
-                // practice and cancelling a job that is not there costs nothing, which is a
-                // better trade than a control that has to be told what it is stopping.
-                vm.stop()
-                voice.abandon()
-            },
         )
     }
 
@@ -706,17 +708,6 @@ private fun Composer(
      * this app was built for, who would reasonably conclude they had spoken wrongly.
      */
     canSpeak: Boolean,
-    /**
-     * A turn is running.
-     *
-     * It no longer disables anything. The composer used to be dead for the whole of a turn -
-     * field greyed, plate turned over into a stop button - which meant the only thing anybody
-     * could do about a turn going the wrong way was stop it, look at what was left, and start
-     * again. It is live throughout now, and typing into it is how a turn gets redirected: see
-     * [typed] below and `ChatViewModel.send`.
-     */
-    working: Boolean,
-    onStop: () -> Unit,
 ) {
     /*
      * With nothing typed there is nothing to send, so the plate is a microphone instead. One
@@ -742,15 +733,6 @@ private fun Composer(
     val typed = value.isNotEmpty()
     val recording = voice.phase == VoicePhase.RECORDING
 
-    /*
-     * Something is in flight and the app is waiting on it.
-     *
-     * One flag for two things - a turn being answered and a recording being turned into words -
-     * because from the outside they are the same situation: nothing to type, nothing to do but
-     * wait, and one way to call it off. Keeping them apart in the UI would mean two spinners
-     * that look identical and one stop button that works on Tuesdays.
-     */
-    val waiting = working || voice.phase == VoicePhase.TRANSCRIBING
 
 
     /*
@@ -1198,16 +1180,28 @@ private fun WorkingPlate(visible: Boolean, modifier: Modifier, onStop: () -> Uni
      * out would bounce the plate *away* from the bar it is supposed to be disappearing into.
      */
     val out = remember { Animatable(0f) }
+    /*
+     * Whether there is anything to compose, as a flag rather than as the animation's own value.
+     *
+     * Reading `out.value` here subscribed this composable to every frame of the spring, so the
+     * whole subtree - the string lookup, the infinite transition, the mark - was rebuilt sixty
+     * times a second while it rose. That is exactly what the deferred reads below it were
+     * written to avoid. A Boolean flipped at the two ends of the animation says the same thing
+     * and changes twice.
+     */
+    var present by remember { mutableStateOf(false) }
     LaunchedEffect(visible) {
         if (visible) {
+            present = true
             out.animateTo(1f, spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow))
         } else {
             out.animateTo(0f, tween(durationMillis = ATTACH_EXIT_MS.toInt(), easing = EaseMech))
+            present = false
         }
     }
     // Nothing at all when it is fully home, so it cannot take a tap meant for the bar under it -
     // unless a fish is still falling, which outlives the plate that dropped it by about a second.
-    if (out.value < 0.01f && dead.isEmpty()) return
+    if (!present && dead.isEmpty()) return
 
     Box(modifier, contentAlignment = Alignment.Center) {
         // Allowed to leave the plate, and each removes itself once it is past the bottom of the
@@ -1220,14 +1214,10 @@ private fun WorkingPlate(visible: Boolean, modifier: Modifier, onStop: () -> Uni
                 // Laid out, not drawn, so the enlarged press area travels with it. A plate moved
                 // by graphicsLayer would be tappable where it used to be.
                 .offset { IntOffset(0, ((1f - out.value) * WORKING_RISE.toPx()).toInt()) }
-                .graphicsLayer {
-                    alpha = out.value.coerceIn(0f, 1f)
-                    scaleX = 0.86f + 0.14f * out.value
-                    scaleY = 0.86f + 0.14f * out.value
-                }
-                .shadow(6.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
-                .size(48.dp)
-                .background(Areel.Ink, RectangleShape)
+                // The same slop every other plate in the app listens through. Without it the one
+                // control people reach for in a hurry was the only 48dp target on a bar of 60dp
+                // ones, and a near-miss fell through to the composer behind it.
+                .requiredSize(48.dp + TOUCH_SLOP * 2)
                 // Clicky, and deliberately the same weight as sending: stopping a turn is the
                 // other irreversible thing this bar does. Off once it is on its way home, so a
                 // plate nobody can see cannot be pressed.
@@ -1237,29 +1227,43 @@ private fun WorkingPlate(visible: Boolean, modifier: Modifier, onStop: () -> Uni
                 },
             contentAlignment = Alignment.Center,
         ) {
-            // Turning over, the way a fish does.
-            val turning = rememberInfiniteTransition(label = "fish")
-            val face by turning.animateFloat(
-                initialValue = 0f,
-                targetValue = 360f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(FLIP_MS, easing = LinearEasing),
-                ),
-                label = "flip",
-            )
-            FishMark(
-                // The eye is dropped: past a quarter turn the mark is mirrored, and an eye that
-                // swaps ends reads as a fault rather than a fish.
-                modifier = Modifier
-                    .size(24.dp)
-                    .graphicsLayer { rotationY = face }
-                    .semantics {
-                        contentDescription = stopLabel
-                        role = Role.Button
-                    },
-                body = Areel.Paper,
-                eye = null,
-            )
+            // Drawn at 48 inside a box that listens wider, so the enlarged area stays invisible.
+            Box(
+                Modifier
+                    .graphicsLayer {
+                        alpha = out.value.coerceIn(0f, 1f)
+                        scaleX = 0.86f + 0.14f * out.value
+                        scaleY = 0.86f + 0.14f * out.value
+                    }
+                    .shadow(6.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
+                    .size(48.dp)
+                    .background(Areel.Ink, RectangleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Turning over, the way a fish does.
+                val turning = rememberInfiniteTransition(label = "fish")
+                val face by turning.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(FLIP_MS, easing = LinearEasing),
+                    ),
+                    label = "flip",
+                )
+                FishMark(
+                    // The eye is dropped: past a quarter turn the mark is mirrored, and an eye that
+                    // swaps ends reads as a fault rather than a fish.
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer { rotationY = face }
+                        .semantics {
+                            contentDescription = stopLabel
+                            role = Role.Button
+                        },
+                    body = Areel.Paper,
+                    eye = null,
+                )
+            }
         }
     }
 }
