@@ -95,6 +95,9 @@ data class TurnDto(
     // And once more for the tool calls. A log written before they were kept replays its
     // answers as it always did, with nothing between question and answer.
     val rounds: List<ToolRoundDto> = emptyList(),
+    // Defaulted false, which is the right reading of a log written before this existed: whatever
+    // those turns were, nothing is going to resume them now.
+    val inFlight: Boolean = false,
 )
 
 @Serializable
@@ -294,6 +297,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
             thinking = round.thinking,
         )
     },
+    inFlight,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -315,6 +319,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
             thinking = round.thinking,
         )
     },
+    inFlight = inFlight,
     sources = sources.map {
         CitedSource(
             url = it.url,

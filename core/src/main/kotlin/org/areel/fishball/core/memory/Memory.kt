@@ -192,6 +192,17 @@ data class ConversationTurn(
      * cut out from between them. Empty on user turns, and on answers that looked nothing up.
      */
     val rounds: List<ToolRound> = emptyList(),
+    /**
+     * This answer is still being worked on, as far as anything that wrote it down knows.
+     *
+     * Set on every checkpoint and cleared when the turn closes, so the only way it survives into
+     * the next launch is for the process to have died with the turn still running - nothing that
+     * ends a turn in an orderly way, an answer, a failure or the stop button, leaves it set. That
+     * makes it exactly the flag for "pick this up again", and distinguishes a turn the app lost
+     * from one the person stopped, which look identical from the log otherwise: both are an
+     * answer with no text and some rounds behind it.
+     */
+    val inFlight: Boolean = false,
 )
 
 /** One round of tool calls in a turn: what was asked for together, and what came back together. */

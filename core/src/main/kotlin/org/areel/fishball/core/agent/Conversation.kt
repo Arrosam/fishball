@@ -43,6 +43,7 @@ import org.areel.fishball.core.search.PageGateway
 import org.areel.fishball.core.search.SearchGateway
 import org.areel.fishball.core.search.SearchQuery
 import org.areel.fishball.core.session.Session
+import org.areel.fishball.core.session.SESSION_IDLE_TIMEOUT_MS
 import org.areel.fishball.core.session.COMPACT_AT_TOKENS
 import org.areel.fishball.core.session.COMPACT_RETAIN_TOKENS
 import org.areel.fishball.core.session.SESSION_COMPACT_TOKENS
@@ -164,8 +165,12 @@ class Conversation(
      * from four places, and a list that has to be appended to beside each of them is a list that
      * will eventually miss one.
      */
-    private class Recording(private val inner: TurnProgress) : TurnProgress {
-        val lines = mutableListOf<String>()
+    private class Recording(
+        private val inner: TurnProgress,
+        /** What the turn had already narrated, when it is one being picked back up. */
+        said: List<String> = emptyList(),
+    ) : TurnProgress {
+        val lines = said.toMutableList()
 
         override fun step(text: String) {
             lines += text
@@ -206,10 +211,12 @@ class Conversation(
         private val sessionId: Long,
         private val startedAt: Long,
         private val recording: Recording,
+        /** Rounds already on the record, when this row is one being picked back up. */
+        done: List<ToolRound> = emptyList(),
     ) {
 
         /** Every tool round as it went over the wire. See [ConversationTurn.rounds]. */
-        val rounds = mutableListOf<ToolRound>()
+        val rounds = done.toMutableList()
 
         /** What has happened so far, on the record before the next round is asked for. */
         fun checkpoint() = store.replaceTurn(
@@ -221,6 +228,10 @@ class Conversation(
                 text = "",
                 steps = recording.lines.toList(),
                 rounds = rounds.toList(),
+                // Still going, as far as this row knows. Only [close] clears it, so a row that
+                // still says this on the next launch is a turn the process died in the middle
+                // of. See [unfinished].
+                inFlight = true,
             ),
         )
 
@@ -266,22 +277,112 @@ class Conversation(
         }
     }
 
+    /**
+     * A turn the app was killed in the middle of, if there is one worth picking up.
+     *
+     * The mark is [ConversationTurn.inFlight], which only survives a process that died: an
+     * answer, a failure and the stop button all clear it on the way out. What the caller gets
+     * back is what it needs to put the turn on screen again and hand the pictures back - see
+     * [resume], which re-derives the rows itself so the two cannot get out of step.
+     *
+     * Bounded by the same hour that bounds a session. Past it the session is stale and about to
+     * roll anyway, and firing a model request on launch for something asked yesterday is a bill
+     * nobody is waiting on the answer to.
+     */
+    fun unfinished(): Unfinished? {
+        val open = session ?: store.loadSession() ?: return null
+        val turns = store.turnsInSession(open.id)
+        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT && it.inFlight }
+            ?: return null
+        if (now() - answer.at >= SESSION_IDLE_TIMEOUT_MS) return null
+        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
+            ?: return null
+        return Unfinished(
+            id = answer.id,
+            question = asked.text,
+            images = asked.images,
+            steps = answer.steps,
+            rounds = answer.rounds.size,
+        )
+    }
+
+    /**
+     * Pick that turn up and carry on with it.
+     *
+     * Not a re-ask. The question is the one already in the log, its row is not written again,
+     * and the rounds it got through before the process died go back to the model as the calls
+     * and results they were - so it resumes with what it found rather than starting the search
+     * over. Returns null when there is nothing to resume, which is a race rather than an error:
+     * something else finished or abandoned the turn between [unfinished] and here.
+     *
+     * [images] are the pictures the question was asked with, handed back by the caller because
+     * `:core` has no filesystem and the log keeps only their names. A resume without them is a
+     * resume of 「这个能吃吗」 with nothing to look at, so a caller that cannot reload them
+     * should not call this.
+     */
+    suspend fun resume(
+        progress: TurnProgress = TurnProgress.Silent,
+        images: List<LlmContent.Image> = emptyList(),
+    ): Reply? {
+        val open = session ?: store.loadSession() ?: return null
+        val turns = store.turnsInSession(open.id)
+        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT && it.inFlight }
+            ?: return null
+        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
+            ?: return null
+        session = open
+        memory.turnStarted()
+        try {
+            return turn(asked.text, progress, images, resuming = answer)
+        } finally {
+            memory.turnEnded()
+        }
+    }
+
+    /**
+     * Whatever is still marked as running, marked as not.
+     *
+     * Called when the person stops a turn themselves, and at the top of every new one. Both are
+     * the same statement: nothing left over is going to be picked up, because something newer
+     * has happened. The row keeps its text, its steps and its rounds - all this takes away is
+     * the offer to carry on with it.
+     */
+    fun abandon() {
+        val open = session ?: store.loadSession() ?: return
+        store.turnsInSession(open.id)
+            .filter { it.inFlight }
+            .forEach { store.replaceTurn(it.copy(inFlight = false)) }
+    }
+
     /** One turn, start to finish. [ask] wraps it to keep the bus out of its way. */
     private suspend fun turn(
         userText: String,
         progress: TurnProgress,
         images: List<LlmContent.Image>,
+        /**
+         * The row this turn is continuing, when it is one being picked back up.
+         *
+         * Null for an ordinary turn, which writes its own question down and opens its own row.
+         * A resume does neither: both are already in the log, and writing them again would put
+         * the question in the thread twice.
+         */
+        resuming: ConversationTurn? = null,
     ): Reply = coroutineScope {
-        val recording = Recording(progress)
-        val at = now()
+        val recording = Recording(progress, said = resuming?.steps.orEmpty())
+        val at = resuming?.at ?: now()
         rollSession(at, recording)
 
-        store.appendTurn(
-            ConversationTurn(
-                store.nextId(), session!!.id, at, Speaker.USER, userText,
-                images = images.mapNotNull { it.handle },
-            ),
-        )
+        if (resuming == null) {
+            // Anything left over from a turn that died is not going to be picked up now: this
+            // question is what happens instead of it. See [abandon].
+            abandon()
+            store.appendTurn(
+                ConversationTurn(
+                    store.nextId(), session!!.id, at, Speaker.USER, userText,
+                    images = images.mapNotNull { it.handle },
+                ),
+            )
+        }
 
         // §9 — before anything else, and without waiting for it. What someone says about
         // themselves is true whether or not this turn ever produces an answer, and it used to
@@ -291,10 +392,16 @@ class Conversation(
         attached = images
         lastFailure = null
         // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
-        thread = (bridgeMessage() + priorTurns()).toMutableList()
+        // Two dropped on a resume rather than one: the question is put back by [converse], and
+        // the half-written answer is this turn's own row rather than history.
+        thread = (bridgeMessage() + priorTurns(drop = if (resuming == null) 1 else 2)).toMutableList()
 
         // Claimed before the work starts and written to as it goes. See [Answering].
-        val answering = Answering(store.nextId(), session!!.id, at, recording)
+        val answering = if (resuming == null) {
+            Answering(store.nextId(), session!!.id, at, recording)
+        } else {
+            Answering(resuming.id, session!!.id, resuming.at, recording, done = resuming.rounds)
+        }
 
         /*
          * §10 — what is already known, started here and read later.
@@ -417,11 +524,26 @@ class Conversation(
             },
         )
 
+        /*
+         * And what this turn had already done, on a turn being picked back up. Empty otherwise.
+         *
+         * The calls and their results, exactly as they went the first time, so a resumed turn
+         * carries on from what it found rather than searching for it again. What does not come
+         * back is [seen]: the evidence map is built from live search results and cannot be
+         * rebuilt from the text of them, so a page read before the process died has to be
+         * reopened before it can be quoted, and sources cited on this turn are the ones it
+         * looks up from here. The model can see all of it either way; it is the machinery
+         * around quoting and tiering that starts again.
+         */
+        thread += exchanges(rounds)
+
         // Rounds that produced neither a tool call nor a word. Nothing goes into the thread on
         // one of those, so the next round is handed the identical prompt and does the identical
         // nothing - the only way out is to stop counting on it.
         var idle = 0
-        var round = 0
+        // Counting from what has already been spent, so a turn resumed after forty rounds gets
+        // what is left of the budget rather than a fresh one.
+        var round = rounds.size
         /*
          * Rounds in a row in which every single call was handed back unrun, and whether that has
          * already cost the turn its looking-up tools.
@@ -1467,9 +1589,9 @@ class Conversation(
      * The final entry is dropped: it is the question being answered right now, already written
      * into this turn's own prompt.
      */
-    private fun priorTurns(): List<LlmMessage> {
+    private fun priorTurns(drop: Int = 1): List<LlmMessage> {
         val open = session ?: return emptyList()
-        return replay(carried(open).dropLast(1))
+        return replay(carried(open).dropLast(drop))
     }
 
     /**
@@ -1735,6 +1857,23 @@ data class Reply(
     val steps: List<String> = emptyList(),
     /** Every tool round the turn ran, for the log. See [ConversationTurn.rounds]. */
     val rounds: List<ToolRound> = emptyList(),
+)
+
+/**
+ * A turn the app was killed in the middle of, as the screen needs to see it.
+ *
+ * Enough to put the question back in front of somebody and start the placeholder where it left
+ * off, and no more: the driver re-reads the rows itself when [Conversation.resume] is called, so
+ * there is one reader of the log rather than two able to disagree about which turn this is.
+ */
+data class Unfinished(
+    val id: Long,
+    val question: String,
+    /** The names the app kept the pictures under, for whoever can turn those back into bytes. */
+    val images: List<String> = emptyList(),
+    /** What it had narrated, so the panel picks up where it stopped rather than from nothing. */
+    val steps: List<String> = emptyList(),
+    val rounds: Int = 0,
 )
 
 data class SourceRef(
