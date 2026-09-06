@@ -890,14 +890,24 @@ private fun Composer(
                     .padding(top = 2.dp, bottom = 2.dp, end = 16.dp),
                 contentAlignment = Alignment.CenterStart,
               ) {
-                // While the button is held the field is where the state is reported, because
-                // that is the one place already in view and a finger is covering the plate.
-                //
-                // Waiting outranks the voice phase, and covers the transcribing case it used
-                // to draw as a line of text: there is nothing to type into while a service is
-                // being waited on, and a disabled cursor blinking in an empty box says the app
-                // has stopped, which is the one thing that is not true.
-                if (waiting) BubbleField() else when (voice.phase) {
+                /*
+                 * While the button is held the field is where the state is reported, because
+                 * that is the one place already in view and a finger is covering the plate.
+                 *
+                 * A running turn used to be reported here too - `if (waiting) BubbleField()`
+                 * in front of this, which took the field away for the whole of it. That was
+                 * coherent when a turn could not be interrupted: there was nothing to type
+                 * into, so a box of bubbles said so better than a dead cursor. It is the
+                 * opposite of true now, and it was the reason typing mid-turn still did
+                 * nothing after the composer was supposedly made live - the plate had learned
+                 * to send, the field had been un-disabled, and there was no field. Tapping it
+                 * did nothing because there was nothing there to tap.
+                 *
+                 * So the bubbles belong to transcription alone, which is the one wait this
+                 * composer still has no answer to: the words are coming and they are going
+                 * into this box, and a cursor in it invites someone to race their own voice.
+                 */
+                when (voice.phase) {
                     // Both lines carry their own line height, so what fits is arithmetic
                     // rather than whatever the font happens to want.
                     // Taller than the block it sits in, and allowed to be: the rule keeps
@@ -925,11 +935,7 @@ private fun Composer(
                         )
                     }
 
-                    VoicePhase.TRANSCRIBING -> Text(
-                        stringResource(R.string.voice_transcribing),
-                        style = fieldStyle,
-                        color = Areel.Ink40,
-                    )
+                    VoicePhase.TRANSCRIBING -> BubbleField()
 
                     // The field is always here, and the notice sits behind it as a hint.
                     // Replacing the field with the notice was a trap: the only way to clear
