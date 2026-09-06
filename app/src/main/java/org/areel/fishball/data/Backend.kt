@@ -10,6 +10,7 @@ import org.areel.fishball.core.llm.HydrogenClient
 import org.areel.fishball.core.llm.KeyCheck
 import org.areel.fishball.core.memory.PersistentStore
 import org.areel.fishball.core.memory.SnapshotIo
+import org.areel.fishball.core.memory.TurnLogIo
 import org.areel.fishball.core.search.HttpPageReader
 import org.areel.fishball.core.search.SearxngGateway
 import org.areel.fishball.core.trust.loadBundledRegistry
@@ -348,6 +349,9 @@ class Backend private constructor(
          * only offer a way to go on hardcoding the areel deployment by accident.
          */
         private const val MEMORY_FILE = "memory.json"
+
+        /** The conversation, a turn to a line. See [FileTurnLog]. */
+        private const val TURNS_FILE = "turns.jsonl"
         private const val PREFS = "fishball"
         private const val KEY_API = "api_key"
 
@@ -358,7 +362,13 @@ class Backend private constructor(
 
         fun create(context: Context): Backend {
             val app = context.applicationContext
-            return Backend(app, PersistentStore(FileSnapshotIo(File(app.filesDir, MEMORY_FILE))))
+            return Backend(
+                app,
+                PersistentStore(
+                    io = FileSnapshotIo(File(app.filesDir, MEMORY_FILE)),
+                    turnLog = FileTurnLog(File(app.filesDir, TURNS_FILE)),
+                ),
+            )
         }
     }
 }
@@ -373,6 +383,40 @@ data class ModelSwitch(val allowed: Boolean, val compacted: Boolean = false)
  * death midway through a write leaves a truncated file — and that file is the only copy of
  * everything the app has ever learned about this person.
  */
+/**
+ * The conversation on disk, one turn to a line.
+ *
+ * Appending is the whole reason this is not part of the snapshot: a checkpoint costs the turn it
+ * is writing, and the file is opened, extended and closed rather than rebuilt. Measured against
+ * what it replaces, on a real install - a nine-round question rewrote 360KB eleven times, and
+ * half of each rewrite was embeddings that had not changed.
+ *
+ * A half-written last line is the one thing an append can leave behind, and it is survivable by
+ * construction: the reader skips a line it cannot parse, so a torn append costs that one write
+ * and never the file. Compaction goes through the same temp-file-and-rename that [FileSnapshotIo]
+ * uses, because that one is a whole-file replacement and has the truncation window this does not.
+ */
+class FileTurnLog(private val file: File) : TurnLogIo {
+
+    override fun lines(): List<String> =
+        if (file.exists()) file.readLines().filter { it.isNotBlank() } else emptyList()
+
+    override fun append(line: String) {
+        // One line, one call. `appendText` opens in append mode, so nothing already written is
+        // read, rewritten or at risk.
+        file.appendText(line.replace("\n", " ") + "\n")
+    }
+
+    override fun rewrite(lines: List<String>) {
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(lines.joinToString("\n", postfix = if (lines.isEmpty()) "" else "\n"))
+        if (!tmp.renameTo(file)) {
+            file.writeText(tmp.readText())
+            tmp.delete()
+        }
+    }
+}
+
 class FileSnapshotIo(private val file: File) : SnapshotIo {
 
     override fun read(): String? = if (file.exists()) file.readText() else null

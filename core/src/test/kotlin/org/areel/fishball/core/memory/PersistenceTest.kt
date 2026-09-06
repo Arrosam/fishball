@@ -33,8 +33,8 @@ class PersistenceTest {
      */
     @Test
     fun `the working panel comes back with the turn`() {
-        val io = Buffer()
-        PersistentStore(io).appendTurn(
+        val disk = Disk()
+        disk.open().appendTurn(
             ConversationTurn(
                 id = 7,
                 sessionId = 1,
@@ -46,7 +46,7 @@ class PersistenceTest {
             ),
         )
 
-        val back = PersistentStore(Buffer(io.contents)).recentTurns().single()
+        val back = disk.open().recentTurns().single()
         assertEquals("说明书把孕晚期列为禁忌，其余孕期只是慎用。", back.reasoning)
         assertEquals(2, back.steps.size)
         assertTrue(back.steps[1].startsWith("查了："), "the search summary was lost: " + back.steps)
@@ -61,8 +61,8 @@ class PersistenceTest {
      */
     @Test
     fun `the looking comes back with the turn`() {
-        val io = Buffer()
-        PersistentStore(io).appendTurn(
+        val disk = Disk()
+        disk.open().appendTurn(
             ConversationTurn(
                 id = 8,
                 sessionId = 1,
@@ -92,7 +92,7 @@ class PersistenceTest {
             ),
         )
 
-        val back = PersistentStore(Buffer(io.contents)).recentTurns().single()
+        val back = disk.open().recentTurns().single()
         val round = back.rounds.single()
         assertEquals(listOf("toolu_01", "toolu_02"), round.exchanges.map { it.id })
         assertEquals(
@@ -105,10 +105,29 @@ class PersistenceTest {
     }
 
     private class Buffer(var contents: String? = null) : SnapshotIo {
+        /** How many times the whole thing has been written out. The cost being measured. */
+        var writes = 0
+            private set
+
         override fun read() = contents
         override fun write(contents: String) {
             this.contents = contents
+            writes++
         }
+    }
+
+    /**
+     * What an install has on disk: a snapshot and a turn log, which are now two files.
+     *
+     * [open] is reopening the app over the same storage - the only honest way to test that
+     * something written survives, now that where it survives depends on which of the two it
+     * belongs in.
+     */
+    private class Disk(snapshot: String? = null) {
+        val io = Buffer(snapshot)
+        val turns = InMemoryTurnLog()
+
+        fun open() = PersistentStore(io, turns)
     }
 
     private fun turn(id: Long, speaker: Speaker, text: String, shape: AnswerShape? = null) =
@@ -135,13 +154,13 @@ class PersistenceTest {
 
     @Test
     fun `a thread written by one instance is read back by the next`() {
-        val disk = Buffer()
-        PersistentStore(disk).apply {
+        val disk = Disk()
+        disk.open().apply {
             appendTurn(turn(1, Speaker.USER, "iPhone 17 Pro 电池容量多少？"))
             appendTurn(turn(2, Speaker.ASSISTANT, "3582mAh。", AnswerShape.CONFIDENT))
         }
 
-        val reopened = PersistentStore(disk).recentTurns()
+        val reopened = disk.open().recentTurns()
         assertEquals(2, reopened.size)
         assertEquals("iPhone 17 Pro 电池容量多少？", reopened[0].text)
         assertEquals(Speaker.ASSISTANT, reopened[1].speaker)
@@ -154,10 +173,10 @@ class PersistenceTest {
      */
     @Test
     fun `an answer keeps its shape and its citations`() {
-        val disk = Buffer()
-        PersistentStore(disk).appendTurn(turn(1, Speaker.ASSISTANT, "3582mAh。", AnswerShape.CONFIDENT))
+        val disk = Disk()
+        disk.open().appendTurn(turn(1, Speaker.ASSISTANT, "3582mAh。", AnswerShape.CONFIDENT))
 
-        val restored = PersistentStore(disk).recentTurns().single()
+        val restored = disk.open().recentTurns().single()
         assertEquals(AnswerShape.CONFIDENT, restored.shape)
         val source = restored.sources.single()
         assertEquals("苹果官网", source.displayName)
@@ -167,23 +186,23 @@ class PersistenceTest {
 
     @Test
     fun `the order it was said in is the order it comes back`() {
-        val disk = Buffer()
-        PersistentStore(disk).apply {
+        val disk = Disk()
+        disk.open().apply {
             (1L..5L).forEach { appendTurn(turn(it, Speaker.USER, "问题 $it")) }
         }
         assertEquals(
             listOf("问题 1", "问题 2", "问题 3", "问题 4", "问题 5"),
-            PersistentStore(disk).recentTurns().map { it.text },
+            disk.open().recentTurns().map { it.text },
         )
     }
 
     @Test
     fun `only the tail is read back, oldest dropped first`() {
-        val disk = Buffer()
-        PersistentStore(disk).apply {
+        val disk = Disk()
+        disk.open().apply {
             (1L..10L).forEach { appendTurn(turn(it, Speaker.USER, "问题 $it")) }
         }
-        val tail = PersistentStore(disk).recentTurns(limit = 3)
+        val tail = disk.open().recentTurns(limit = 3)
         assertEquals(listOf("问题 8", "问题 9", "问题 10"), tail.map { it.text })
     }
 
@@ -193,13 +212,13 @@ class PersistenceTest {
      */
     @Test
     fun `a file from an older version still loads`() {
-        val old = Buffer(
+        val old = Disk(
             """
             {"world":[],"preferences":[],"idSeq":7,
              "turns":[{"id":1,"sessionId":1,"at":1000,"speaker":"USER","text":"以前问过的"}]}
             """.trimIndent(),
         )
-        val restored = PersistentStore(old).recentTurns().single()
+        val restored = old.open().recentTurns().single()
         assertEquals("以前问过的", restored.text)
         assertNull(restored.shape)
         assertTrue(restored.sources.isEmpty())
@@ -211,16 +230,100 @@ class PersistenceTest {
      */
     @Test
     fun `a corrupt file is survived, not thrown`() {
-        val store = PersistentStore(Buffer("{ this is not json"))
+        val store = Disk("{ this is not json").open()
         assertTrue(store.recentTurns().isEmpty())
         assertNotNull(store.appendTurn(turn(1, Speaker.USER, "还能用吗")))
+    }
+
+    /**
+     * A checkpoint writes the turn it is checkpointing, and nothing else.
+     *
+     * This is the whole reason turns left the snapshot. Measured on a real install before the
+     * split: one nine-round question rewrote the snapshot eleven times at around 360KB a go,
+     * and half of every rewrite was the embeddings on cached facts - which no turn touches.
+     */
+    @Test
+    fun `checkpointing a turn does not rewrite everything else`() {
+        val disk = Disk()
+        val store = disk.open()
+        store.recordWorldFact(
+            WorldFact(
+                id = 1,
+                question = "布洛芬孕妇能吃吗",
+                answer = "孕晚期禁用",
+                ttl = WorldTtl.PERMANENT,
+                tier = Tier.AUTHORITATIVE,
+                embedding = List(1024) { 0.5f },
+                recordedAt = 1000,
+            ),
+        )
+        val settled = disk.io.writes
+
+        // A turn, then eight checkpoints on it, exactly as a nine-round question would.
+        store.appendTurn(turn(2, Speaker.ASSISTANT, "查到了。"))
+        repeat(8) { store.replaceTurn(turn(2, Speaker.ASSISTANT, "查到了。" + "料".repeat(it))) }
+
+        assertEquals(
+            settled,
+            disk.io.writes,
+            "a checkpoint rewrote the snapshot, embeddings and all",
+        )
+        assertEquals(9, disk.turns.lines().size, "the checkpoints did not go to the log")
+        // And what it holds is the last version of the turn, not the first.
+        assertEquals("查到了。" + "料".repeat(7), disk.open().recentTurns().single { it.id == 2L }.text)
+    }
+
+    /**
+     * The one-time move, for the file every install already has.
+     *
+     * Turns used to live in the snapshot. They are read back out of it once, written into the
+     * log, and the snapshot is rewritten without them - after which only one of the two is ever
+     * written to, so they cannot disagree.
+     */
+    @Test
+    fun `turns in an old snapshot move into the log`() {
+        val old = Disk(
+            """
+            {"world":[],"preferences":[],"idSeq":7,
+             "turns":[{"id":1,"sessionId":1,"at":1000,"speaker":"USER","text":"以前问过的"}]}
+            """.trimIndent(),
+        )
+
+        assertEquals("以前问过的", old.open().recentTurns().single().text)
+        assertEquals(1, old.turns.lines().size, "the turn was not moved into the log")
+        assertTrue(
+            old.io.contents?.contains("以前问过的") == false,
+            "the snapshot is still carrying the turn: " + old.io.contents,
+        )
+        // And it is still there on the launch after that, now read from the log alone.
+        assertEquals("以前问过的", old.open().recentTurns().single().text)
+    }
+
+    /**
+     * An append-only file that only ever grows is a different bug, so it does not only grow.
+     *
+     * Amortised against bytes rather than lines: turns differ in size by two orders of magnitude,
+     * so a count of lines says nothing about whether the file has got fat.
+     */
+    @Test
+    fun `the log is written out whole once the appends have outgrown it`() {
+        val disk = Disk()
+        val store = disk.open()
+        val fat = "料".repeat(150_000)
+        repeat(12) { store.replaceTurn(turn(1, Speaker.ASSISTANT, fat)) }
+
+        assertTrue(
+            disk.turns.lines().size < 12,
+            "the log grew a line per checkpoint forever: " + disk.turns.lines().size,
+        )
+        assertEquals(fat, disk.open().recentTurns().single().text, "compaction lost the turn")
     }
 
     /** Ids handed out before a crash must not be handed out again. */
     @Test
     fun `the id sequence never rewinds`() {
-        val disk = Buffer()
-        PersistentStore(disk).apply { (1L..4L).forEach { appendTurn(turn(it, Speaker.USER, "x")) } }
-        assertTrue(PersistentStore(disk).nextId() > 4L)
+        val disk = Disk()
+        disk.open().apply { (1L..4L).forEach { appendTurn(turn(it, Speaker.USER, "x")) } }
+        assertTrue(disk.open().nextId() > 4L)
     }
 }

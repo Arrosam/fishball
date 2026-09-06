@@ -23,10 +23,56 @@ interface SnapshotIo {
     fun write(contents: String)
 }
 
+/**
+ * The conversation log, which is written far more often than everything else put together.
+ *
+ * Measured on a real install: one nine-round question rewrote the whole snapshot eleven times at
+ * around 360KB a go - four megabytes of flash for one answer - and half of every one of those
+ * writes was the embeddings on cached facts, which had not changed, while most of the rest was
+ * thirty-six turns that had not changed either. Only one turn is ever being written.
+ *
+ * So turns live here instead: append one line per write, never rewrite to record a change. A
+ * checkpoint costs the turn it is checkpointing and nothing else. [rewrite] exists because an
+ * append-only file grows without bound - it is the compaction, and the store decides when.
+ *
+ * Lines, not documents, because that is what makes an append an append. What a line contains is
+ * the store's business; this only has to keep them in order and hand them back the same way.
+ */
+interface TurnLogIo {
+    fun lines(): List<String>
+
+    fun append(line: String)
+
+    /** The whole log, replaced by what is actually live. See [PersistentStore]. */
+    fun rewrite(lines: List<String>)
+}
+
+/** For tests and for a store with nowhere to put a log. Holds what it is given, and no more. */
+class InMemoryTurnLog(seed: List<String> = emptyList()) : TurnLogIo {
+    private val written = mutableListOf<String>().apply { addAll(seed) }
+
+    override fun lines(): List<String> = synchronized(this) { written.toList() }
+
+    override fun append(line: String) = synchronized(this) { written.add(line); Unit }
+
+    override fun rewrite(lines: List<String>): Unit = synchronized(this) {
+        written.clear()
+        written.addAll(lines)
+    }
+}
+
 @Serializable
 data class MemorySnapshot(
     val world: List<WorldFactDto> = emptyList(),
     val preferences: List<PreferenceFactDto> = emptyList(),
+    /**
+     * Where turns used to live, and where they are read from once more.
+     *
+     * Not written any more - [PersistentStore] keeps them in a [TurnLogIo] and writes the
+     * snapshot without them. The field stays because every install has a file with turns in it,
+     * and the first launch after this change reads them out of here and into the log. Dropping
+     * it would be dropping everybody's conversation.
+     */
     val turns: List<TurnDto> = emptyList(),
     val idSeq: Long = 0L,
     val session: SessionDto? = null,
@@ -136,26 +182,115 @@ data class CitedSourceDto(
  */
 class PersistentStore(
     private val io: SnapshotIo,
+    /**
+     * Where the conversation goes, separately and by appending. See [TurnLogIo].
+     *
+     * Defaulted so a caller with nothing to persist turns to still gets a working store; `:app`
+     * hands in a file. A store built without one keeps its turns for the life of the process
+     * and no longer, which is the right behaviour for a test and the wrong one for a phone.
+     */
+    private val turnLog: TurnLogIo = InMemoryTurnLog(),
     private val inner: InMemoryStore = InMemoryStore(),
 ) : MemoryStore {
 
+    /**
+     * Bytes appended since the log was last written out whole.
+     *
+     * An append-only file grows by a turn on every checkpoint, so a long question can add its
+     * own size several times over. Compaction is amortised against this rather than against a
+     * count of lines: turns differ in size by two orders of magnitude - a question is a dozen
+     * bytes and a researched answer measured 46KB on a real install - so lines are the wrong
+     * unit for deciding when a file has got fat.
+     */
+    private var appended = 0L
+
     init {
-        io.read()?.takeIf { it.isNotBlank() }?.let { text ->
+        val snapshot = io.read()?.takeIf { it.isNotBlank() }?.let { text ->
             // A corrupt or half-written file must not brick the app. Losing memory is bad;
             // refusing to start is worse, and the log is not the product.
-            runCatching { inner.restore(json.decodeFromString(MemorySnapshot.serializer(), text)) }
+            runCatching {
+                json.decodeFromString(MemorySnapshot.serializer(), text)
+            }.getOrNull()
+        } ?: MemorySnapshot()
+
+        /*
+         * The log wins where it has anything to say.
+         *
+         * Each line is one turn as it stood when it was written, and a turn written twice - a
+         * checkpoint, then the answer that grew out of it - appears twice. Last one wins, and
+         * the map keeps the position of the first, which is what [InMemoryStore.replaceTurn]
+         * does in memory and therefore what replaying the file has to reproduce.
+         */
+        val logged = LinkedHashMap<Long, TurnDto>()
+        turnLog.lines().forEach { line ->
+            runCatching {
+                json.decodeFromString(TurnDto.serializer(), line)
+            }.getOrNull()?.let { logged[it.id] = it }
+        }
+
+        inner.restore(
+            snapshot.copy(turns = if (logged.isEmpty()) snapshot.turns else logged.values.toList()),
+        )
+
+        /*
+         * The one-time move, for a file written before turns had a log of their own.
+         *
+         * Every install has one. Read out of the snapshot, written into the log, and the
+         * snapshot rewritten without them - after which the two never disagree, because only
+         * one of them is written to.
+         */
+        if (logged.isEmpty() && snapshot.turns.isNotEmpty()) {
+            turnLog.rewrite(snapshot.turns.map { json.encodeToString(TurnDto.serializer(), it) })
+            flush()
         }
     }
 
     /**
-     * Synchronised because there are two writers now: the turn appending to the log, and the
-     * memory bus recording what it learned, on its own coroutine. Each call encodes the whole
-     * store and replaces the file, so two of them interleaving would race one full snapshot
-     * against another and let the older one land last.
+     * Everything except the conversation, written out whole.
+     *
+     * Synchronised because there are two writers: the turn appending to the log, and the memory
+     * bus recording what it learned, on its own coroutine. Each call encodes what it is given and
+     * replaces the file, so two of them interleaving would race one full snapshot against another
+     * and let the older one land last.
+     *
+     * Turns are stripped on the way out. They are the half that changes every few seconds and the
+     * half this file cannot afford to carry - see [TurnLogIo] for the measurement.
      */
     private fun flush() = synchronized(this) {
-        runCatching { io.write(json.encodeToString(MemorySnapshot.serializer(), inner.snapshot())) }
+        runCatching {
+            io.write(
+                json.encodeToString(
+                    MemorySnapshot.serializer(),
+                    inner.snapshot().copy(turns = emptyList()),
+                ),
+            )
+        }
         Unit
+    }
+
+    /**
+     * One turn, appended.
+     *
+     * The whole point: a checkpoint writes the turn it is checkpointing, not the store. When the
+     * appends have outgrown what is actually live the file is written out once from memory and
+     * the counter resets, so total IO stays inside a small multiple of what was appended.
+     */
+    private fun record(turn: ConversationTurn) = synchronized(this) {
+        runCatching {
+            val line = json.encodeToString(TurnDto.serializer(), turn.toDto())
+            turnLog.append(line)
+            appended += line.length
+            if (appended > REWRITE_AFTER) compactLog()
+        }
+        Unit
+    }
+
+    /** The log, written out from what is live, and the counter with it. Call under the lock. */
+    private fun compactLog() {
+        turnLog.rewrite(
+            inner.snapshot().turns.map { json.encodeToString(TurnDto.serializer(), it) },
+        )
+        appended = 0
     }
 
     override fun nextId(): Long = inner.nextId()
@@ -198,7 +333,8 @@ class PersistentStore(
         flush()
     }
 
-    override fun appendTurn(turn: ConversationTurn): Long = inner.appendTurn(turn).also { flush() }
+    override fun appendTurn(turn: ConversationTurn): Long =
+        inner.appendTurn(turn).also { record(turn) }
 
     /**
      * Written through like everything else, and that is the point of it.
@@ -209,7 +345,7 @@ class PersistentStore(
      */
     override fun replaceTurn(turn: ConversationTurn) {
         inner.replaceTurn(turn)
-        flush()
+        record(turn)
     }
 
     override fun turnsInSession(sessionId: Long): List<ConversationTurn> = inner.turnsInSession(sessionId)
@@ -232,6 +368,9 @@ class PersistentStore(
 
     override fun clearTurns() {
         inner.clearTurns()
+        // Both, and in this order: the log is what holds the conversation, and the session that
+        // goes with it lives in the snapshot.
+        synchronized(this) { compactLog() }
         flush()
     }
 
@@ -242,6 +381,22 @@ class PersistentStore(
 
     private companion object {
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+        /**
+         * Characters appended before the log is written out whole.
+         *
+         * Characters rather than bytes, which for this app's Chinese is roughly a third of the
+         * file size - the count is a proxy chosen because it is free, and the number is set
+         * against what it actually measures rather than against a round number of megabytes.
+         *
+         * Amortisation, not tidiness. A researched answer measured 414K characters of appends
+         * across its nine checkpoints on a real install, so this compacts about every second
+         * such question, and what it rewrites is the log alone - the turns, not the embeddings.
+         * That holds the total written to a small multiple of what was appended, whatever shape
+         * the conversation takes, while leaving an ordinary short exchange to append and nothing
+         * more.
+         */
+        const val REWRITE_AFTER = 1_000_000L
     }
 }
 
