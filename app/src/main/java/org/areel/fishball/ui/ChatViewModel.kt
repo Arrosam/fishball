@@ -73,24 +73,6 @@ class ChatViewModel(
 
     val messages = mutableStateListOf<ChatMessage>()
 
-    init {
-        /*
-         * Redrawn from the log, not held in memory. The thread the user sees and the record
-         * §9 keeps are the same thing, so closing the app cannot lose one without losing the
-         * other - and reopening it lands them back where they were rather than on a blank
-         * screen that implies the app forgot them.
-         *
-         * With one row left out, when there is one: the half-written answer of a turn the app
-         * was killed in the middle of. Drawn, it would say 「那就先不查了」 above a placeholder
-         * that is plainly still going. It is about to be picked up instead.
-         */
-        val unfinished = backend.conversation?.unfinished()
-        messages += backend.store.recentTurns()
-            .filterNot { it.id == unfinished?.id }
-            .map { it.toMessage(stoppedNotice) }
-        if (unfinished != null) carryOn(unfinished)
-    }
-
     /** Spec §21 — what the app is doing right now, in plain language. */
     val narration = mutableStateListOf<String>()
 
@@ -143,6 +125,36 @@ class ChatViewModel(
     /** The reply as it streams in, before it becomes a message. */
     var streamed by mutableStateOf("")
         private set
+
+    /*
+     * Last, and it has to be.
+     *
+     * An init block runs in declaration order with the property initialisers around it, so
+     * one written at the top of the class runs before `busy`, `narration` and the rest have
+     * backing fields at all. That was survivable while this only appended to [messages],
+     * which is declared above it. It stopped being survivable the moment it also started a
+     * turn: `viewModelScope` dispatches on `Main.immediate` and there is nothing to await
+     * before the first write, so [begin] ran straight through to `busy = true` and took a
+     * NullPointerException on a property that did not exist yet. Found on a device, on the
+     * one launch that matters here - the one with a turn to pick up.
+     */
+    init {
+        /*
+         * Redrawn from the log, not held in memory. The thread the user sees and the record
+         * §9 keeps are the same thing, so closing the app cannot lose one without losing the
+         * other - and reopening it lands them back where they were rather than on a blank
+         * screen that implies the app forgot them.
+         *
+         * With one row left out, when there is one: the half-written answer of a turn the app
+         * was killed in the middle of. Drawn, it would say 「那就先不查了」 above a placeholder
+         * that is plainly still going. It is about to be picked up instead.
+         */
+        val unfinished = backend.conversation?.unfinished()
+        messages += backend.store.recentTurns()
+            .filterNot { it.id == unfinished?.id }
+            .map { it.toMessage(stoppedNotice) }
+        if (unfinished != null) carryOn(unfinished)
+    }
 
     fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
         val question = text.trim()
