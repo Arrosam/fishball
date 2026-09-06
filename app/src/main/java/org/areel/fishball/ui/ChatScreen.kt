@@ -510,6 +510,30 @@ fun ChatScreen(
                 onCamera = attach::takePhoto,
             )
 
+            /*
+             * The stop control, over the send plate rather than in it.
+             *
+             * Placed here rather than inside the composer because a control has to be laid out
+             * where it is tapped: a plate pushed above the bar from inside the bar would be
+             * drawn in the right place and hit-tested in the wrong one. Aligned to the same edge
+             * and the same inset as the send plate, so it comes up directly over it.
+             *
+             * Hidden while the microphone is held - see [WorkingPlate] for why that space has to
+             * be clear.
+             */
+            WorkingPlate(
+                visible = (busy || voice.phase == VoicePhase.TRANSCRIBING) &&
+                    voice.phase != VoicePhase.RECORDING,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 8.dp)
+                    .size(48.dp),
+                onStop = {
+                    vm.stop()
+                    voice.abandon()
+                },
+            )
+
             JumpToEnd(
                 visible = !atTail,
                 modifier = Modifier
@@ -675,9 +699,16 @@ private fun Composer(
     working: Boolean,
     onStop: () -> Unit,
 ) {
-    // With nothing typed there is nothing to send, so the plate is a microphone instead. One
-    // control, two jobs, and never both at once - which is why it can be the same square.
-    val speaking = value.isEmpty() && canSpeak
+    /*
+     * With nothing typed there is nothing to send, so the plate is a microphone instead. One
+     * control, two jobs, and never both at once - which is why it can be the same square.
+     *
+     * Not while the last recording is still being turned into words: a second one started there
+     * would take the microphone from under the sentence already on its way into this field. It
+     * used to be the running turn that closed the plate for both of those, and a running turn is
+     * no longer a reason to close anything - see [WorkingPlate].
+     */
+    val speaking = value.isEmpty() && canSpeak && voice.phase != VoicePhase.TRANSCRIBING
 
     /*
      * There is something written, so the plate is a send button - whatever else is going on.
@@ -702,8 +733,6 @@ private fun Composer(
      */
     val waiting = working || voice.phase == VoicePhase.TRANSCRIBING
 
-    // ...and the plate is the way to call it off only while there is nothing to send instead.
-    val stopping = waiting && !typed
 
     /*
      * The bar is one height, always, and two separate things were moving it.
@@ -991,9 +1020,7 @@ private fun Composer(
                 voice = voice,
                 typed = typed,
                 speaking = speaking,
-                stopping = stopping,
                 onSend = ::submit,
-                onStop = onStop,
             )
         }
     }
@@ -1023,26 +1050,10 @@ private fun SendPlate(
     voice: VoiceState,
     typed: Boolean,
     speaking: Boolean,
-    stopping: Boolean,
     onSend: () -> Unit,
-    onStop: () -> Unit,
 ) {
     val held = voice.phase == VoicePhase.RECORDING
-    // Read here: neither a Canvas nor a semantics block is a composable scope.
-    val stopLabel = stringResource(R.string.stop_turn)
 
-    /*
-     * The fish somebody has already killed.
-     *
-     * A list rather than one, because the animation outlives the state that started it:
-     * the plate stops turning the instant the turn is cancelled, and the fish that was
-     * turning still has a second of falling to do. Keyed by a counter so a second kill
-     * during the first one's fall is its own corpse rather than a restart of it, and
-     * each drops itself out of the list once it is past the bottom of the screen -
-     * which is the whole of the recycling.
-     */
-    val dead = remember { mutableStateListOf<Int>() }
-    var kills by remember { mutableIntStateOf(0) }
     Box(
         Modifier.padding(start = 10.dp).size(48.dp),
         contentAlignment = Alignment.Center,
@@ -1051,23 +1062,11 @@ private fun SendPlate(
     // is the last thing the screen draws, and nothing here clips, so a child that
     // overflows upward lands over the conversation - which is where the light goes.
     CancelBeam(voice)
-    // Drawn from inside the plate and allowed to leave it, the same as the beam above.
-    // Each removes itself once it is past the bottom of the screen.
-    dead.forEach { id ->
-        key(id) { DyingFish(seed = id, onGone = { dead.remove(id) }) }
-    }
     Box(
         Modifier
             .requiredSize(48.dp + TOUCH_SLOP * 2)
             .then(
-                if (stopping) {
-                    // Clicky, and deliberately the same weight as sending: stopping a
-                    // turn is the other irreversible thing this plate does.
-                    Modifier.pressable(Feel.CLICKY, indication = null) {
-                        dead += kills++
-                        onStop()
-                    }
-                } else if (speaking) {
+                if (speaking) {
                     // Held, not tapped - the second line of the indicator promises
                     // that releasing sends, and only a press gesture can keep that
                     // promise. tryAwaitRelease returns on a lifted finger and on a
@@ -1113,10 +1112,8 @@ private fun SendPlate(
                 .background(
                     when {
                         // Held: inverted, so the control that is doing something looks
-                        // pressed rather than merely coloured. Stopping for the same
-                        // reason, and it outranks the dead grey: the plate is not dead
-                        // while a turn runs, it is the way to stop one.
-                        held || stopping -> Areel.Ink
+                        // pressed rather than merely coloured.
+                        held -> Areel.Ink
                         // Nothing written, nothing running and no microphone to offer -
                         // the one arrangement in which this square has no job at all.
                         !typed && !speaking -> Areel.Ink20
@@ -1126,51 +1123,135 @@ private fun SendPlate(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (stopping) {
-                // Turning over, the way a fish does. While there is nothing written the
-                // plate is not a send button - a second recording started here would
-                // take the microphone from under the words still being fetched - and
-                // something that is plainly busy says so better than a greyed-out
-                // square. The moment anything is typed it goes back to being the send
-                // plate, because there is then something to send.
-                val turning = rememberInfiniteTransition(label = "fish")
-                val face by turning.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 360f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(FLIP_MS, easing = LinearEasing),
-                    ),
-                    label = "flip",
-                )
-                FishMark(
-                    // The eye is dropped: past a quarter turn the mark is mirrored,
-                    // and an eye that swaps ends reads as a fault rather than a fish.
-                    modifier = Modifier
-                        .size(24.dp)
-                        .graphicsLayer { rotationY = face }
-                        .semantics {
-                            contentDescription = stopLabel
-                            role = Role.Button
-                        },
-                    body = Areel.Paper,
-                    eye = null,
-                )
-            } else {
-                Icon(
-                    painter = painterResource(
-                        if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
-                    ),
-                    contentDescription = stringResource(
-                        if (speaking) R.string.voice_hold else R.string.send,
-                    ),
-                    tint = if (typed || speaking) Areel.Paper else Areel.Ink40,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
+            Icon(
+                painter = painterResource(
+                    if (speaking) R.drawable.ic_mic else R.drawable.ic_send,
+                ),
+                contentDescription = stringResource(
+                    if (speaking) R.string.voice_hold else R.string.send,
+                ),
+                tint = if (typed || speaking) Areel.Paper else Areel.Ink40,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
     }
 }
+
+/**
+ * The way to call off whatever is running, riding above the send plate rather than replacing it.
+ *
+ * It used to *be* the send plate: for the length of a turn that square turned over into a fish
+ * and the microphone went with it, so a turn in flight meant no voice input - the one form of
+ * input somebody is most likely to want when their hands are busy enough to have put the phone
+ * down. Two jobs on one square was the whole problem, so now there are two squares.
+ *
+ * It comes up out of the bar rather than appearing over it. Sliding is what makes it read as a
+ * second control arriving, where a fade reads as the first one changing its mind - and the same
+ * movement in reverse is what makes it plainly *gone* rather than merely disabled.
+ *
+ * And it goes away while the microphone is held. [CancelBeam] grows upward out of the plate into
+ * exactly this space, so a fish parked there would be lit from below by the thing that means
+ * *slide up to cancel* - two upward affordances, one of them a lie. Nothing is cancellable by
+ * tapping mid-recording anyway: the gesture owns the finger.
+ */
+@Composable
+private fun WorkingPlate(visible: Boolean, modifier: Modifier, onStop: () -> Unit) {
+    /*
+     * The fish somebody has already killed.
+     *
+     * A list rather than one, because the animation outlives the state that started it: the
+     * plate stops turning the instant the turn is cancelled, and the fish that was turning still
+     * has a second of falling to do. Keyed by a counter so a second kill during the first one's
+     * fall is its own corpse rather than a restart of it, and each drops itself out of the list
+     * once it is past the bottom of the screen - which is the whole of the recycling.
+     */
+    val dead = remember { mutableStateListOf<Int>() }
+    var kills by remember { mutableIntStateOf(0) }
+    // Read here: neither a Canvas nor a semantics block is a composable scope.
+    val stopLabel = stringResource(R.string.stop_turn)
+
+    /*
+     * How far out it is, and the asymmetry is deliberate.
+     *
+     * Sprung on the way up, the same spring the attach plates come out on, because arriving is
+     * the moment worth giving weight to. Eased on the way back, because an overshoot on the way
+     * out would bounce the plate *away* from the bar it is supposed to be disappearing into.
+     */
+    val out = remember { Animatable(0f) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            out.animateTo(1f, spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow))
+        } else {
+            out.animateTo(0f, tween(durationMillis = ATTACH_EXIT_MS.toInt(), easing = EaseMech))
+        }
+    }
+    // Nothing at all when it is fully home, so it cannot take a tap meant for the bar under it -
+    // unless a fish is still falling, which outlives the plate that dropped it by about a second.
+    if (out.value < 0.01f && dead.isEmpty()) return
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        // Allowed to leave the plate, and each removes itself once it is past the bottom of the
+        // screen.
+        dead.forEach { id ->
+            key(id) { DyingFish(seed = id, onGone = { dead.remove(id) }) }
+        }
+        Box(
+            Modifier
+                // Laid out, not drawn, so the enlarged press area travels with it. A plate moved
+                // by graphicsLayer would be tappable where it used to be.
+                .offset { IntOffset(0, ((1f - out.value) * WORKING_RISE.toPx()).toInt()) }
+                .graphicsLayer {
+                    alpha = out.value.coerceIn(0f, 1f)
+                    scaleX = 0.86f + 0.14f * out.value
+                    scaleY = 0.86f + 0.14f * out.value
+                }
+                .shadow(6.dp, clip = false, ambientColor = Areel.Ink, spotColor = Areel.Ink)
+                .size(48.dp)
+                .background(Areel.Ink, RectangleShape)
+                // Clicky, and deliberately the same weight as sending: stopping a turn is the
+                // other irreversible thing this bar does. Off once it is on its way home, so a
+                // plate nobody can see cannot be pressed.
+                .pressable(Feel.CLICKY, enabled = visible, indication = null) {
+                    dead += kills++
+                    onStop()
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            // Turning over, the way a fish does.
+            val turning = rememberInfiniteTransition(label = "fish")
+            val face by turning.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(FLIP_MS, easing = LinearEasing),
+                ),
+                label = "flip",
+            )
+            FishMark(
+                // The eye is dropped: past a quarter turn the mark is mirrored, and an eye that
+                // swaps ends reads as a fault rather than a fish.
+                modifier = Modifier
+                    .size(24.dp)
+                    .graphicsLayer { rotationY = face }
+                    .semantics {
+                        contentDescription = stopLabel
+                        role = Role.Button
+                    },
+                body = Areel.Paper,
+                eye = null,
+            )
+        }
+    }
+}
+
+/**
+ * How far below its resting place the working plate starts.
+ *
+ * Its own height plus the gap, so it begins exactly behind the bar and is not seen until it
+ * clears it - the plate rises out of the composer rather than fading in above it.
+ */
+private val WORKING_RISE = 56.dp
 
 /**
  * More than any single message can be tall. Handed to scrollBy after landing on the last item,
