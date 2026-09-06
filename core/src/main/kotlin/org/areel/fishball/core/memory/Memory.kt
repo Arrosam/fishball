@@ -231,6 +231,16 @@ data class ToolRound(
      * about the allergy.
      */
     val known: List<String> = emptyList(),
+    /**
+     * What the person said while this round was running.
+     *
+     * A message typed mid-turn is not a new question - it is a correction to the one already
+     * being worked on - so it is delivered into the loop at the seam after the round it arrived
+     * during, and it belongs to that round for the same reason [known] does. Replayed there, a
+     * later turn reads the conversation in the order it actually happened: the searching, the
+     * interruption, and what the searching did about it.
+     */
+    val said: List<String> = emptyList(),
 )
 
 /** One tool call and its result, as they went over the wire. */

@@ -627,6 +627,29 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
 """.trim()
 
     /**
+     * Something the person said while the turn was still working.
+     *
+     * Not a new question, and it has to be framed as not being one. Sent mid-turn it used to
+     * stop the loop and start another, and the model read the abandoned half as a task that was
+     * over - it began again from nothing, having thrown away six searches it could still see.
+     * Delivered into the running loop instead, the framing is the whole job: this changes what
+     * you are doing, it does not replace it, and everything already found still counts.
+     *
+     * Placed with the tool results rather than as a turn of its own, for the same reason
+     * memory's block is: a user turn between an assistant's tool_use and its tool_result is a
+     * thread the provider is entitled to reject.
+     */
+    fun steered(said: List<String>): String = buildString {
+        appendLine("他刚刚插了一句：")
+        said.forEach { appendLine("「" + it + "」") }
+        append(
+            "这不是另一个问题，是对你正在做的这件事的补充。" +
+                "接下来按它调整：该换方向就换，该缩小范围就缩小。" +
+                "已经查到的东西还算数，别从头来。",
+        )
+    }
+
+    /**
      * The folded part of the conversation, as the model is handed it.
      *
      * Tagged rather than run in as prose, which is DSH's shape and worth copying for two
@@ -854,6 +877,9 @@ object UiCopy {
 
         /** §10's lookup, as a step of its own: the one memory call that runs before the model acts. */
         const val RECALLING = "在回忆……"
+
+        /** Something said mid-turn, landing in the loop rather than starting a new one. */
+        const val STEERED = "记下你刚说的，接着这条来……"
 
         /** What the lookup found, said when it reaches the model rather than when it returns. */
         fun recalled(count: Int): String = if (count == 0) "没想起相关的事" else "想起了 $count 件事"

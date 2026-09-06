@@ -152,13 +152,32 @@ class ChatViewModel(
         val unfinished = backend.conversation?.unfinished()
         messages += backend.store.recentTurns()
             .filterNot { it.id == unfinished?.id }
-            .map { it.toMessage(stoppedNotice) }
+            .flatMap { it.toMessages(stoppedNotice) }
         if (unfinished != null) carryOn(unfinished)
     }
 
     fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
         val question = text.trim()
         if (question.isEmpty()) return
+
+        /*
+         * Offered to the turn already running before it is treated as a new one.
+         *
+         * A message typed mid-turn almost never means "forget that, here is another question" -
+         * it means "not like that". Taken as a new question it stopped the loop and started
+         * again, and the model read the half it had abandoned as finished work: it re-searched
+         * what was already on its own context. Handed into the loop instead, the turn carries on
+         * from what it has found with the correction in front of it.
+         *
+         * Pictures are the one thing that cannot go this way - the turn's images were fixed when
+         * it started - so a message carrying one is a new question, which is what it looks like
+         * anyway.
+         */
+        if (images.isEmpty() && backend.conversation?.steer(question) == true) {
+            messages += ChatMessage(fromUser = true, text = question)
+            return
+        }
+
         begin(
             asked = ChatMessage(
                 fromUser = true,
@@ -313,6 +332,18 @@ class ChatViewModel(
                         backend.alert.bubble()
                         if (!watching) backend.alert.answered(reply.text)
                     }
+                }
+
+                /*
+                 * Anything steered in that the loop finished before it could read.
+                 *
+                 * [Conversation.steer] accepts while the loop is running, and the loop can reach
+                 * its answer before the next seam - so a message can be taken and then have
+                 * nowhere to land. It is already in the thread, the person watched it appear, so
+                 * it is asked as the question it will now have to be.
+                 */
+                backend.conversation?.undelivered()?.takeIf { it.isNotEmpty() }?.let { missed ->
+                    send(missed.joinToString(" "))
                 }
             } catch (stopped: CancellationException) {
                 // Said out loud, because the alternative is a question sitting in the thread
@@ -469,6 +500,19 @@ private fun Reply.toMessage() = ChatMessage(
  * a bubble with nothing in it under a panel full of working, which reads as a bug rather than as
  * the turn somebody stopped.
  */
+/**
+ * One logged turn, as the bubbles it is drawn with - usually one, sometimes more.
+ *
+ * More when the person said something while the turn was running. Those live inside the round
+ * they arrived during, because that is where the model has to read them, but on screen they were
+ * bubbles of their own and have to come back as bubbles of their own - before the answer, since
+ * that is when they were said. Without this, reopening the app showed an answer that visibly
+ * responded to something nobody could see having been asked.
+ */
+private fun ConversationTurn.toMessages(stopped: String): List<ChatMessage> =
+    rounds.flatMap { round -> round.said }.map { ChatMessage(fromUser = true, text = it) } +
+        toMessage(stopped)
+
 private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     fromUser = speaker == Speaker.USER,
     // Stripped, because a build that stamped assistant turns on the way to the model taught it

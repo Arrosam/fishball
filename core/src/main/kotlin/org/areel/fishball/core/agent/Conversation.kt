@@ -125,6 +125,17 @@ class Conversation(
     private var lastFailure: String? = null
 
     /**
+     * Things said while a turn was running, waiting for the next seam to be handed over at.
+     *
+     * Guarded by its own lock rather than the store's: it is written from whichever thread the
+     * screen is on and drained from the one the loop is on, and those are never the same.
+     */
+    private val interjected = mutableListOf<String>()
+
+    /** Whether [converse] is in its loop and will therefore reach another seam. */
+    private var looping = false
+
+    /**
      * The row a turn is writing to right now, or null between turns.
      *
      * [abandon] exists to take the resume offer off whatever a newer event has superseded, and
@@ -400,6 +411,49 @@ class Conversation(
             .forEach { store.replaceTurn(it.copy(inFlight = false)) }
     }
 
+    /**
+     * Something said while the turn is still working, delivered into it rather than after it.
+     *
+     * This is what a mid-turn message should do and for a long time did not. Sending one used to
+     * stop the loop and start another, and the model read the abandoned half as a task that was
+     * over: it began again from nothing, having thrown away six searches that were still sitting
+     * in its own context. What the person meant was 「not that, this」, and what they got was a
+     * different conversation.
+     *
+     * So the message joins the turn. It lands at the next seam between rounds - the same place
+     * memory's block lands, and for the same reason: a user turn between an assistant's tool_use
+     * and its tool_result is a thread the provider may reject. The loop carries on with
+     * everything it has already found and the correction in front of it. See
+     * [AgentPrompt.steered] for how it is framed, which is most of the work.
+     *
+     * False when there is no loop to join, which is the caller's signal to ask it as a question
+     * instead. There is a race under that - the turn can finish between this returning true and
+     * the seam being reached - and [undelivered] is how the caller closes it.
+     */
+    fun steer(said: String): Boolean {
+        val text = said.trim()
+        if (text.isEmpty()) return false
+        synchronized(interjected) {
+            if (!looping) return false
+            interjected += text
+            return true
+        }
+    }
+
+    /**
+     * Anything [steer] accepted that never reached the model, taken back.
+     *
+     * The turn can reach its answer before the next seam, and a message that was accepted into a
+     * loop that then ended has to go somewhere - it was said, and the person watched it appear
+     * in the thread. Drained, so the caller can ask it as an ordinary question and it cannot be
+     * delivered twice.
+     */
+    fun undelivered(): List<String> = synchronized(interjected) {
+        val left = interjected.toList()
+        interjected.clear()
+        left
+    }
+
     /** One turn, start to finish. [ask] wraps it to keep the bus out of its way. */
     private suspend fun turn(
         userText: String,
@@ -573,6 +627,18 @@ class Conversation(
         recalled: Deferred<Remembered>,
         /** Where each round is written down as it finishes. See [Answering]. */
         answering: Answering,
+    ): Reply = try {
+        talk(userText, progress, recalled, answering)
+    } finally {
+        // No loop, no seam: anything said from here is a question, not a correction.
+        synchronized(interjected) { looping = false }
+    }
+
+    private suspend fun talk(
+        userText: String,
+        progress: TurnProgress,
+        recalled: Deferred<Remembered>,
+        answering: Answering,
     ): Reply {
         // Insertion-ordered, so the numbering the model sees is stable across rounds - [3] in
         // round two is the same page it was in round one.
@@ -585,6 +651,8 @@ class Conversation(
         // Seeded from the rounds a resumed turn is carrying, or the guard would start empty on
         // exactly the turn most likely to be stuck in a loop already.
         val tried = Tried().apply { recall(rounds) }
+        // From here to the answer there is a seam to deliver at, so [steer] may accept.
+        synchronized(interjected) { looping = true }
 
         // The question goes out without waiting for memory; what memory finds arrives below.
         thread += withImage(
@@ -807,10 +875,23 @@ class Conversation(
             val latched = !spinning && futile >= FUTILE_LIMIT
             if (latched) spinning = true
 
+            // Whatever was said while that round was running. The seam is the first moment it
+            // can go in without splitting a tool call from its result. See [steer].
+            val said = synchronized(interjected) {
+                val queued = interjected.toList()
+                interjected.clear()
+                queued
+            }
+            if (said.isNotEmpty()) progress.step(UiCopy.Narration.STEERED)
+
             thread += LlmMessage(
                 LlmMessage.Role.USER,
                 results +
                     listOfNotNull(late?.let { LlmContent.Text(knownBlock(it)) }) +
+                    listOfNotNull(
+                        said.takeIf { it.isNotEmpty() }
+                            ?.let { LlmContent.Text(AgentPrompt.steered(it)) },
+                    ) +
                     // Once, on the round it happens. The tools going away is what ends the loop;
                     // this is why, so the model does not narrate it as a broken search.
                     listOfNotNull(
@@ -827,6 +908,7 @@ class Conversation(
                 // And why it asked for them. Inside the turn this rides along in [result.raw];
                 // across turns it only survives if it is written down here.
                 thinking = thoughtIn(result.raw),
+                said = said,
             )
             // And on the record before the next round is asked for, so a turn stopped from here
             // on keeps everything it has already done. See [Answering].
@@ -1746,6 +1828,9 @@ class Conversation(
                     round.exchanges.map { LlmContent.ToolResult(it.id, it.result, it.isError) } +
                         listOfNotNull(
                             round.known.takeIf { it.isNotEmpty() }?.let { LlmContent.Text(knownBlock(it)) },
+                            round.said.takeIf { it.isNotEmpty() }?.let {
+                                LlmContent.Text(AgentPrompt.steered(it))
+                            },
                         ),
                 ),
             )

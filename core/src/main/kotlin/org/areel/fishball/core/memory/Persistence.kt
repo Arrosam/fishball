@@ -153,6 +153,7 @@ data class ToolRoundDto(
     // Defaulted like the rest: a log written before a round's own reasoning was kept replays
     // its rounds as it always did, with the calls and none of the thinking behind them.
     val thinking: String = "",
+    val said: List<String> = emptyList(),
 )
 
 @Serializable
@@ -450,6 +451,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
             },
             known = round.known,
             thinking = round.thinking,
+            said = round.said,
         )
     },
     inFlight,
@@ -472,6 +474,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
             },
             known = round.known,
             thinking = round.thinking,
+            said = round.said,
         )
     },
     inFlight = inFlight,
