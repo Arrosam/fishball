@@ -144,6 +144,7 @@ data class TurnDto(
     // Defaulted false, which is the right reading of a log written before this existed: whatever
     // those turns were, nothing is going to resume them now.
     val inFlight: Boolean = false,
+    val steered: Boolean = false,
 )
 
 @Serializable
@@ -223,26 +224,58 @@ class PersistentStore(
          * does in memory and therefore what replaying the file has to reproduce.
          */
         val logged = LinkedHashMap<Long, TurnDto>()
+        // What each id's winning line costs, against what the file costs in total: the
+        // difference is dead weight, and it is what [appended] has to start from. Counted here
+        // because it is the one place the file is already being walked.
+        val live = HashMap<Long, Int>()
+        var onDisk = 0L
         turnLog.lines().forEach { line ->
+            onDisk += line.length
             runCatching {
                 json.decodeFromString(TurnDto.serializer(), line)
-            }.getOrNull()?.let { logged[it.id] = it }
+            }.getOrNull()?.let {
+                logged[it.id] = it
+                live[it.id] = line.length
+            }
         }
 
+        /*
+         * Both, by id, rather than whichever happens to be non-empty.
+         *
+         * The gate used to be `if (logged.isEmpty())`, which is an all-or-nothing test against
+         * an all-or-nothing load - and the two states in between are the dangerous ones. A log
+         * that came back with three of its thirty-six lines (a rename that landed before the
+         * data did) made the snapshot's copy unreachable, and the next flush - which strips
+         * turns unconditionally - deleted it. In the other direction, a `clearTurns` whose
+         * second write was lost left exactly the state the old gate read as "needs migrating",
+         * and restored a conversation the user had deleted.
+         *
+         * A union cannot do either. The log wins where both have an id, because it is the half
+         * that is still written to; anything only the snapshot has is a turn that has not been
+         * moved across yet, whatever the reason.
+         */
+        val merged = LinkedHashMap<Long, TurnDto>()
+        snapshot.turns.forEach { merged[it.id] = it }
+        logged.forEach { (id, turn) -> merged[id] = turn }
+
         inner.restore(
-            snapshot.copy(turns = if (logged.isEmpty()) snapshot.turns else logged.values.toList()),
+            // By id, which is the order they were created in. The two sources are each ordered
+            // among themselves and cannot be interleaved by insertion alone.
+            snapshot.copy(turns = merged.values.sortedBy { it.id }),
         )
 
-        /*
-         * The one-time move, for a file written before turns had a log of their own.
-         *
-         * Every install has one. Read out of the snapshot, written into the log, and the
-         * snapshot rewritten without them - after which the two never disagree, because only
-         * one of them is written to.
-         */
-        if (logged.isEmpty() && snapshot.turns.isNotEmpty()) {
-            turnLog.rewrite(snapshot.turns.map { json.encodeToString(TurnDto.serializer(), it) })
+        // Anything the log is missing, written across, and the snapshot rewritten without it.
+        // Runs on the first launch after the split for every install, and again only if a write
+        // was lost in between.
+        if (merged.size != logged.size) {
+            compactLog()
             flush()
+        } else {
+            // The waste already on disk, so a log that arrives fat is compacted on its first
+            // write rather than being allowed to double first. A counter that started at zero
+            // every launch meant the ordinary two-questions-and-close session never reached the
+            // threshold, and nothing ever shrank the file.
+            appended = onDisk - live.values.sumOf { it.toLong() }
         }
     }
 
@@ -334,8 +367,9 @@ class PersistentStore(
         flush()
     }
 
-    override fun appendTurn(turn: ConversationTurn): Long =
+    override fun appendTurn(turn: ConversationTurn): Long = synchronized(this) {
         inner.appendTurn(turn).also { record(turn) }
+    }
 
     /**
      * Written through like everything else, and that is the point of it.
@@ -344,7 +378,7 @@ class PersistentStore(
      * round on a turn that is doing real work - paid deliberately, because the alternative is
      * that a turn interrupted after twenty rounds of searching left nothing behind at all.
      */
-    override fun replaceTurn(turn: ConversationTurn) {
+    override fun replaceTurn(turn: ConversationTurn) = synchronized(this) {
         inner.replaceTurn(turn)
         record(turn)
     }
@@ -367,11 +401,21 @@ class PersistentStore(
 
     override fun turnBytes(): Long = inner.turnBytes()
 
-    override fun clearTurns() {
+    /*
+     * All three turn writes hold the lock across the memory change *and* the file change.
+     *
+     * They used to mutate `inner` first and take the lock afterwards, which left a window the
+     * width of a whole method between them. Clearing the history from a click handler while the
+     * agent checkpointed on IO could interleave as: IO mutates memory, main clears memory and
+     * empties the log, IO appends its line to the now-empty file. Memory said nothing was left
+     * and the file said one turn was, and the next launch believes the file - so a deleted
+     * conversation came back, pointing at photographs `forgetAll` had already removed.
+     */
+    override fun clearTurns() = synchronized(this) {
         inner.clearTurns()
         // Both, and in this order: the log is what holds the conversation, and the session that
         // goes with it lives in the snapshot.
-        synchronized(this) { compactLog() }
+        compactLog()
         flush()
     }
 
@@ -455,6 +499,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
         )
     },
     inFlight,
+    steered,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -478,6 +523,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
         )
     },
     inFlight = inFlight,
+    steered = steered,
     sources = sources.map {
         CitedSource(
             url = it.url,

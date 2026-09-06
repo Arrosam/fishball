@@ -398,14 +398,38 @@ data class ModelSwitch(val allowed: Boolean, val compacted: Boolean = false)
  */
 class FileTurnLog(private val file: File) : TurnLogIo {
 
+    /*
+     * Streamed, not slurped twice.
+     *
+     * `readLines().filter{}` built the whole file as a list and then built a second list from
+     * it, and the caller decodes each line into a DTO on top of that - three copies of a log
+     * that is read on the main thread at launch. `useLines` keeps one line in hand at a time
+     * and closes the file whatever happens.
+     */
     override fun lines(): List<String> =
-        if (file.exists()) file.readLines().filter { it.isNotBlank() } else emptyList()
+        if (!file.exists()) emptyList() else file.useLines { it.filterNot(String::isBlank).toList() }
 
     override fun append(line: String) {
-        // One line, one call. `appendText` opens in append mode, so nothing already written is
-        // read, rewritten or at risk.
+        /*
+         * One line, one call - but never onto the remains of a torn one.
+         *
+         * `appendText` writes at whatever byte the file currently ends on, so a write that died
+         * halfway leaves a line with no terminator and the *next* append is glued to it. That
+         * merged line parses as neither turn, so an interrupted write took a complete, innocent
+         * turn down with it - the opposite of what this class used to claim. One byte read is
+         * enough to refuse to do that.
+         */
+        if (file.exists() && file.length() > 0 && !endsCleanly()) file.appendText("\n")
         file.appendText(line.replace("\n", " ") + "\n")
     }
+
+    /** Whether the last write finished. See [append]. */
+    private fun endsCleanly(): Boolean = runCatching {
+        java.io.RandomAccessFile(file, "r").use {
+            it.seek(it.length() - 1)
+            it.read() == '\n'.code
+        }
+    }.getOrDefault(false)
 
     override fun rewrite(lines: List<String>) {
         val tmp = File(file.parentFile, "${file.name}.tmp")
