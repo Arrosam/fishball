@@ -55,12 +55,18 @@ class SteeringTest {
 
         assertEquals("儿童要看年龄。", reply.text)
 
-        // One turn, not two: the question keeps its row and there is exactly one answer.
+        // One turn, not two: exactly one answer, however many things were said into it.
+        val logged = store.recentTurns()
         assertEquals(
-            listOf(Speaker.USER, Speaker.ASSISTANT),
-            store.recentTurns().map { it.speaker },
-            "the interjection started a second turn: " + store.recentTurns().map { it.text },
+            1,
+            logged.count { it.speaker == Speaker.ASSISTANT },
+            "the interjection started a second turn: " + logged.map { it.text },
         )
+        // And the interjection is a row of its own, marked so the replay leaves it to the round
+        // that carries it - see ConversationTurn.steered.
+        val noted = logged.single { it.steered }
+        assertEquals("别查孕妇了，就说儿童", noted.text)
+        assertEquals(Speaker.USER, noted.speaker)
 
         // And it arrived with the tool results of the round it was said during, not as a
         // question of its own.
@@ -89,7 +95,7 @@ class SteeringTest {
             conversation.ask("布洛芬孕妇能吃吗")
         }
 
-        val answer = store.recentTurns().last()
+        val answer = store.recentTurns().last { it.speaker == Speaker.ASSISTANT }
         assertEquals(1, answer.rounds.size, "the round the turn had done was thrown away")
         assertTrue(
             HIT_URL in answer.rounds.single().exchanges.single().result,

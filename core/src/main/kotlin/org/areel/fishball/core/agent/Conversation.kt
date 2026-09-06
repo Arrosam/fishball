@@ -304,7 +304,7 @@ class Conversation(
         // ends, however the turn ends. See [MemoryBus.turnStarted].
         memory.turnStarted()
         try {
-            return turn(userText, progress, images)
+            return turn(userText, progress, images, askedId = store.nextId())
         } finally {
             memory.turnEnded()
         }
@@ -389,7 +389,7 @@ class Conversation(
         }
         memory.turnStarted()
         try {
-            return turn(asked.text, progress, images, resuming = answer)
+            return turn(asked.text, progress, images, resuming = answer, askedId = asked.id)
         } finally {
             memory.turnEnded()
         }
@@ -433,11 +433,35 @@ class Conversation(
     fun steer(said: String): Boolean {
         val text = said.trim()
         if (text.isEmpty()) return false
+        val open = session ?: return false
         synchronized(interjected) {
             if (!looping) return false
             interjected += text
-            return true
         }
+        /*
+         * Written down at the moment it is accepted, not at the seam it is delivered at.
+         *
+         * It lived only in memory until the round closed, so a process killed in between lost it
+         * entirely - and the turn it was correcting was then resumed and carried on doing the
+         * thing it had been told to stop. It is a row like any other now, which also gives it
+         * back the three things it had quietly lost by being only a field on a round: §9 files
+         * it, `read_log` can find it, and the thread redraws it after a restart.
+         *
+         * Marked, so [replay] does not hand the model the same sentence twice - the round it
+         * landed in already carries it, at the point it actually arrived.
+         */
+        store.appendTurn(
+            ConversationTurn(
+                id = store.nextId(),
+                sessionId = open.id,
+                at = now(),
+                speaker = Speaker.USER,
+                text = text,
+                steered = true,
+            ),
+        )
+        memory.noteUser(text)
+        return true
     }
 
     /**
@@ -467,9 +491,30 @@ class Conversation(
          * the question in the thread twice.
          */
         resuming: ConversationTurn? = null,
+        /**
+         * The id of this turn's own question row.
+         *
+         * Everything this turn writes - the question, the row its answer goes in, and any
+         * message steered into it - is allocated at or after this, and history is below it. That
+         * is what [priorTurns] needs: dropping a fixed number off the end stopped working the
+         * moment a turn could write a third row of its own, and dropped the question instead.
+         */
+        askedId: Long,
     ): Reply = coroutineScope {
         val recording = Recording(progress, said = resuming?.steps.orEmpty())
         val at = resuming?.at ?: now()
+
+        /*
+         * Open for steering from here, not from the loop.
+         *
+         * It used to open inside [talk], which is after the question is written, after the first
+         * checkpoint, and after [rollSession] - which begins with a compaction that this file
+         * measures at twenty to forty seconds. Somebody typing five seconds after sending, while
+         * the panel says only 折叠中, was refused and got the hard cancel-and-restart this whole
+         * mechanism exists to remove. Nothing before the first seam needs the loop to exist; it
+         * only needs the turn to.
+         */
+        synchronized(interjected) { looping = true }
 
         /*
          * Both rows on the record before anything long happens, and that ordering is the whole
@@ -496,7 +541,7 @@ class Conversation(
             abandon()
             store.appendTurn(
                 ConversationTurn(
-                    store.nextId(), session!!.id, at, Speaker.USER, userText,
+                    askedId, session!!.id, at, Speaker.USER, userText,
                     images = images.mapNotNull { it.handle },
                 ),
             )
@@ -521,10 +566,9 @@ class Conversation(
 
         attached = images
         lastFailure = null
-        // Rebuilt from the log every turn, so nothing an earlier turn left behind survives. The
-        // last two are always this turn's own - the question, which [converse] puts back, and
-        // the row being written into - so they are never history.
-        thread = (bridgeMessage() + priorTurns()).toMutableList()
+        // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
+        // Everything this turn has written is left out by id - see [askedId].
+        thread = (bridgeMessage() + priorTurns(before = askedId)).toMutableList()
 
         /*
          * §10 — what is already known, started here and read later.
@@ -556,7 +600,7 @@ class Conversation(
         // of the model on a turn that answered before the lookup came back.
         recording.step(UiCopy.Narration.RECALLING)
         val recalled = async {
-            catching { recall(userText, at, hasPicture = images.isNotEmpty()) }
+            catching { recall(userText, at, images.isNotEmpty(), before = askedId) }
                 .getOrDefault(Remembered.NOTHING)
         }
         val reply = try {
@@ -573,12 +617,25 @@ class Conversation(
              */
             answering.checkpoint()
             answering.released()
+            /*
+             * And whatever was steered into it but never reached the model.
+             *
+             * The queue outlives the turn - this object is the app's, not the screen's - so a
+             * correction accepted into a turn the user then stopped used to sit there until some
+             * later, unrelated question opened a loop, and was handed to *that* model as a
+             * correction to something it had never been asked. Stopping a turn abandons its
+             * corrections along with it; the text is still a row in the log and still on screen,
+             * because [steer] wrote it down.
+             */
+            synchronized(interjected) { interjected.clear() }
             throw stopped
         } finally {
             // Whatever is left of it is work nobody is waiting for: the turn is over, and this
             // scope would otherwise sit here until a lookup for an answer already on screen
             // finished. A completed one ignores this.
             recalled.cancel()
+            // No turn, no seam: anything said from here is a question, not a correction.
+            synchronized(interjected) { looping = false }
         }
 
         // §10 — and the answer, once there is one. Launched, not awaited: the reply is
@@ -627,12 +684,7 @@ class Conversation(
         recalled: Deferred<Remembered>,
         /** Where each round is written down as it finishes. See [Answering]. */
         answering: Answering,
-    ): Reply = try {
-        talk(userText, progress, recalled, answering)
-    } finally {
-        // No loop, no seam: anything said from here is a question, not a correction.
-        synchronized(interjected) { looping = false }
-    }
+    ): Reply = talk(userText, progress, recalled, answering)
 
     private suspend fun talk(
         userText: String,
@@ -774,6 +826,16 @@ class Conversation(
                  * the facts are still in the store, so the next question finds them. What is
                  * lost is the one turn, not the memory.
                  */
+                /*
+                 * No more seams from here, so nothing more may be accepted.
+                 *
+                 * The flag used to stay up until the whole turn unwound, which meant every
+                 * message typed while an answer streamed was accepted into a loop that had
+                 * already stopped looking at the queue - so the hand-back was not covering a
+                 * rare race, it was the ordinary case. Shut here, `steer` returns false and the
+                 * caller asks it as the question it is going to have to be anyway.
+                 */
+                synchronized(interjected) { looping = false }
                 val sources = cite(seen.values.toList(), verified)
                 // §R7. Read off the call rather than inferred from the tiers: whether two
                 // pages contradict each other is the one judgement only something that has
@@ -1282,7 +1344,13 @@ class Conversation(
      * Serving a stale near-miss as though it were the answer is the failure all of this guards
      * against, and it is worse than searching again.
      */
-    private suspend fun recall(question: String, at: Long, hasPicture: Boolean): Remembered {
+    private suspend fun recall(
+        question: String,
+        at: Long,
+        hasPicture: Boolean,
+        /** This turn's own rows, which are not context for the question they belong to. */
+        before: Long,
+    ): Remembered {
         // No embedding model reachable: fall back to word overlap, which finds a cached answer
         // only when the question is asked in nearly the same words. A floor, not a search.
         val engine = retrieval ?: return Remembered(listOfNotNull(store.recallWorldFact(question, at)))
@@ -1307,7 +1375,7 @@ class Conversation(
         val wanted = if (expert) {
             memory.terms(
                 question,
-                priorTurns().takeLast(CLASSIFY_CONTEXT_TURNS),
+                priorTurns(before = before).takeLast(CLASSIFY_CONTEXT_TURNS),
                 hasPicture = hasPicture,
             )
         } else {
@@ -1763,11 +1831,12 @@ class Conversation(
      * The final entry is dropped: it is the question being answered right now, already written
      * into this turn's own prompt.
      */
-    private fun priorTurns(): List<LlmMessage> {
+    private fun priorTurns(before: Long): List<LlmMessage> {
         val open = session ?: return emptyList()
-        // Two, always: the question being answered right now and the row its answer is being
-        // written into, both of which this turn puts back itself. See [turn].
-        return replay(carried(open).dropLast(2))
+        // By id rather than by counting off the end. This turn writes a question, an answer row
+        // and one row per message steered into it, and only the first two of those are a fixed
+        // number - the count was wrong the moment somebody interrupted. See [turn].
+        return replay(carried(open).filter { it.id < before })
     }
 
     /**
@@ -1801,10 +1870,14 @@ class Conversation(
      * One function for the thread, the checkpoint and the size, so what is measured is what is
      * sent. See [sentSize].
      */
-    private fun replay(turns: List<ConversationTurn>): List<LlmMessage> = turns.flatMap { turn ->
-        if (turn.speaker == Speaker.USER) listOf(LlmMessage.user(stampOf(turn.at) + turn.text))
-        else exchanges(turn.rounds) + recalled(turn)
-    }
+    private fun replay(turns: List<ConversationTurn>): List<LlmMessage> = turns
+        // A message said into a running turn is replayed by the round it landed in - see
+        // [ConversationTurn.steered]. Its row is for the log, the search and the screen.
+        .filterNot { it.steered }
+        .flatMap { turn ->
+            if (turn.speaker == Speaker.USER) listOf(LlmMessage.user(stampOf(turn.at) + turn.text))
+            else exchanges(turn.rounds) + recalled(turn)
+        }
 
     /**
      * The tool rounds of one answer, as the assistant/user pairs the provider expects.

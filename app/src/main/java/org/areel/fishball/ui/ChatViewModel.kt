@@ -152,7 +152,7 @@ class ChatViewModel(
         val unfinished = backend.conversation?.unfinished()
         messages += backend.store.recentTurns()
             .filterNot { it.id == unfinished?.id }
-            .flatMap { it.toMessages(stoppedNotice) }
+            .map { it.toMessage(stoppedNotice) }
         if (unfinished != null) carryOn(unfinished)
     }
 
@@ -337,13 +337,22 @@ class ChatViewModel(
                 /*
                  * Anything steered in that the loop finished before it could read.
                  *
-                 * [Conversation.steer] accepts while the loop is running, and the loop can reach
-                 * its answer before the next seam - so a message can be taken and then have
-                 * nowhere to land. It is already in the thread, the person watched it appear, so
-                 * it is asked as the question it will now have to be.
+                 * [Conversation.steer] accepts while a turn is running and stops the moment the
+                 * loop commits to an answer, so this is now the narrow case it was always
+                 * described as. It is asked as the question it will have to be.
+                 *
+                 * Through [begin] with no bubble and nothing to cancel. The bubble is already in
+                 * the thread - drawn when the steer was accepted - and re-entering `send` drew a
+                 * second one. Worse, `begin` cancels whatever `turn` points at, which from here
+                 * is *this* coroutine: it cancelled itself to ask its own leftover. Clearing the
+                 * handle first is what makes that a plain new turn.
                  */
                 backend.conversation?.undelivered()?.takeIf { it.isNotEmpty() }?.let { missed ->
-                    send(missed.joinToString(" "))
+                    val asked = missed.joinToString(" ")
+                    turn = null
+                    begin(asked = null, said = emptyList()) { conversation, progress ->
+                        conversation.ask(asked, progress)
+                    }
                 }
             } catch (stopped: CancellationException) {
                 // Said out loud, because the alternative is a question sitting in the thread
@@ -500,19 +509,6 @@ private fun Reply.toMessage() = ChatMessage(
  * a bubble with nothing in it under a panel full of working, which reads as a bug rather than as
  * the turn somebody stopped.
  */
-/**
- * One logged turn, as the bubbles it is drawn with - usually one, sometimes more.
- *
- * More when the person said something while the turn was running. Those live inside the round
- * they arrived during, because that is where the model has to read them, but on screen they were
- * bubbles of their own and have to come back as bubbles of their own - before the answer, since
- * that is when they were said. Without this, reopening the app showed an answer that visibly
- * responded to something nobody could see having been asked.
- */
-private fun ConversationTurn.toMessages(stopped: String): List<ChatMessage> =
-    rounds.flatMap { round -> round.said }.map { ChatMessage(fromUser = true, text = it) } +
-        toMessage(stopped)
-
 private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     fromUser = speaker == Speaker.USER,
     // Stripped, because a build that stamped assistant turns on the way to the model taught it

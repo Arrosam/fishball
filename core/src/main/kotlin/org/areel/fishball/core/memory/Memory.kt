@@ -203,6 +203,16 @@ data class ConversationTurn(
      * answer with no text and some rounds behind it.
      */
     val inFlight: Boolean = false,
+    /**
+     * Said into a turn that was already running, rather than as a question of its own.
+     *
+     * It is a real row like any other so that §9 files it, `read_log` finds it and the thread
+     * redraws it - all of which it lost by living only inside [ToolRound.said]. What the mark
+     * changes is the replay: the model is shown this text at the seam it actually arrived at,
+     * from the round that carries it, so replaying the row as well would hand over the same
+     * sentence twice. See `Conversation.replay`.
+     */
+    val steered: Boolean = false,
 )
 
 /** One round of tool calls in a turn: what was asked for together, and what came back together. */
