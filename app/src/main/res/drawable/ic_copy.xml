@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copy. Two sheets, offset by 3 on both axes so the pair reads as a stack rather
+  than as a frame inside a frame. All edges on 0/90, matching ic_picture's frame.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins. Colour is set by the Icon() tint at the call site.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- the sheet behind, drawn as the two runs that are not hidden by the front one -->
+    <path
+        android:pathData="M8 6 V3 H18 V16 H15"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <!-- the sheet in front, whole -->
+    <path
+        android:pathData="M6 8 H15 V21 H6 Z"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+</vector>

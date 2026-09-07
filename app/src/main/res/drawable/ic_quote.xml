@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Quote. The app's own mark for it: a rule down the left with two lines set off
+  it, which is what a quotation looks like in the thread rather than a pair of
+  typographic commas. Round quote marks would be the only curves in the set.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins. Colour is set by the Icon() tint at the call site.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- the rule, heavier than the lines it holds: it is the thing that means "quoted" -->
+    <path
+        android:pathData="M5 5 H7 V19 H5 Z"
+        android:fillColor="#FF101010" />
+    <path
+        android:pathData="M11 8 H20"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <path
+        android:pathData="M11 12 H20"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <!-- short, because a quotation ends mid-thought more often than not -->
+    <path
+        android:pathData="M11 16 H16"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+</vector>

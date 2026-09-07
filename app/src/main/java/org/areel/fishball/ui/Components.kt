@@ -108,6 +108,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.platform.LocalClipboardManager
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.TextUnit
 import org.areel.fishball.R
 import org.areel.fishball.ui.theme.Areel
 
@@ -597,6 +604,16 @@ fun AssistantBubble(
     steps: List<String> = emptyList(),
     /** What it was thinking while it worked. Same: kept, not thrown away when the answer came. */
     thinking: String = "",
+    /**
+     * Put this answer in the composer as a quotation, so the next question is about it.
+     *
+     * Given the answer as it reads on screen, not as it was written - see [readable]. The
+     * plate is the only thing that knows the difference, so it is the plate that passes it.
+     *
+     * Null on a plate that is not quotable - the apology plate, where there is nothing to quote
+     * and offering to would be the app inviting somebody to argue with an error message.
+     */
+    onQuote: ((String) -> Unit)? = null,
 ) {
     val edge = remember { Path() }
     var showDetail by remember(detail) { mutableStateOf(false) }
@@ -617,28 +634,32 @@ fun AssistantBubble(
             // Selectable. An answer people are meant to check is an answer they will want to
             // paste into a message to somebody - and a wall of text that cannot be copied
             // quietly tells them it is not really theirs.
-            SelectionContainer {
-                // Rendered rather than shown raw. The prompt asks for plain text and mostly
-                // gets it, but "mostly" is the problem: an answer that arrives with **粗体** in
-                // it should read as an answer, not as a leak. See [Markdown] for how little of
-                // the syntax is honoured and why.
-                val body = MaterialTheme.typography.bodyLarge
-                // Parsed once per answer, not once per recomposition. This bubble is not
-                // skippable - `steps` and `sources` are plain Lists, which the compiler treats
-                // as unstable - so it recomposes whenever anything in the thread moves, and
-                // the answer it would re-parse each time is a few thousand characters.
-                val rendered = remember(text, body.fontSize) {
-                    if (Markdown.looksMarkedUp(text)) {
-                        Markdown.render(text, body.fontSize)
-                    } else {
-                        AnnotatedString(text)
+            // Rendered rather than shown raw. The prompt asks for plain text and mostly gets
+            // it, but "mostly" is the problem: an answer that arrives with **粗体** in it
+            // should read as an answer, not as a leak. See [Markdown] for how little of the
+            // syntax is honoured and why.
+            val body = MaterialTheme.typography.bodyLarge
+            // Split, styled and cached once per answer rather than once per recomposition.
+            // This bubble is not skippable - `steps` and `sources` are plain Lists, which the
+            // compiler treats as unstable - so it recomposes whenever anything in the thread
+            // moves, and the answer it would re-parse each time is a few thousand characters.
+            val pieces = remember(text, body.fontSize) { laid(text, body.fontSize) }
+            // What leaves this plate by clipboard or by quotation. Cached alongside the pieces
+            // because it is the same parse.
+            val plain = remember(text, body.fontSize) { readable(text, body.fontSize) }
+            pieces.forEachIndexed { index, piece ->
+                if (index > 0) Spacer(Modifier.height(10.dp))
+                when (piece) {
+                    // Outside the SelectionContainer, which holds nothing but text and would
+                    // swallow the tap that opens a picture full-screen.
+                    is Laid.Picture -> AnswerImage(piece)
+                    // Selectable. An answer people are meant to check is an answer they will
+                    // want to paste into a message to somebody - and a wall of text that
+                    // cannot be copied quietly tells them it is not really theirs.
+                    is Laid.Words -> SelectionContainer {
+                        Text(text = piece.text, style = body, color = Areel.Ink)
                     }
                 }
-                Text(
-                    text = rendered,
-                    style = body,
-                    color = Areel.Ink,
-                )
             }
             if (detail != null) {
                 Spacer(Modifier.height(10.dp))
@@ -666,19 +687,64 @@ fun AssistantBubble(
             // The working-out does not vanish when the answer arrives. Watching it and then
             // losing it is worse than never seeing it — the one moment you want to check how
             // something was reached is after you have read what it says.
-            if (steps.isNotEmpty() || thinking.isNotBlank()) {
+            val work = steps.isNotEmpty() || thinking.isNotBlank()
+            if (work || onQuote != null) {
                 Spacer(Modifier.height(10.dp))
-                // The mark, small, instead of a word. It is the only control on an answer and
-                // it is not part of the answer - a line of text there read as something the
-                // app had said, which is exactly what this design spends its effort avoiding.
-                FishMark(
-                    Modifier
-                        .size(26.dp)
-                        .clickable { showWork = !showWork }
-                        .padding(4.dp),
-                    body = if (showWork) Areel.Ink else Areel.Ink40,
-                    eye = if (showWork) Areel.Magenta else null,
+                /*
+                 * The three things you can do with an answer, on one row under it.
+                 *
+                 * The fish used to be the only control here, and the note beside it said a line
+                 * of text would read as something the app had said. That still holds, so the
+                 * two new ones are marks as well - and they are the same size, in the same row,
+                 * because a control that opens the working-out is not more important than one
+                 * that copies the answer, and a row that ranked them would imply it was.
+                 */
+                val workLabel = stringResource(
+                    if (showWork) R.string.answer_work_hide else R.string.answer_work_show,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (work) {
+                        FishMark(
+                            Modifier
+                                .size(26.dp)
+                                .clickable { showWork = !showWork }
+                                .padding(4.dp)
+                                .semantics { contentDescription = workLabel },
+                            body = if (showWork) Areel.Ink else Areel.Ink40,
+                            eye = if (showWork) Areel.Magenta else null,
+                        )
+                    }
+                    val clipboard = LocalClipboardManager.current
+                    // What was copied, said once and then gone. A copy that reports nothing is
+                    // indistinguishable from a copy that missed the button.
+                    var copied by remember { mutableStateOf(false) }
+                    LaunchedEffect(copied) {
+                        if (copied) {
+                            kotlinx.coroutines.delay(COPIED_FOR_MS)
+                            copied = false
+                        }
+                    }
+                    PlateAction(
+                        icon = if (copied) R.drawable.ic_check else R.drawable.ic_copy,
+                        label = stringResource(
+                            if (copied) R.string.answer_copied else R.string.answer_copy,
+                        ),
+                        tint = if (copied) Areel.Magenta else Areel.Ink40,
+                    ) {
+                        // What is on screen, not what arrived. Pasting `**粗体**` into a
+                        // message to somebody is the leak this whole file exists to stop - and
+                        // it would be a strange app that shows syntax only on the way out.
+                        clipboard.setText(AnnotatedString(plain))
+                        copied = true
+                    }
+                    onQuote?.let { quote ->
+                        PlateAction(
+                            icon = R.drawable.ic_quote,
+                            label = stringResource(R.string.answer_quote),
+                            tint = Areel.Ink40,
+                        ) { quote(plain) }
+                    }
+                }
                 if (showWork) {
                     Spacer(Modifier.height(9.dp))
                     Column(
@@ -715,6 +781,176 @@ fun AssistantBubble(
         }
     }
 }
+
+/**
+ * An answer's pieces with the prose already styled.
+ *
+ * The parsing and the styling both happen once per answer rather than once per frame, and this
+ * is what is cached in between - see the `remember` in [AssistantBubble]. It exists because
+ * [Markdown.Piece] carries the prose as a `String`, and what the plate needs to hold onto is
+ * the `AnnotatedString` that came out of it.
+ */
+private sealed interface Laid {
+    data class Words(val text: AnnotatedString) : Laid
+    data class Picture(val alt: String, val url: String) : Laid
+}
+
+/**
+ * The answer as it reads on screen: no syntax, no pictures.
+ *
+ * Both marks under a plate hand this over rather than the source. A quotation goes into the
+ * composer where somebody reads it before sending, and a copy goes into a message to somebody
+ * else - and in both places `**孕晚期禁用**` and a forty-character image address are
+ * noise that the reader never saw on screen and did not ask to carry.
+ *
+ * The pictures drop out rather than becoming their addresses. A URL is not a picture to anybody
+ * receiving it, and quoting one back at the model would invite it to show the same image again.
+ */
+private fun readable(text: String, body: TextUnit): String =
+    Markdown.pieces(text)
+        .filterIsInstance<Markdown.Piece.Words>()
+        .joinToString(separator = "\n") { Markdown.render(it.text, body).text }
+        .trim()
+
+private fun laid(text: String, body: TextUnit): List<Laid> =
+    Markdown.pieces(text).map { piece ->
+        when (piece) {
+            is Markdown.Piece.Picture -> Laid.Picture(piece.alt, piece.url)
+            is Markdown.Piece.Words -> Laid.Words(
+                if (Markdown.looksMarkedUp(piece.text)) {
+                    Markdown.render(piece.text, body)
+                } else {
+                    AnnotatedString(piece.text)
+                },
+            )
+        }
+    }
+
+/**
+ * A picture the agent found, fetched from whoever is hosting it.
+ *
+ * Worth being plain about what this does: the phone asks a third party's server for a file, and
+ * that server learns an IP address and the time somebody looked. Every other request this app
+ * makes goes to the provider named in the activation code. This one does not, and it cannot -
+ * an image on a drug manufacturer's page is only on the drug manufacturer's server. It is the
+ * price of showing the picture at all, and it is why the model is told to show one only when
+ * saying it in words will not do.
+ *
+ * Sized before it arrives. A picture that lands and then pushes the answer up the screen is the
+ * one thing worse than no picture, so the frame is 4:3 from the first frame and the image is
+ * fitted inside it - the shape is a guess, the reserved space is not.
+ */
+@Composable
+private fun AnswerImage(picture: Laid.Picture) {
+    val painter = rememberAsyncImagePainter(
+        ImageRequest.Builder(LocalContext.current)
+            .data(picture.url)
+            /*
+             * The browser agent, for the third time in this codebase.
+             *
+             * `HttpPageReader` and `SearxngGateway` both carry a note about hosts that refuse a
+             * non-browser client, and the image loader brings its own HTTP stack with its own
+             * default - `okhttp/4.x`, which upload.wikimedia.org answers with 403 and a Chinese
+             * CDN answers with a placeholder. Measured, not assumed: the same URL is 403 on the
+             * okhttp agent and 200 on this one.
+             *
+             * What is *not* sent is a Referer. Hotlink protection wants the page the picture sat
+             * on, and that is not carried this far - a guessed one is worse than none, because a
+             * wrong Referer is refused where a missing one is often allowed.
+             */
+            .addHeader("User-Agent", IMAGE_USER_AGENT)
+            // Crossfade rather than a pop, for the same reason the thread animates at all: the
+            // picture arrives some seconds after the words, and something appearing instantly
+            // in prose already read reads as a glitch.
+            .crossfade(true)
+            .build(),
+    )
+    val state = painter.state
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(4f / 3f)
+            .background(Areel.Concrete2)
+            .border(1.dp, Areel.Ink20),
+        contentAlignment = Alignment.Center,
+    ) {
+        /*
+         * Drawn in every state, including the ones where there is nothing to draw.
+         *
+         * [AsyncImagePainter] does not start its request when it is created - it starts when
+         * something draws it. Showing the waiting message *instead of* this Image, which is the
+         * obvious way to write it, means the painter is never drawn, the request never fires,
+         * and the frame says 「图片加载中…」 for as long as anybody cares to look at it. Caught
+         * on a device; it cannot be caught anywhere else.
+         *
+         * While it is loading or failed the painter draws nothing, so the message below shows
+         * through rather than being covered by it.
+         */
+        Image(
+            painter = painter,
+            // The page's own alt, which is the only description of it anybody wrote.
+            contentDescription = picture.alt.ifBlank { null },
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
+        )
+        when (state) {
+            is AsyncImagePainter.State.Success -> Unit
+            // Said, not hidden. A host that blocks hotlinking, a picture that has been taken
+            // down, a phone with no signal - all end here, and a silently empty frame reads as
+            // the app being broken rather than the picture being gone.
+            is AsyncImagePainter.State.Error -> Text(
+                stringResource(R.string.answer_image_failed),
+                style = MaterialTheme.typography.labelMedium,
+                color = Areel.Ink40,
+            )
+            else -> Text(
+                stringResource(R.string.answer_image_loading),
+                style = MaterialTheme.typography.labelMedium,
+                color = Areel.Ink40,
+            )
+        }
+    }
+    if (picture.alt.isNotBlank()) {
+        Spacer(Modifier.height(5.dp))
+        Text(
+            picture.alt,
+            style = MaterialTheme.typography.labelMedium,
+            color = Areel.Ink40,
+        )
+    }
+}
+
+/**
+ * One of the marks under an answer, sized and weighted like the fish beside it.
+ *
+ * A mark rather than a labelled button, and the label lives in the accessibility tree instead:
+ * see the note on the row itself. Text there reads as something the app said.
+ */
+@Composable
+private fun PlateAction(
+    icon: Int,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Icon(
+        painter = painterResource(icon),
+        contentDescription = label,
+        tint = tint,
+        modifier = Modifier
+            .size(26.dp)
+            .clickable(onClick = onClick)
+            .padding(4.dp),
+    )
+}
+
+/** How long the copy mark stays ticked. Long enough to be seen, short enough not to be state. */
+private const val COPIED_FOR_MS = 1_400L
+
+/** Matching `HttpPageReader.USER_AGENT`: the page served the picture, and it serves this too. */
+private const val IMAGE_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/124.0 Mobile Safari/537.36"
 
 /**
  * The user's turn: an open text block on a floating glass pane, with the magenta rule as its

@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
@@ -147,6 +149,11 @@ fun ChatScreen(
     // for the whole turn rather than only while there is narration to list.
     val pending = busy
     var draft by remember { mutableStateOf("") }
+    /** So 引用 can put the cursor where the next question goes. See the call on [AssistantBubble]. */
+    val composerFocus = remember { FocusRequester() }
+    // Hoisted out of the list: this is read in composition and used inside a click handler,
+    // and stringResource cannot be called from the latter.
+    val quotePrefix = stringResource(R.string.quote_prefix)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -446,6 +453,26 @@ fun ChatScreen(
                                     detail = message.detail,
                                     steps = message.steps,
                                     thinking = message.thinking,
+                                    /*
+                                     * Not on an apology.
+                                     *
+                                     * `detail` is set exactly when the turn failed, so it is
+                                     * the same honest test the view model uses. Quoting
+                                     * 「这会儿连不上」 back at the model would be the app
+                                     * inviting somebody to argue with an error message.
+                                     */
+                                    onQuote = if (message.detail != null) {
+                                        null
+                                    } else {
+                                        { quoted ->
+                                            draft = quotePrefix.format(quoted) + draft
+                                            // The quote is only half of it - what comes next is
+                                            // typed, so the field takes focus and the keyboard
+                                            // comes up rather than leaving somebody looking at
+                                            // a filled box wondering if it worked.
+                                            composerFocus.requestFocus()
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -627,6 +654,7 @@ fun ChatScreen(
             voice = voice,
             canSpeak = vm.backend.canTranscribe,
             attach = attach,
+            focus = composerFocus,
         )
     }
 
@@ -708,6 +736,8 @@ private fun Composer(
      * this app was built for, who would reasonably conclude they had spoken wrongly.
      */
     canSpeak: Boolean,
+    /** Taken when 引用 fills the field, so the keyboard comes up on the question being written. */
+    focus: FocusRequester,
 ) {
     /*
      * With nothing typed there is nothing to send, so the plate is a microphone instead. One
@@ -1009,7 +1039,7 @@ private fun Composer(
                     cursorBrush = SolidColor(Areel.Magenta),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { submit() }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
                         )
                     }
                 }

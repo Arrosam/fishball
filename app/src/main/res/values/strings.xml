@@ -170,6 +170,27 @@
     <string name="quote_hide">收起</string>
 
     <!--
+      The three marks under an answer. All four strings are read out rather than shown: the row
+      is marks, not words, because a line of text under an answer reads as something the app
+      said. See AssistantBubble.
+    -->
+    <string name="answer_work_show">看它是怎么想的</string>
+    <string name="answer_work_hide">收起过程</string>
+    <string name="answer_copy">复制答案</string>
+    <string name="answer_copied">已复制</string>
+    <string name="answer_quote">引用这段，接着问</string>
+
+    <!-- A picture the answer carries, while it loads and if it never does. -->
+    <string name="answer_image_loading">图片加载中…</string>
+    <string name="answer_image_failed">这张图打不开了</string>
+
+    <!--
+      What a quoted answer looks like in the composer. The marks are the Chinese ones, because
+      this is read by the person typing under it, not by a Markdown renderer.
+    -->
+    <string name="quote_prefix">「%1$s」\n\n</string>
+
+    <!--
       Memory screen. NOT YET APPROVED - these are the designer's proposals from
       docs/06-design-directions.md Appendix 2, used so the screen exists and can be judged.
       The two tab names in particular are the author's call.
