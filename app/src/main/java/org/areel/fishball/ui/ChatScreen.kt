@@ -151,9 +151,9 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     /** So 引用 can put the cursor where the next question goes. See the call on [AssistantBubble]. */
     val composerFocus = remember { FocusRequester() }
-    // Hoisted out of the list: this is read in composition and used inside a click handler,
-    // and stringResource cannot be called from the latter.
-    val quotePrefix = stringResource(R.string.quote_prefix)
+    // Hoisted out of the list: read in composition, used inside a click handler, and
+    // stringResource cannot be called from the latter.
+    val quoteCarry = stringResource(R.string.quote_carry)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -331,6 +331,16 @@ fun ChatScreen(
     var viewing by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     fun send(text: String) {
+        /*
+         * Nothing goes anywhere on an empty field.
+         *
+         * The IME's send key fires whatever is in the box, including nothing, and everything
+         * below this line lets go of what was attached. Without the guard, tapping it on an
+         * empty field silently dropped the picture somebody had just chosen - and now the
+         * answer they had just quoted - while the view model returned without sending.
+         */
+        if (text.isBlank()) return
+
         // Whatever was attached rides this message and only this one - typed or spoken, the
         // picture goes with the next thing said and is then let go of, so it cannot silently
         // follow the conversation into a question it had nothing to do with.
@@ -339,6 +349,15 @@ fun ChatScreen(
         val images = attach.pending.map { item ->
             item.content.copy(handle = vm.backend.attachments.keep(item.content))
         }
+        /*
+         * The quotation becomes part of what is asked.
+         *
+         * Not a field beside it: this way the mention is in the message the model reads, in the
+         * bubble the thread draws, and in the row the log keeps - one string, so the live screen
+         * and the screen after a restart cannot disagree about what was asked. The model has the
+         * whole answer in its context already; this only says which one.
+         */
+        val asked = attach.quoted?.let { quoteCarry.format(it.words, text) } ?: text
         attach.clear()
         attach.close()
         /*
@@ -351,7 +370,7 @@ fun ChatScreen(
          */
         following = true
         scope.launch { toEnd(smooth = false) }
-        vm.send(text, images)
+        vm.send(asked, images)
     }
 
     /*
@@ -465,11 +484,14 @@ fun ChatScreen(
                                         null
                                     } else {
                                         { quoted ->
-                                            draft = quotePrefix.format(quoted) + draft
-                                            // The quote is only half of it - what comes next is
-                                            // typed, so the field takes focus and the keyboard
-                                            // comes up rather than leaving somebody looking at
-                                            // a filled box wondering if it worked.
+                                            // Into the row of things riding the next message,
+                                            // not into the field. The field is where the
+                                            // question goes, and it is still empty.
+                                            attach.quote(quoted)
+                                            // The question is the point, and it is typed or
+                                            // spoken from here - so the field takes focus.
+                                            // Whichever they reach for, this is where it
+                                            // happens, and the chip above it says what about.
                                             composerFocus.requestFocus()
                                         }
                                     },
@@ -1653,7 +1675,7 @@ private fun AttachPlate(
  */
 @Composable
 private fun AttachedRow(attach: AttachState) {
-    val showing = attach.pending.isNotEmpty() || attach.loading > 0
+    val showing = attach.pending.isNotEmpty() || attach.loading > 0 || attach.quoted != null
     AnimatedVisibility(
         visible = showing,
         enter = expandVertically(tween(190, easing = EaseMech)) + fadeIn(tween(150)),
@@ -1666,6 +1688,9 @@ private fun AttachedRow(attach: AttachState) {
                 .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // First in the row, because it is what the message is *about* - the pictures are
+            // things it carries.
+            attach.quoted?.let { QuotedChip(it, onRemove = attach::dropQuote) }
             attach.pending.forEach { item ->
                 AttachedThumb(item, onOpen = { attach.viewing = item }, onRemove = { attach.remove(item) })
             }

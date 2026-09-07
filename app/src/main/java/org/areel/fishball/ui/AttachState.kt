@@ -47,6 +47,28 @@ class AttachState internal constructor(
     /** Full-screen, when one is tapped. Null the rest of the time. */
     var viewing: Attachment? by mutableStateOf(null)
 
+    /**
+     * The earlier answer the next question is about, or null.
+     *
+     * Here rather than in the composer's text because that is what it is: a thing riding the
+     * next message, let go of when the message goes, exactly like a picture. It used to be
+     * pasted into the field instead, and that was wrong in a way worth remembering - the whole
+     * answer landed in the box somebody was about to type in, so the first thing they had to do
+     * with a quotation was scroll past it.
+     *
+     * One, not a list. Two quoted answers and one question is not a thing anybody means.
+     */
+    var quoted: Quoted? by mutableStateOf(null)
+        private set
+
+    fun quote(text: String) {
+        quoted = Quoted.of(text)
+    }
+
+    fun dropQuote() {
+        quoted = null
+    }
+
     val full: Boolean get() = pending.size + loading >= LIMIT
     val room: Int get() = (LIMIT - pending.size - loading).coerceAtLeast(0)
 
@@ -76,6 +98,7 @@ class AttachState internal constructor(
     fun clear() {
         pending.clear()
         viewing = null
+        quoted = null
     }
 
     /** Called by the launchers. Silent on a failed decode: the picture simply does not attach. */
@@ -95,6 +118,42 @@ class AttachState internal constructor(
     companion object {
         /** Five. Enough for a box, its label and its leaflet; past that nothing is being read. */
         const val LIMIT = 5
+    }
+}
+
+/**
+ * An earlier answer the next question is about.
+ *
+ * A mention rather than the thing itself. The model already has that answer in front of it -
+ * every turn of the session is replayed - so carrying the whole of it back would be paying to
+ * say something twice. What has to travel is only enough to say *which* answer, and the opening
+ * words of one are enough for that.
+ *
+ * Trimmed on the way in, at [MENTION_CHARS], so the same string is what the chip shows and what
+ * the model is sent. A chip showing one thing while something longer goes out is the kind of
+ * difference nobody finds until it matters.
+ */
+data class Quoted(val words: String) {
+
+    companion object {
+        /**
+         * Enough of an answer to know which one it was.
+         *
+         * The chip shows one line of this and lets the rest fall off the end, so this is set by
+         * what identifies an answer rather than by what fits: two clauses of Chinese prose,
+         * which is past the point where two answers in a conversation still read the same.
+         */
+        const val MENTION_CHARS = 40
+
+        /** The words, cut to length, with the cut made visible. */
+        fun of(text: String): Quoted {
+            // Flattened first: an answer's line breaks and bullet marks are layout, and a chip
+            // is one line. Without this the mention carries a ▪ into the middle of a sentence.
+            val flat = text.replace(Regex("""[\s▪]+"""), " ").trim()
+            return Quoted(
+                if (flat.length <= MENTION_CHARS) flat else flat.take(MENTION_CHARS) + "…",
+            )
+        }
     }
 }
 

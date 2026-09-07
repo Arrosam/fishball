@@ -110,6 +110,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
@@ -943,6 +944,80 @@ private fun PlateAction(
             .padding(4.dp),
     )
 }
+
+/**
+ * The answer the next question is about, sitting in the row of things going with it.
+ *
+ * Shaped like the plate it came from - same chamfer, same paper, same hairline - because that is
+ * what says *which* thing is being carried. A picture in this row looks like the picture; this
+ * has to look like the answer, and the answer's shape is the only part of it that fits in a
+ * chip. Beside a thumbnail it reads as a small message rather than a small image, which is the
+ * whole distinction being drawn.
+ *
+ * One line, ellipsised. The words are already cut to length on the way in - see [Quoted.of] - so
+ * what falls off the end here is only what does not fit on this particular screen, never the
+ * difference between what is shown and what is sent.
+ */
+@Composable
+fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
+    // Bottom-aligned in a box the height of the thumbnails, so a chip shorter than a picture
+    // still stands on the same line as one rather than floating above it.
+    Box(Modifier.height(THUMB_ROW), contentAlignment = Alignment.BottomStart) {
+      // Wrapping the chip and its cross together, so the cross lands on the chip's own corner
+      // the way the one on a thumbnail lands on the picture's. Sized to the chip, not to the
+      // row - hung off the outer box it floated above the bubble it belonged to.
+      Box {
+        Row(
+            Modifier
+                // Room at the top and end for the cross that overlaps them.
+                .padding(top = 10.dp, end = 10.dp)
+                .widthIn(max = 240.dp)
+                .background(Areel.Paper, BubbleShape)
+                .border(1.dp, Areel.Ink20, BubbleShape)
+                .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The same rule the quote mark is drawn with, and the same one a quotation carries
+            // in the thread: a heavy left edge is what "this is somebody else's words" looks
+            // like in this app.
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(18.dp)
+                    .background(Areel.Magenta),
+            )
+            Text(
+                quoted.words,
+                style = MaterialTheme.typography.labelMedium,
+                color = Areel.Ink60,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        Box(
+            Modifier
+                .size(20.dp)
+                .align(Alignment.TopEnd)
+                .background(Areel.Ink, RectangleShape)
+                .pressable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_plus),
+                contentDescription = stringResource(R.string.quote_drop),
+                tint = Areel.Paper,
+                // The plus turned into a cross, the same way the attached pictures beside it
+                // take themselves off.
+                modifier = Modifier.size(14.dp).rotate(45f),
+            )
+        }
+      }
+    }
+}
+
+/** Matching the thumbnails it stands in a row with, so the bar grows by one row and no more. */
+private val THUMB_ROW = 62.dp
 
 /** How long the copy mark stays ticked. Long enough to be seen, short enough not to be state. */
 private const val COPIED_FOR_MS = 1_400L
