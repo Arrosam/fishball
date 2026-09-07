@@ -15,6 +15,9 @@ serialization = "1.7.3"
 ktor = "3.0.3"
 koog = "1.2.0"
 datastore = "1.1.1"
+# 2.x rather than 3.x: 3 wants a newer Compose and a multiplatform setup this module does not
+# have. 2.7.0 is the last of the line and is built against the BOM above.
+coil = "2.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +44,11 @@ ktor-client-content-negotiation = { group = "io.ktor", name = "ktor-client-conte
 ktor-serialization-json = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
 
 koog-agents = { group = "ai.koog", name = "koog-agents", version.ref = "koog" }
+
+# Pictures the agent found, fetched and decoded off the main thread and cached across scrolls.
+# The one third-party UI dependency in the app, and it earns it: a hand-rolled loader in a
+# LazyColumn means re-fetching on every scroll and decoding a full-size JPEG on a phone.
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

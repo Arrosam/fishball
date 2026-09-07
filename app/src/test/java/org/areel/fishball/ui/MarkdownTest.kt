@@ -175,6 +175,77 @@ class MarkdownTest {
         assertTrue("#" !in crlf && ">" !in crlf, "markup survived because of the \\r: $crlf")
     }
 
+    // ---- pictures ---------------------------------------------------------------------------
+
+    /** An answer with nothing in it is one piece, which is the path everything took before. */
+    @Test
+    fun `an answer with no picture is a single piece of prose`() {
+        val plain = "孕晚期禁用。"
+        val pieces = Markdown.pieces(plain)
+        assertEquals(1, pieces.size, pieces.toString())
+        assertEquals(plain, (pieces.single() as Markdown.Piece.Words).text)
+    }
+
+    @Test
+    fun `a picture is lifted out and the prose closes around it`() {
+        val answer = "这是它的包装：\n\n![布洛芬药盒](https://example.org/pics/box.jpg)\n\n认准这个牌子。"
+        val pieces = Markdown.pieces(answer)
+
+        assertEquals(3, pieces.size, pieces.toString())
+        assertEquals("这是它的包装：", (pieces[0] as Markdown.Piece.Words).text)
+        val picture = pieces[1] as Markdown.Piece.Picture
+        assertEquals("https://example.org/pics/box.jpg", picture.url)
+        assertEquals("布洛芬药盒", picture.alt)
+        assertEquals("认准这个牌子。", (pieces[2] as Markdown.Piece.Words).text)
+
+        // And the syntax does not also survive in the words. Rendering the picture *and*
+        // leaving `![…]` in the prose would be the worst of both.
+        assertTrue(
+            pieces.filterIsInstance<Markdown.Piece.Words>().none { "![" in it.text },
+            pieces.toString(),
+        )
+    }
+
+    /** A picture at either end leaves no empty paragraph where it was. */
+    @Test
+    fun `a picture alone is the only piece`() {
+        val pieces = Markdown.pieces("![](https://example.org/pics/x.jpg)")
+        assertEquals(1, pieces.size, pieces.toString())
+        assertEquals("", (pieces.single() as Markdown.Piece.Picture).alt)
+    }
+
+    /**
+     * Anything that is not a fetchable address stays visible as syntax.
+     *
+     * The same bargain the rest of the file strikes. A reader who can see `![](图片1)` knows the
+     * app failed to show something; a reader shown nothing does not, and neither does anybody
+     * they report it to.
+     */
+    @Test
+    fun `an address that cannot be fetched is left in the prose`() {
+        listOf(
+            "![图](图片1)",
+            "![图](/local/path.jpg)",
+            "![图](data:image/png;base64,AAAA)",
+        ).forEach { answer ->
+            val pieces = Markdown.pieces(answer)
+            assertEquals(1, pieces.size, "$answer -> $pieces")
+            assertTrue(
+                "![" in (pieces.single() as Markdown.Piece.Words).text,
+                "the syntax was silently deleted: $answer",
+            )
+        }
+    }
+
+    /** A link is still a link: only the words survive, and it never becomes a picture. */
+    @Test
+    fun `an ordinary link is not mistaken for a picture`() {
+        val answer = "见[药监局说明](https://example.org/a)。"
+        val pieces = Markdown.pieces(answer)
+        assertEquals(1, pieces.size, pieces.toString())
+        assertEquals("见药监局说明。", Markdown.render(answer, body).text)
+    }
+
     @Test
     fun `a checkpoint's own headings are not markdown, and pass through untouched`() {
         // The session bridge is written with 【】 precisely so it never demonstrates Markdown

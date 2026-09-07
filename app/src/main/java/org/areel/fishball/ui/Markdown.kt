@@ -40,11 +40,58 @@ import org.areel.fishball.ui.theme.Areel
  * with a name, a host and a tier the registry assigned - a bare URL in the prose competes with
  * that and is not tappable anyway.
  *
- * Images are still unhandled, and remain visible as syntax. There is nothing useful to do with
- * one: the bytes are not here, and silently deleting an `![...]` would hide that the model
- * tried to show something.
+ * An image is the one thing here that is not text, and so the one thing [render] cannot return.
+ * See [pieces]: an answer is split around its pictures first, and each stretch of prose between
+ * them goes through [render] as before.
  */
 object Markdown {
+
+    /**
+     * One stretch of an answer, as the thing it has to be laid out as.
+     *
+     * An `AnnotatedString` can hold every other piece of syntax in this file, and it cannot hold
+     * a picture - a picture is a composable that loads, fails, and takes a width. So an answer
+     * that has one stops being a string and becomes a short list, and an answer that has none
+     * is a list of one, which is the path everything took before this existed.
+     */
+    sealed interface Piece {
+
+        /** Prose, still carrying whatever markup it arrived wearing. */
+        data class Words(val text: String) : Piece
+
+        /** `![说明](网址)` — a picture the agent found on a page it opened. */
+        data class Picture(val alt: String, val url: String) : Piece
+    }
+
+    /**
+     * An answer split around the pictures in it.
+     *
+     * Only `http(s)` is lifted out. Anything else that happens to be written as image syntax -
+     * a relative path, a `data:` URI, a placeholder the model invented the shape of - stays in
+     * the prose exactly as written, which is the same bargain the rest of this file strikes:
+     * something unrenderable is left visible rather than silently deleted, because a reader who
+     * can see `![](foo)` knows the app failed, and a reader shown nothing does not.
+     *
+     * Whitespace around a lifted image is trimmed, so a picture on its own line does not leave a
+     * blank paragraph where it used to be.
+     */
+    fun pieces(text: String): List<Piece> {
+        if (!text.contains("![")) return listOf(Piece.Words(text))
+        val out = mutableListOf<Piece>()
+        var at = 0
+        IMAGE.findAll(text).forEach { m ->
+            val url = m.groupValues[2].trim()
+            if (!url.startsWith("http://") && !url.startsWith("https://")) return@forEach
+            text.substring(at, m.range.first).trimEnd('\n', ' ').takeIf { it.isNotBlank() }
+                ?.let { out += Piece.Words(it) }
+            out += Piece.Picture(alt = m.groupValues[1].trim(), url = url)
+            at = m.range.last + 1
+        }
+        if (out.isEmpty()) return listOf(Piece.Words(text))
+        text.substring(at).trimStart('\n', ' ').takeIf { it.isNotBlank() }
+            ?.let { out += Piece.Words(it) }
+        return out
+    }
 
     /** Body size, so a heading is weight and space rather than scale. */
     fun render(text: String, body: TextUnit): AnnotatedString = buildAnnotatedString {
@@ -316,6 +363,15 @@ object Markdown {
      * it alone, because it hides that anything was there. A test caught this.
      */
     private val LINK = Regex("""(?<!!)\[([^\]]+)]\((?:[^)]*)\)""")
+
+    /**
+     * `![说明](网址)` — the alt and the address, which [pieces] lifts out of the prose.
+     *
+     * The alt may be empty: a page's own `alt` often is, and an image with no description is
+     * still an image. The address may not - `![](  )` is not a picture of anything, and letting
+     * it through would put an empty frame in the answer.
+     */
+    private val IMAGE = Regex("""!\[([^\]]*)]\(([^)\s]+)[^)]*\)""")
 
     private val HEADING = Regex("""^#{1,6} +\S.*$""")
     private val BULLET = Regex("""^ *[-*] +\S.*$""")

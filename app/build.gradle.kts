@@ -151,6 +151,16 @@ dependencies {
     // res/drawable, matching the 24-grid in docs/06-design-directions.md section E.
     implementation(libs.kotlinx.coroutines.android)
 
+    /*
+     * The one picture an answer might carry, off a page the agent read.
+     *
+     * The rule above still holds - nothing decorative comes from a library. This is not an icon
+     * set: it is fetching, downsampling and caching a photograph from somebody else's server
+     * inside a scrolling list, which is three problems that are only easy until you have shipped
+     * them. See `Markdown.Piece.Picture` and `AnswerImage`.
+     */
+    implementation(libs.coil.compose)
+
     // Not yet needed by the frontend dummy, and added back when the UI is wired to :core:
     //   libs.androidx.datastore.preferences  — persisting the login key (§1)
     //   libs.koog.agents                     — the LLM driver around TurnEngine
