@@ -109,6 +109,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImagePainter
@@ -954,8 +955,18 @@ private fun PlateAction(
  * chip. Beside a thumbnail it reads as a small message rather than a small image, which is the
  * whole distinction being drawn.
  *
- * One line, ellipsised. The words are already cut to length on the way in - see [Quoted.of] - so
- * what falls off the end here is only what does not fit on this particular screen, never the
+ * Three lines in a narrow card rather than one line in a wide one. It was the other way round
+ * and it was the worst of both: a strip most of the way across the bar carrying one line of
+ * text, so it crowded out the pictures beside it horizontally while leaving two thirds of the
+ * row it stands in empty. The row is [THUMB_ROW] tall whatever is in it - that height is the
+ * thumbnails' - so the only question is whether this fills it, and three lines do.
+ *
+ * The text is sized here rather than taken from the theme, because three lines of it have to
+ * fit a height that is already fixed: labelMedium's own line height is loose enough that three
+ * lines overflow the card by a few pixels, which shows up as a clipped third line.
+ *
+ * Ellipsised at the end. The words are already cut to length on the way in - see [Quoted.of] -
+ * so what falls off here is only what does not fit on this particular screen, never the
  * difference between what is shown and what is sent.
  */
 @Composable
@@ -970,29 +981,39 @@ fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
         Row(
             Modifier
                 // Room at the top and end for the cross that overlaps them.
-                .padding(top = 10.dp, end = 10.dp)
-                .widthIn(max = 240.dp)
+                .padding(top = CROSS_GUTTER, end = CROSS_GUTTER)
+                .width(CHIP_WIDTH)
+                // Exactly what the row leaves once the cross has its gutter, so the card is as
+                // tall as the thumbnails it stands beside and the bar grows by nothing.
+                .height(THUMB_ROW - CROSS_GUTTER)
                 .background(Areel.Paper, BubbleShape)
                 .border(1.dp, Areel.Ink20, BubbleShape)
-                .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                // Tight top and bottom: three lines have to fit a height that is already
+                // fixed, and 5dp each left the text box a rounding error short of the third
+                // line - which Compose resolves by dropping it, so the card rendered two lines
+                // and a gap. The room is spent on the text rather than on the margin.
+                .padding(start = 9.dp, end = 7.dp, top = 3.dp, bottom = 3.dp),
         ) {
             // The same rule the quote mark is drawn with, and the same one a quotation carries
             // in the thread: a heavy left edge is what "this is somebody else's words" looks
-            // like in this app.
+            // like in this app. Full height now that there is a paragraph to hold rather than
+            // a line - a stub beside three lines reads as a bullet, not as a margin.
             Box(
                 Modifier
                     .width(3.dp)
-                    .height(18.dp)
+                    .fillMaxHeight()
                     .background(Areel.Magenta),
             )
             Text(
                 quoted.words,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 11.sp,
+                    lineHeight = 13.sp,
+                ),
                 color = Areel.Ink60,
-                maxLines = 1,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.padding(start = 7.dp),
             )
         }
         Box(
@@ -1018,6 +1039,17 @@ fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
 
 /** Matching the thumbnails it stands in a row with, so the bar grows by one row and no more. */
 private val THUMB_ROW = 62.dp
+
+/** What the remove cross needs above and beside the card it sits on the corner of. */
+private val CROSS_GUTTER = 10.dp
+
+/**
+ * Narrow on purpose: about two and a half thumbnails, not most of the bar.
+ *
+ * A quotation is one of the things going with the message, not the message - at 240dp it was
+ * wide enough to push every attached picture off the visible part of a scrolling row.
+ */
+private val CHIP_WIDTH = 150.dp
 
 /** How long the copy mark stays ticked. Long enough to be seen, short enough not to be state. */
 private const val COPIED_FOR_MS = 1_400L
