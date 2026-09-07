@@ -955,15 +955,21 @@ private fun PlateAction(
  * chip. Beside a thumbnail it reads as a small message rather than a small image, which is the
  * whole distinction being drawn.
  *
- * Three lines in a narrow card rather than one line in a wide one. It was the other way round
- * and it was the worst of both: a strip most of the way across the bar carrying one line of
- * text, so it crowded out the pictures beside it horizontally while leaving two thirds of the
- * row it stands in empty. The row is [THUMB_ROW] tall whatever is in it - that height is the
- * thumbnails' - so the only question is whether this fills it, and three lines do.
+ * The same square tile a picture is, holding three lines of the words instead of an image. It
+ * went one line in a 240dp strip, then three in a 150dp card, and both were the same mistake in
+ * different proportions: an object shaped unlike everything else in a row whose whole job is to
+ * show what is going with this message.
+ *
+ * So it takes the thumbnails' own geometry - [THUMB_ROW] minus the cross's overhang, square -
+ * and the text is fitted to that rather than the other way round.
  *
  * The text is sized here rather than taken from the theme, because three lines of it have to
  * fit a height that is already fixed: labelMedium's own line height is loose enough that three
- * lines overflow the card by a few pixels, which shows up as a clipped third line.
+ * lines overflow the tile by a few pixels, which Compose resolves by dropping the third - two
+ * lines and a gap, which is exactly what a square is supposed to stop.
+ *
+ * Few words is the point, and a square holds fewer than a strip did. What the model is sent is
+ * unchanged at [Quoted.MENTION_CHARS]; this is the display end of the same string.
  *
  * Ellipsised at the end. The words are already cut to length on the way in - see [Quoted.of] -
  * so what falls off here is only what does not fit on this particular screen, never the
@@ -982,17 +988,26 @@ fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
             Modifier
                 // Room at the top and end for the cross that overlaps them.
                 .padding(top = CROSS_GUTTER, end = CROSS_GUTTER)
-                .width(CHIP_WIDTH)
-                // Exactly what the row leaves once the cross has its gutter, so the card is as
-                // tall as the thumbnails it stands beside and the bar grows by nothing.
-                .height(THUMB_ROW - CROSS_GUTTER)
+                /*
+                 * The same square a picture is, not a card of its own proportions.
+                 *
+                 * A thumbnail is 56dp in a 62dp box with its cross hanging off the corner, so
+                 * this is 56dp in the same box with the same overhang - one tile shape in the
+                 * row, whatever any given tile happens to hold. It was 150x52 and read as a
+                 * different kind of object sitting next to the pictures rather than as one of
+                 * them, which is the whole of what a row of attachments is.
+                 */
+                .size(THUMB_ROW - CROSS_GUTTER)
                 .background(Areel.Paper, BubbleShape)
                 .border(1.dp, Areel.Ink20, BubbleShape)
                 // Tight top and bottom: three lines have to fit a height that is already
                 // fixed, and 5dp each left the text box a rounding error short of the third
                 // line - which Compose resolves by dropping it, so the card rendered two lines
                 // and a gap. The room is spent on the text rather than on the margin.
-                .padding(start = 9.dp, end = 7.dp, top = 3.dp, bottom = 3.dp),
+                // Tight, because a 56dp square has to hold a rule and three lines. Every
+                // dp here is a dp the words do not get, and at this size a dp is most of a
+                // character.
+                .padding(start = 4.dp, end = 3.dp, top = 4.dp, bottom = 4.dp),
         ) {
             // The same rule the quote mark is drawn with, and the same one a quotation carries
             // in the thread: a heavy left edge is what "this is somebody else's words" looks
@@ -1000,20 +1015,31 @@ fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
             // a line - a stub beside three lines reads as a bullet, not as a margin.
             Box(
                 Modifier
-                    .width(3.dp)
+                    .width(2.dp)
                     .fillMaxHeight()
                     .background(Areel.Magenta),
             )
             Text(
                 quoted.words,
+                /*
+                 * Small type, loose leading: the two are doing different jobs here.
+                 *
+                 * The leading is set so three lines fill the square - 45dp of the 48dp inside
+                 * the padding - and the size is set by how many characters a 56dp tile can
+                 * hold, which is the only thing that decides whether this is a mention or a
+                 * decoration. At 11sp it fitted three characters to a line and the chip said
+                 * 孕晚期 / 禁用， / 其余孕…, which is not enough of an answer to know which
+                 * answer. Nine buys half as many again per line at a size the app already uses
+                 * for the plate labels a few dp away.
+                 */
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 13.sp,
+                    fontSize = 9.sp,
+                    lineHeight = 15.sp,
                 ),
                 color = Areel.Ink60,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 7.dp),
+                modifier = Modifier.padding(start = 3.dp),
             )
         }
         Box(
@@ -1040,16 +1066,13 @@ fun QuotedChip(quoted: Quoted, onRemove: () -> Unit) {
 /** Matching the thumbnails it stands in a row with, so the bar grows by one row and no more. */
 private val THUMB_ROW = 62.dp
 
-/** What the remove cross needs above and beside the card it sits on the corner of. */
-private val CROSS_GUTTER = 10.dp
-
 /**
- * Narrow on purpose: about two and a half thumbnails, not most of the bar.
+ * What the remove cross needs above and beside the tile it sits on the corner of.
  *
- * A quotation is one of the things going with the message, not the message - at 240dp it was
- * wide enough to push every attached picture off the visible part of a scrolling row.
+ * Six, which is the same overhang `AttachedThumb` gives its own cross - the two crosses have to
+ * sit at the same height above the row or the tiles stop reading as a set.
  */
-private val CHIP_WIDTH = 150.dp
+private val CROSS_GUTTER = 6.dp
 
 /** How long the copy mark stays ticked. Long enough to be seen, short enough not to be state. */
 private const val COPIED_FOR_MS = 1_400L
