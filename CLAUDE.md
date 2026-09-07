@@ -35,10 +35,15 @@ from GitHub while every phone still sees the previous version.
 
 The user's phone runs the **debug-signed** APK; releases are **release-signed**. The two
 signatures do not match, so a release APK cannot install over the phone's build — including
-through the app's own updater, which will reach the installer and be refused. Syncing to the
-phone means `:app:assembleDebug`. Never `adb uninstall` to get around it without saying so
-first: it deletes `files/memory.json`, `files/turns.jsonl` and `files/pictures/`, which is the
-user's real conversation history and the only copy of it.
+through the app's own updater, which reaches the system installer and is refused with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Syncing to the phone means `:app:assembleDebug`. Never
+`adb uninstall` to get around it without saying so first: it deletes `files/memory.json`,
+`files/turns.jsonl` and `files/pictures/`, which is the user's real conversation history and the
+only copy of it.
+
+This is a settled choice, not an oversight: the phone stays on debug builds and the updater is
+verified elsewhere, on a device whose install came from a release APK. The updater failing on
+that phone is expected behaviour and is not a bug to chase.
 
 ## Building
 

@@ -31,14 +31,14 @@ android {
         targetSdk = 35
         // What the update check compares. Monotonic, and never reused: the name is for the
         // person reading the modal, this is the only thing that decides.
-        versionCode = 8
+        versionCode = 9
         // Still short of a 1: the app works end to end, and what it has not had is a second pair
-        // of hands using it for a week. A minor rather than a patch, because an interrupted turn
-        // is now steered instead of restarted and a turn outlives the app being killed - the
-        // agent behaves differently, not just better. 3 was built and installed but never
-        // published and 7 was tagged but not released, so the published sequence runs 0.2a (2),
-        // 0.2.0 (4), 0.2.0a (5), 0.2.1a (6), and this (8).
-        versionName = "0.3.0a"
+        // of hands using it for a week. A patch on 0.3.0a rather than a minor - an answer can
+        // show a picture it found and a plate can be copied or quoted, which is more for the
+        // reader to do with an answer, not a different agent underneath. 3 was built and
+        // installed but never published and 7 was tagged but not released, so the published
+        // sequence runs 0.2a (2), 0.2.0 (4), 0.2.0a (5), 0.2.1a (6), 0.3.0a (8), and this (9).
+        versionName = "0.3.1a"
 
         buildConfigField(
             "String",
