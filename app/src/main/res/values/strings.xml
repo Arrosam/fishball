@@ -185,11 +185,10 @@
     <string name="answer_image_failed">这张图打不开了</string>
 
     <!--
-      A quoted answer, as it goes out with the question: the mention on its own line, then what
-      was asked. Read by the person before they send it and by the model afterwards, so the
-      marks are the Chinese ones rather than Markdown's.
+      No format string for a quotation any more. It travels as its own field rather than being
+      pasted into the question, so nothing here has to join the two - see ConversationTurn.quoted
+      and AgentPrompt.quotedQuestion.
     -->
-    <string name="quote_carry">「%1$s」\n%2$s</string>
     <string name="quote_drop">不引用了</string>
 
     <!--

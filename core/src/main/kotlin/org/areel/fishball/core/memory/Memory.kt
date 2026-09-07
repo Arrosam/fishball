@@ -213,6 +213,20 @@ data class ConversationTurn(
      * sentence twice. See `Conversation.replay`.
      */
     val steered: Boolean = false,
+    /**
+     * An earlier answer this question is about, whole, on user turns that quoted one.
+     *
+     * The whole of it rather than the few words the composer showed. Those two were one string
+     * once, on the argument that what is shown should be what is sent - which is right for a
+     * chip and wrong for this, because the model is being asked to reason about the answer and
+     * a reader is only being reminded which answer it was. The screen trims this to a mention;
+     * nothing trims it on the way to the model.
+     *
+     * Its own field rather than folded into [text]: the text is what the person typed, and the
+     * bubble in the thread has to be able to draw the two apart. Persisted, so the thread after
+     * a restart draws the same thing the live one did.
+     */
+    val quoted: String? = null,
 )
 
 /** One round of tool calls in a turn: what was asked for together, and what came back together. */

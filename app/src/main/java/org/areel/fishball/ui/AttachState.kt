@@ -129,11 +129,17 @@ class AttachState internal constructor(
  * say something twice. What has to travel is only enough to say *which* answer, and the opening
  * words of one are enough for that.
  *
- * Trimmed on the way in, at [MENTION_CHARS], so the same string is what the chip shows and what
- * the model is sent. A chip showing one thing while something longer goes out is the kind of
- * difference nobody finds until it matters.
+ * Two strings, and the difference between them is the point. [text] is the answer, whole, and
+ * it is what the log keeps and what the model is handed - it is being asked to reason about
+ * that answer. [words] is the opening of it, for the chip, which is only reminding the person
+ * which answer they tapped.
+ *
+ * They were one string for a while, on the argument that what is shown should be what is sent.
+ * That is a good rule for a chip standing in for a file and a bad one here: it meant the model
+ * received forty characters of an answer it was being asked about, with the rest cut off
+ * mid-sentence.
  */
-data class Quoted(val words: String) {
+data class Quoted(val text: String, val words: String) {
 
     companion object {
         /**
@@ -145,13 +151,14 @@ data class Quoted(val words: String) {
          */
         const val MENTION_CHARS = 40
 
-        /** The words, cut to length, with the cut made visible. */
+        /** The answer whole, plus its opening words cut to length with the cut made visible. */
         fun of(text: String): Quoted {
             // Flattened first: an answer's line breaks and bullet marks are layout, and a chip
             // is one line. Without this the mention carries a ▪ into the middle of a sentence.
             val flat = text.replace(Regex("""[\s▪]+"""), " ").trim()
             return Quoted(
-                if (flat.length <= MENTION_CHARS) flat else flat.take(MENTION_CHARS) + "…",
+                text = text,
+                words = if (flat.length <= MENTION_CHARS) flat else flat.take(MENTION_CHARS) + "…",
             )
         }
     }

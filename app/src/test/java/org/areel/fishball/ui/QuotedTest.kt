@@ -5,14 +5,24 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * What a quotation carries, which is a mention rather than the answer.
+ * What a quotation carries: the answer, and separately the few words that stand for it.
  *
- * The point of cutting it here rather than in the chip is that one string is both what the
- * reader sees above the field and what the model is sent with the question. A chip that
- * ellipsises for display while something longer goes out would be a difference nobody notices
- * until they are trying to work out what the model was actually asked.
+ * [Quoted.text] is the whole answer - what the log keeps and what the model is handed, because
+ * the model is being asked to reason about it. [Quoted.words] is its opening, for the chip above
+ * the field and for the bubble once it is sent, which are both only saying *which* answer.
+ *
+ * They were one string once, on the argument that what is shown should be what is sent. That is
+ * right for a chip standing in for a file and wrong here: it meant the model received forty
+ * characters of an answer and the rest cut off mid-sentence.
  */
 class QuotedTest {
+
+    /** Whatever the chip shows, the answer itself is carried untouched. */
+    @Test
+    fun `the whole answer is kept however long it is`() {
+        val whole = "孕晚期禁用。\n\n▪ 常见是 0.3g\n" + "布".repeat(500)
+        assertEquals(whole, Quoted.of(whole).text, "the answer was trimmed on the way to the log")
+    }
 
     @Test
     fun `a short answer is quoted whole, with nothing added`() {

@@ -1103,6 +1103,15 @@ fun UserBubble(
      */
     images: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
     onImage: (Int) -> Unit = {},
+    /**
+     * The earlier answer this question was about, whole, when it quoted one.
+     *
+     * Drawn as its opening words above the question, the same way the composer's chip drew them
+     * before it was sent - so a quotation looks like the same thing at both ends. Trimmed here
+     * rather than stored trimmed: the row keeps the answer whole because that is what went to
+     * the model, and only the drawing is short.
+     */
+    quoted: String? = null,
 ) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         // .userwrap.shell - width:86%; padding:12px 0 12px 14px. Fixed, not content-hugging:
@@ -1147,6 +1156,25 @@ fun UserBubble(
                                         .pressable { onImage(i) },
                                 )
                             }
+                        }
+                    }
+                    quoted?.takeIf { it.isNotBlank() }?.let {
+                        // Above the question, because that is the order it happened in - the
+                        // same argument the pictures above are placed by. Its own rule down the
+                        // left, which is what a quotation is marked with everywhere else here.
+                        Row(
+                            Modifier.padding(bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.width(2.dp).height(28.dp).background(Areel.Magenta))
+                            Text(
+                                Quoted.of(it).words,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Areel.Ink40,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
                         }
                     }
                     if (text.isNotBlank()) {

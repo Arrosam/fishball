@@ -151,9 +151,6 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     /** So 引用 can put the cursor where the next question goes. See the call on [AssistantBubble]. */
     val composerFocus = remember { FocusRequester() }
-    // Hoisted out of the list: read in composition, used inside a click handler, and
-    // stringResource cannot be called from the latter.
-    val quoteCarry = stringResource(R.string.quote_carry)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -350,14 +347,16 @@ fun ChatScreen(
             item.content.copy(handle = vm.backend.attachments.keep(item.content))
         }
         /*
-         * The quotation becomes part of what is asked.
+         * The quotation travels beside the question, not inside it.
          *
-         * Not a field beside it: this way the mention is in the message the model reads, in the
-         * bubble the thread draws, and in the row the log keeps - one string, so the live screen
-         * and the screen after a restart cannot disagree about what was asked. The model has the
-         * whole answer in its context already; this only says which one.
+         * It was folded into the text once, which read as one run-on string in which an answer
+         * full of sentences was followed by a question with nothing to say where the first
+         * ended. It is a field of its own the whole way down now - the log keeps it, the bubble
+         * draws it apart from what was typed, and the model is handed the two as named fields.
+         * Whole, not the few words the chip showed: the chip reminds somebody which answer it
+         * was, and the model is being asked to reason about it.
          */
-        val asked = attach.quoted?.let { quoteCarry.format(it.words, text) } ?: text
+        val quoted = attach.quoted?.text
         attach.clear()
         attach.close()
         /*
@@ -370,7 +369,7 @@ fun ChatScreen(
          */
         following = true
         scope.launch { toEnd(smooth = false) }
-        vm.send(asked, images)
+        vm.send(text, images, quoted)
     }
 
     /*
@@ -453,6 +452,7 @@ fun ChatScreen(
                             if (message.fromUser) {
                                 UserBubble(
                                     text = message.text,
+                                    quoted = message.quoted,
                                     images = remember(message.images) {
                                         message.images.mapNotNull {
                                             vm.backend.attachments.recall(it)?.asImageBitmap()

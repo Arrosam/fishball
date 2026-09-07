@@ -45,6 +45,13 @@ data class ChatMessage(
     /** Why this turn failed, when it did. Not persisted: an error is not part of the record. */
     val detail: String? = null,
     /**
+     * The earlier answer this question was about, whole, on a question that quoted one.
+     *
+     * Whole here as well as in the log, and trimmed only where it is drawn - so the bubble and
+     * the composer's chip show the same few words without either of them being the record.
+     */
+    val quoted: String? = null,
+    /**
      * How the turn was worked out: the lines it narrated, and the reasoning behind them.
      *
      * Both are written to the log now. They were held in memory only, on the argument that §9
@@ -156,7 +163,12 @@ class ChatViewModel(
         if (unfinished != null) carryOn(unfinished)
     }
 
-    fun send(text: String, images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList()) {
+    fun send(
+        text: String,
+        images: List<org.areel.fishball.core.llm.LlmContent.Image> = emptyList(),
+        /** An earlier answer this question is about, whole. See `ConversationTurn.quoted`. */
+        quoted: String? = null,
+    ) {
         val question = text.trim()
         if (question.isEmpty()) return
 
@@ -173,7 +185,10 @@ class ChatViewModel(
          * it started - so a message carrying one is a new question, which is what it looks like
          * anyway.
          */
-        if (images.isEmpty() && backend.conversation?.steer(question) == true) {
+        // A quotation cannot go this way either, and for the same reason pictures cannot: a
+        // steer joins a turn that is already running with its own question, and there is nowhere
+        // in it for a second question's quotation to be attached to.
+        if (images.isEmpty() && quoted == null && backend.conversation?.steer(question) == true) {
             messages += ChatMessage(fromUser = true, text = question)
             return
         }
@@ -183,9 +198,10 @@ class ChatViewModel(
                 fromUser = true,
                 text = question,
                 images = images.mapNotNull { it.handle },
+                quoted = quoted,
             ),
             said = emptyList(),
-        ) { conversation, progress -> conversation.ask(question, progress, images) }
+        ) { conversation, progress -> conversation.ask(question, progress, images, quoted) }
     }
 
     /**
@@ -516,6 +532,7 @@ private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     // `Conversation.unstamped` - this is the same cleaning, for the half the user reads.
     text = STAMPED.replaceFirst(text, "").ifBlank { if (speaker == Speaker.USER) "" else stopped },
     images = images,
+    quoted = quoted,
     // The working panel, restored. Both halves: the reasoning the model wrote and the lines the
     // app narrated while it ran. Held only in memory before this, so reopening the app left an
     // answer with no account of where it came from.

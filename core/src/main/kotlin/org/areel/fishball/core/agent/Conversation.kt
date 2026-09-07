@@ -152,6 +152,15 @@ class Conversation(
     private var attached: List<LlmContent.Image> = emptyList()
 
     /**
+     * The answer this turn's question quoted, for the length of the turn.
+     *
+     * A field for the same reason [attached] is one: it is set once where the turn starts and
+     * read where the question is put to the model, and threading it through the three signatures
+     * in between would say nothing the name does not.
+     */
+    private var quoting: String? = null
+
+    /**
      * This turn's thread with the model, from the routing question to the written answer.
      *
      * One exchange, not two calls. Routing and writing used to be strangers: the classifier was
@@ -299,12 +308,22 @@ class Conversation(
          * classifier left to keep them from.
          */
         images: List<LlmContent.Image> = emptyList(),
+        /**
+         * An earlier answer this question is about, whole, when one was quoted.
+         *
+         * Kept apart from [userText] the whole way down. Folded in, the thread would draw the
+         * quotation as part of what the person typed and the log would keep it that way; and
+         * the model would be handed one run-on string in which an answer full of sentences is
+         * followed by a question, with nothing to say where one ends. See
+         * `AgentPrompt.quotedQuestion`.
+         */
+        quoted: String? = null,
     ): Reply {
         // The bus holds its filing while the turn runs and picks it up the moment the turn
         // ends, however the turn ends. See [MemoryBus.turnStarted].
         memory.turnStarted()
         try {
-            return turn(userText, progress, images, askedId = store.nextId())
+            return turn(userText, progress, images, askedId = store.nextId(), quoted = quoted)
         } finally {
             memory.turnEnded()
         }
@@ -500,6 +519,8 @@ class Conversation(
          * moment a turn could write a third row of its own, and dropped the question instead.
          */
         askedId: Long,
+        /** See [ask]. Null on a resume, which reads it back off the row it is continuing. */
+        quoted: String? = null,
     ): Reply = coroutineScope {
         val recording = Recording(progress, said = resuming?.steps.orEmpty())
         val at = resuming?.at ?: now()
@@ -543,6 +564,7 @@ class Conversation(
                 ConversationTurn(
                     askedId, session!!.id, at, Speaker.USER, userText,
                     images = images.mapNotNull { it.handle },
+                    quoted = quoted,
                 ),
             )
         }
@@ -565,6 +587,9 @@ class Conversation(
         rollSession(at, recording)
 
         attached = images
+        // Off the row on a resume: the turn being picked back up quoted whatever it quoted, and
+        // the caller restarting it has no way to know what that was.
+        quoting = quoted ?: resuming?.quoted
         lastFailure = null
         // Rebuilt from the log every turn, so nothing an earlier turn left behind survives.
         // Everything this turn has written is left out by id - see [askedId].
@@ -713,7 +738,19 @@ class Conversation(
                 // the system prompt above all - would rewrite the prefix each call and throw
                 // away the cache that moving WORK out of this block was meant to earn.
                 appendLine(clockNow())
-                append(AgentPrompt.Label.QUESTION).append(userText)
+                // Read once into a local: this is the turn's own quotation and cannot change
+                // under it, but the field is mutable and the compiler is right to say so.
+                val quotation = quoting
+                if (quotation == null) {
+                    append(AgentPrompt.Label.QUESTION).append(userText)
+                } else {
+                    // Only when there is one. An ordinary turn keeps the shape it has always
+                    // had - every turn in the session is replayed on every call, so changing
+                    // the framing of all of them would rewrite the whole prefix rather than
+                    // adding to it.
+                    appendLine(AgentPrompt.Label.QUESTION_QUOTED)
+                    append(AgentPrompt.quotedQuestion(quotation, userText))
+                }
             },
         )
 

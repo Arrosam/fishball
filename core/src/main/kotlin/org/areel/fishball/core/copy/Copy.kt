@@ -1,5 +1,7 @@
 package org.areel.fishball.core.copy
 
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.areel.fishball.core.answer.AnswerShape
 
 /*
@@ -572,6 +574,16 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
     /** Labels that frame the material handed to the model. Kept together so they stay consistent. */
     object Label {
         const val QUESTION = "用户问的是："
+
+        /**
+         * The same turn, when the person tapped 引用 on an earlier answer first.
+         *
+         * A sentence of framing and then JSON, rather than the quotation run together with the
+         * question as prose. Prose was ambiguous in the one way that matters: an answer being
+         * quoted is itself full of sentences, and the model had to guess where the quotation
+         * stopped and the new question started. Two named fields cannot be misread.
+         */
+        const val QUESTION_QUOTED = "用户引用了上面的一条消息，然后说了话。下面是 JSON："
         const val REQUIREMENT = "这次答案的要求："
         const val EVIDENCE = "查到的资料："
         const val ATTRIBUTIONS = "可以这样称呼来源："
@@ -732,6 +744,23 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
             }
         }
     }.trim()
+
+    /**
+     * The user's turn when it carries a quotation, as JSON.
+     *
+     * Built with the JSON writer rather than by joining strings, and that is not fastidiousness:
+     * the quoted text is an answer this app wrote, which routinely contains 「」, quotation
+     * marks and line breaks. Hand-assembled, the first answer containing a double quote would
+     * produce a broken object, and a model handed malformed JSON does not report it - it guesses
+     * at the parts it can read.
+     *
+     * `user_quoted` is the whole answer, not the few words the chip showed. The model is being
+     * asked to reason about that answer; the chip was reminding somebody which one it was.
+     */
+    fun quotedQuestion(quoted: String, said: String): String = buildJsonObject {
+        put("user_quoted", quoted)
+        put("user_said", said)
+    }.toString()
 
     /**
      * A tool call that could not be read, answered with the shape that would have worked.

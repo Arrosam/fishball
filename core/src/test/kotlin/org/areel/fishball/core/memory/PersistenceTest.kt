@@ -355,6 +355,39 @@ class PersistenceTest {
         assertEquals(fat, back.first { it.id == 1L }.text, "compaction lost the answer")
     }
 
+    /**
+     * A question that quoted an answer comes back still knowing which one.
+     *
+     * Whole, not the few words the chip showed. The thread draws a short mention of it, and it
+     * has to be able to draw that from the log after a restart rather than from a string the
+     * live screen happened to be holding - which is the mismatch that has already been found
+     * once here, when a mid-turn correction lived only in RAM.
+     */
+    @Test
+    fun `what a question quoted comes back with it`() {
+        val disk = Disk()
+        val answer = "孕晚期禁用。\n说明书上写得很清楚，不要自己加量。"
+        disk.open().appendTurn(
+            turn(1, Speaker.USER, "那孕早期呢").copy(quoted = answer),
+        )
+
+        val back = disk.open().recentTurns().single()
+        assertEquals("那孕早期呢", back.text, "the question and the quotation were run together")
+        assertEquals(answer, back.quoted, "the quotation did not survive being written down")
+    }
+
+    /** A log written before quoting existed reads as turns that quoted nothing. */
+    @Test
+    fun `an older turn simply has no quotation`() {
+        val old = Disk(
+            """
+            {"world":[],"preferences":[],"idSeq":7,
+             "turns":[{"id":1,"sessionId":1,"at":1000,"speaker":"USER","text":"以前问过的"}]}
+            """.trimIndent(),
+        )
+        assertNull(old.open().recentTurns().single().quoted)
+    }
+
     /** Ids handed out before a crash must not be handed out again. */
     @Test
     fun `the id sequence never rewinds`() {

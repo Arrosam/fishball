@@ -145,6 +145,8 @@ data class TurnDto(
     // those turns were, nothing is going to resume them now.
     val inFlight: Boolean = false,
     val steered: Boolean = false,
+    // And again: a log written before quoting existed reads as turns that quoted nothing.
+    val quoted: String? = null,
 )
 
 @Serializable
@@ -512,6 +514,7 @@ internal fun ConversationTurn.toDto() = TurnDto(
     },
     inFlight,
     steered,
+    quoted,
 )
 
 internal fun TurnDto.toDomain() = ConversationTurn(
@@ -536,6 +539,7 @@ internal fun TurnDto.toDomain() = ConversationTurn(
     },
     inFlight = inFlight,
     steered = steered,
+    quoted = quoted,
     sources = sources.map {
         CitedSource(
             url = it.url,
