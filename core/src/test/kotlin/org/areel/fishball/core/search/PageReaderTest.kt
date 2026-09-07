@@ -82,6 +82,69 @@ class PageReaderTest {
         assertEquals(urls.size, urls.distinct().size, urls.toString())
     }
 
+    /**
+     * The pictures, minus the furniture that outnumbers them.
+     *
+     * An answer may show one of these, and the URL has to be one the page really carried - so
+     * what this pins is not that images are found but that the *wrong* ones are not. A logo
+     * offered as a photograph of a drug box is worse than no picture at all.
+     */
+    @Test
+    fun `pictures come back and the page furniture does not`() = served(
+        """
+        <html><body>
+          <img src="/logo.png" alt="站标">
+          <img src="/static/icons/share.png" alt="分享">
+          <img src="/i/avatar-3.jpg" alt="">
+          <img src="https://count.example/p.gif" width="1" height="1">
+          <img src="/img/diagram.svg" alt="示意图">
+          <img src="pics/box.jpg" alt="布洛芬药盒">
+          <img data-src="/pics/tablet.jpg" src="/static/placeholder.png" alt="药片">
+          <img src="pics/box.jpg" alt="重复的">
+          <img src="data:image/png;base64,AAAA" alt="内嵌">
+        </body></html>
+        """.trimIndent(),
+    ) { page ->
+        val urls = page.images.map { it.url }
+
+        // The two real photographs, both absolute against the page they were on.
+        assertTrue(urls.any { it.endsWith("/pics/box.jpg") }, urls.toString())
+        assertTrue(urls.any { it.endsWith("/pics/tablet.jpg") }, urls.toString())
+        assertEquals("布洛芬药盒", page.images.first { it.url.endsWith("box.jpg") }.alt)
+
+        // The lazy-loaded one is the picture, not the placeholder it is sitting on. Reading
+        // `src` first would have collected a grey box on every page that lazy-loads.
+        assertFalse(urls.any { it.contains("placeholder") }, urls.toString())
+
+        // Chrome, counters, vectors and inline bytes are all not pictures of anything.
+        assertFalse(urls.any { it.contains("logo") }, urls.toString())
+        assertFalse(urls.any { it.contains("share") }, urls.toString())
+        assertFalse(urls.any { it.contains("avatar") }, urls.toString())
+        assertFalse(urls.any { it.contains("count.example") }, urls.toString())
+        assertFalse(urls.any { it.endsWith(".svg") }, urls.toString())
+        assertFalse(urls.any { it.startsWith("data:") }, urls.toString())
+
+        // And the same picture twice is one picture.
+        assertEquals(urls.size, urls.distinct().size, urls.toString())
+    }
+
+    /** A word that merely contains a furniture word is not furniture. */
+    @Test
+    fun `a filename that only looks like chrome is kept`() = served(
+        """
+        <html><body>
+          <img src="/pics/radiология.jpg" alt="x">
+          <img src="/downloads/leaflet-page-1.jpg" alt="说明书第一页">
+          <img src="/pics/iconic-brand-shot.jpg" alt="牌子">
+        </body></html>
+        """.trimIndent(),
+    ) { page ->
+        val urls = page.images.map { it.url }
+        // "downloads" contains "ad"; "iconic" contains "icon". Both are photographs.
+        assertTrue(urls.any { it.contains("leaflet-page-1") }, urls.toString())
+        assertTrue(urls.any { it.contains("iconic-brand-shot") }, urls.toString())
+    }
+
     @Test
     fun `a page that will not open says so instead of throwing`() {
         val reader = HttpPageReader()

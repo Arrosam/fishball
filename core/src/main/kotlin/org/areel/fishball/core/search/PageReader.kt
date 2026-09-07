@@ -14,12 +14,27 @@ import org.areel.fishball.core.notCancellation
 /** A link on a page, so the agent can carry on from where it landed. */
 data class PageLink(val text: String, val url: String)
 
+/**
+ * A picture on a page, so the agent can show one it actually saw.
+ *
+ * The point is the "actually saw". An answer may put an image in front of the reader, and the
+ * only URLs it is allowed to use are these - ones lifted off a page it opened. A model asked for
+ * a picture with no list to choose from writes a plausible URL, and a plausible URL is a broken
+ * image in an app whose whole argument is that it does not make things up.
+ */
+data class PageImage(
+    /** The page's own `alt`, which is the only description of it anybody wrote. May be blank. */
+    val alt: String,
+    val url: String,
+)
+
 /** What came back from opening one page. */
 data class PageContent(
     val url: String,
     val title: String = "",
     val text: String = "",
     val links: List<PageLink> = emptyList(),
+    val images: List<PageImage> = emptyList(),
     val failed: Boolean = false,
     val reason: String? = null,
 )
@@ -79,6 +94,7 @@ class HttpPageReader(
                 title = TITLE.find(html)?.groupValues?.get(1)?.let(::plain).orEmpty(),
                 text = readable(html),
                 links = links(html, url),
+                images = images(html, url),
             )
         }
     } catch (e: Exception) {
@@ -110,6 +126,65 @@ class HttpPageReader(
             .distinctBy { it.url }
             .filterNot { it.url == base }
             .toList()
+
+    /**
+     * The pictures on a page, minus the furniture.
+     *
+     * A page carries far more `<img>` than it has pictures: the logo, the sharing icons, the
+     * avatar beside every comment, the 1×1 that counts the visit. Handing all of those to the
+     * model would bury the one diagram worth showing and invite it to illustrate a drug leaflet
+     * with a site logo, so this filters hard and keeps the order the page had - which on an
+     * article is the order the writer put them in, best first.
+     *
+     * `data-src` as well as `src`, which is not a nicety: lazy-loading is the default on the
+     * Chinese CMSes this app reads, and on those pages every real photograph is behind
+     * `data-src` while `src` holds a grey placeholder. Reading only `src` would have found
+     * nothing but spacers on exactly the sites that matter most here.
+     */
+    private fun images(html: String, base: String): List<PageImage> =
+        IMG.findAll(html)
+            .mapNotNull { tag ->
+                val attrs = tag.value
+                // The placeholder is in `src` on a lazy-loaded page, so the deferred attributes
+                // are preferred rather than used as a fallback.
+                val raw = listOf(DATA_SRC, DATA_ORIGINAL, SRC)
+                    .firstNotNullOfOrNull { it.find(attrs)?.groupValues?.get(1)?.trim() }
+                    ?: return@mapNotNull null
+                if (tiny(attrs)) return@mapNotNull null
+                val url = absolute(raw, base) ?: return@mapNotNull null
+                if (!worthShowing(url)) return@mapNotNull null
+                PageImage(
+                    alt = ALT.find(attrs)?.groupValues?.get(1)?.let(::plain).orEmpty().take(ALT_MAX),
+                    url = url,
+                )
+            }
+            .distinctBy { it.url }
+            .take(IMAGES_KEPT)
+            .toList()
+
+    /**
+     * Whether a URL looks like a picture rather than part of the page's chrome.
+     *
+     * Matched on path segments and the filename stem, not as a substring of the whole URL. `ad`
+     * inside `download`, `icon` inside `iconic`, and a host called `logos.example.com` are all
+     * ways a substring test throws away the photograph it was pointed at.
+     */
+    private fun worthShowing(url: String): Boolean {
+        val path = runCatching { URI(url).path.orEmpty() }.getOrDefault("").lowercase()
+        // SVG is dropped for a reason that is not editorial: the renderer on the other side
+        // decodes bitmaps, and a vector arrives as a blank box. Almost every SVG on a page is
+        // an icon anyway.
+        if (path.endsWith(".svg")) return false
+        val words = path.split('/', '.', '-', '_', '@').filter { it.isNotEmpty() }
+        return words.none { it in FURNITURE }
+    }
+
+    /** A declared 1×1, which is a counter rather than a picture. */
+    private fun tiny(attrs: String): Boolean {
+        val w = DIM_W.find(attrs)?.groupValues?.get(1)?.toIntOrNull()
+        val h = DIM_H.find(attrs)?.groupValues?.get(1)?.toIntOrNull()
+        return (w != null && w <= TINY) || (h != null && h <= TINY)
+    }
 
     /** Relative hrefs resolved against the page, and anything that is not http dropped. */
     private fun absolute(href: String, base: String): String? {
@@ -162,6 +237,43 @@ class HttpPageReader(
         val TAG = Regex("<[^>]*>", RegexOption.DOT_MATCHES_ALL)
         val TITLE = Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
         val ANCHOR = Regex("<a\\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+
+        /*
+         * The whole tag, then its attributes one at a time.
+         *
+         * Not one pattern with src and alt in it: attribute order is the page author's, and a
+         * pattern that fixes an order matches the half of the web that happens to agree with it.
+         */
+        val IMG = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+        val SRC = Regex("\\ssrc=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val DATA_SRC = Regex("\\sdata-src=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val DATA_ORIGINAL = Regex("\\sdata-original=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val ALT = Regex("\\salt=[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+        val DIM_W = Regex("\\swidth=[\"']?(\\d+)", RegexOption.IGNORE_CASE)
+        val DIM_H = Regex("\\sheight=[\"']?(\\d+)", RegexOption.IGNORE_CASE)
+
+        /** A declared edge at or under this is a tracking pixel or a spacer, not a picture. */
+        const val TINY = 2
+
+        /** As much of an `alt` as is a caption rather than a paragraph. */
+        const val ALT_MAX = 120
+
+        /**
+         * Enough for the one worth showing, few enough that a gallery cannot flood the round.
+         *
+         * These go into the tool result the model reads, and a page of thumbnails has hundreds.
+         */
+        const val IMAGES_KEPT = 8
+
+        /**
+         * Path words that mean chrome. Matched whole, never as substrings - see [worthShowing].
+         */
+        val FURNITURE = setOf(
+            "logo", "logos", "icon", "icons", "favicon", "sprite", "sprites",
+            "avatar", "avatars", "spacer", "blank", "pixel", "placeholder",
+            "ad", "ads", "advert", "banner", "button", "btn", "arrow", "emoji",
+            "qrcode", "watermark", "loading",
+        )
         val SPACES = Regex("[ \\t\\u00a0]+")
         val BLANK_LINES = Regex("\\s*\\n\\s*(\\n\\s*)+")
 

@@ -266,7 +266,15 @@ object Tools {
             put("type", "object")
             putJsonObject("properties") {
                 stringProp("text", "给用户看的答案正文。主要用大白话，要紧的一句可以加粗，" +
-                    "列几样东西可以分行列出来；别写成文档。")
+                    "列几样东西可以分行列出来；别写成文档。\n" +
+                    // Spec: an image is evidence, held to the same rule as a quotation. The
+                    // constraint is not stylistic - the URL has to be one the reader handed
+                    // back, because a model asked to illustrate something will otherwise write
+                    // a URL that looks right and shows nothing.
+                    "看到的东西光说不清楚——药盒长什么样、伤口是什么样子、图表——可以把图片放进来，" +
+                    "写成 ![说明](网址)，自己单独一行。\n" +
+                    "网址只能是 $READ 给你列出来的那些，照抄，别改也别自己编。" +
+                    "没有合适的图就不放，答案不靠图片撑。")
                 // Spec R7. The disagreement is the model's to notice - it is the only thing
                 // here that has read both pages - but what is *done* about it stays in code:
                 // the meter draws a fault line instead of a confidence reading, because

@@ -699,6 +699,8 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
         windowed: Boolean,
         found: Boolean?,
         links: List<Pair<String, String>>,
+        /** Alt text to URL, for the pictures actually on the page. See `PageImage`. */
+        images: List<Pair<String, String>> = emptyList(),
     ): String = buildString {
         appendLine("打开了：$name（等级：$tier）")
         if (title.isNotBlank()) appendLine("标题：$title")
@@ -718,6 +720,16 @@ about_user：这句话里跟他本人有关的方面，一条一个名词短语�
         if (links.isNotEmpty()) {
             appendLine("这一页上的链接：")
             links.forEach { (text, href) -> appendLine("- $text → $href") }
+        }
+        if (images.isNotEmpty()) {
+            // Offered with the rule attached, in the same breath. A list of URLs on its own
+            // reads as raw material the model may adapt, and the one thing it must not do with
+            // these is edit them - a URL that is one character off is a broken picture, and a
+            // broken picture is indistinguishable to the reader from an app that is buggy.
+            appendLine("这一页上的图片（要放进答案里，就照抄网址，一个字都别改）：")
+            images.forEach { (alt, src) ->
+                appendLine("- " + alt.ifBlank { "（这张图没有说明）" } + " → $src")
+            }
         }
     }.trim()
 

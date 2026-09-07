@@ -1188,6 +1188,10 @@ class Conversation(
                 windowed = page.text.length > body.length,
                 found = if (find == null) null else at != null,
                 links = page.links.take(LINKS_SHOWN).map { it.text to it.url },
+                // Whole, not windowed. The reader already caps these at a handful, and unlike
+                // the body there is no sense in which a picture halfway down the page is
+                // "further away" than the first one - the model picks by what the alt says.
+                images = page.images.map { it.alt to it.url },
             ),
         )
     }
