@@ -390,8 +390,17 @@ class Conversation(
      * nothing, and would still be wrong: everything after it was said in reply to it.
      */
     fun rewind(): Rewound? {
-        val open = session ?: store.loadSession() ?: return null
-        val turns = store.turnsInSession(open.id)
+        /*
+         * The same turns the thread is drawn from, which is not the same as this session's.
+         *
+         * It was `turnsInSession` and that was the bug: the screen is built from `recentTurns`,
+         * which is not scoped to a session, so the moment one rolled over - or the app was
+         * simply reopened, before anything had been asked into the new session - the tail this
+         * looked at was not the tail somebody was looking at. It found no answer there, returned
+         * null, and the retry quietly appended instead of replacing. Whatever the screen shows
+         * is what a button on the screen has to act on.
+         */
+        val turns = store.recentTurns()
         val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT } ?: return null
         // Everything said since the answer before it: the question, and any correction steered
         // into the turn. See `feeding` on the other side of this - the same rule, because it is
@@ -427,8 +436,9 @@ class Conversation(
         progress: TurnProgress = TurnProgress.Silent,
         images: List<LlmContent.Image> = emptyList(),
     ): Reply? {
-        val open = session ?: store.loadSession() ?: return null
-        val turns = store.turnsInSession(open.id)
+        // The thread's own turns, for the same reason [rewind] uses them: this is reached by
+        // pressing something on the screen, and the screen is not scoped to a session.
+        val turns = store.recentTurns()
         // The tail, and only the tail. A stopped answer further up has a conversation after it,
         // and continuing it would put its answer at the bottom under somebody else's question.
         val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT } ?: return null

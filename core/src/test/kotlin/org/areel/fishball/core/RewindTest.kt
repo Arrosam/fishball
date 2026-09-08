@@ -85,6 +85,34 @@ class RewindTest {
         )
     }
 
+    /**
+     * The regression: the tail is the thread's, not this session's.
+     *
+     * The thread is drawn from `recentTurns`, which is not scoped to a session. Scoped to one,
+     * this found nothing the moment a session had rolled over or the app had simply been
+     * reopened before anything was asked - so the retry silently appended a second answer under
+     * the first instead of replacing it, which is exactly what it was written to stop.
+     */
+    @Test
+    fun `an exchange from an earlier session is still taken back`() {
+        val store = InMemoryStore()
+        val conversation = conversation(store)
+        runBlocking { conversation.ask("布洛芬孕妇能吃吗") }
+
+        // A session rolls over, and nothing has been asked into the new one yet - which is also
+        // the shape of a fresh launch.
+        store.saveSession(
+            org.areel.fishball.core.session.Session(store.nextId(), NOW + 1),
+        )
+
+        val rewound = assertNotNull(
+            conversation(store).rewind(),
+            "the exchange on screen could not be taken back once the session had moved on",
+        )
+        assertEquals("布洛芬孕妇能吃吗", rewound.question)
+        assertTrue(store.recentTurns().isEmpty())
+    }
+
     /** Nothing to take back is not an error, and must not empty the log. */
     @Test
     fun `an empty conversation rewinds to nothing`() {
