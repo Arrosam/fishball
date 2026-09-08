@@ -45,6 +45,17 @@ data class ChatMessage(
     /** Why this turn failed, when it did. Not persisted: an error is not part of the record. */
     val detail: String? = null,
     /**
+     * This turn ended in a failure rather than an answer.
+     *
+     * Separate from [detail] because detail is the *explanation*, which is deliberately not
+     * written down - and the failure itself is, in the only way that survives: the sentence the
+     * turn was drawn with. So a failure read back out of the log is still known to be one, and
+     * still offers the way out of it. Keyed on that sentence rather than on detail alone, which
+     * would have made the offer vanish the moment the app was reopened - exactly when somebody
+     * is coming back to try again.
+     */
+    val failed: Boolean = false,
+    /**
      * The earlier answer this question was about, whole, on a question that quoted one.
      *
      * Whole here as well as in the log, and trimmed only where it is drawn - so the bubble and
@@ -161,6 +172,40 @@ class ChatViewModel(
             .filterNot { it.id == unfinished?.id }
             .map { it.toMessage(stoppedNotice) }
         if (unfinished != null) carryOn(unfinished)
+    }
+
+    /**
+     * Ask again for the answer at [index], with everything that produced it.
+     *
+     * Not "the question above this one". A turn can be fed by several messages - the question,
+     * and anything said into it while it ran - so what is gathered is every user message between
+     * the previous answer and this one, in the order they were said. Retrying on one of them
+     * alone would re-ask a corrected question without its correction, or a correction with no
+     * question, and get a different answer for a reason nobody could see.
+     *
+     * Pictures and quotations come with it. A retry that dropped the photograph would be asking
+     * a different question and calling it the same one; [Attachments.reload] hands back the very
+     * bytes that went the first time rather than a re-encoded copy.
+     *
+     * It goes through [send], which is the point: a retry is an ordinary question that happens
+     * to have been composed by the app rather than typed. Everything downstream - the bubble,
+     * the log, steering, the running-turn check - is the same code it always was.
+     */
+    fun retry(index: Int) {
+        val feeding = feeding(messages, index)
+        if (feeding.isEmpty()) return
+
+        val text = feeding.joinToString(separator = "\n") { it.text }.trim()
+        val images = feeding.flatMap { it.images }.mapNotNull { backend.attachments.reload(it) }
+        // Several quotations in one retry is not a thing anybody set out to make, but two
+        // messages either side of a correction can each carry one. Joined rather than dropped:
+        // losing one would quietly change what is being asked about.
+        val quoted = feeding.mapNotNull { it.quoted }
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString(separator = "\n\n")
+
+        if (text.isBlank() && images.isEmpty()) return
+        send(text, images, quoted)
     }
 
     fun send(
@@ -514,6 +559,8 @@ private fun Reply.toMessage() = ChatMessage(
     confidence = shape.toConfidence(),
     conflict = conflict,
     detail = detail,
+    // `detail` is set exactly when the turn failed - the same honest test used elsewhere here.
+    failed = detail != null,
 )
 
 /**
@@ -525,12 +572,34 @@ private fun Reply.toMessage() = ChatMessage(
  * a bubble with nothing in it under a panel full of working, which reads as a bug rather than as
  * the turn somebody stopped.
  */
+/**
+ * The messages that produced the answer at [index]: everything said since the previous answer.
+ *
+ * A turn is not always fed by one message. The question starts it, and anything said into it
+ * while it ran was handed to the same turn - so all of them together are what produced the
+ * answer, and a retry that took only the nearest one would re-ask a corrected question without
+ * its correction and get a different answer for a reason nobody could see.
+ *
+ * Empty when there is nothing to re-ask, which the caller treats as "no retry": an index off
+ * the end, or an answer with no question above it, which is what the first row of a restored
+ * thread looks like once the log has been trimmed to its tail.
+ */
+internal fun feeding(messages: List<ChatMessage>, index: Int): List<ChatMessage> {
+    if (index !in messages.indices) return emptyList()
+    return messages.take(index)
+        .takeLastWhile { it.fromUser }
+        .filter { it.text.isNotBlank() || it.images.isNotEmpty() }
+}
+
 private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     fromUser = speaker == Speaker.USER,
     // Stripped, because a build that stamped assistant turns on the way to the model taught it
     // to write the stamp into its answers, and those answers are in the log. See
     // `Conversation.unstamped` - this is the same cleaning, for the half the user reads.
     text = STAMPED.replaceFirst(text, "").ifBlank { if (speaker == Speaker.USER) "" else stopped },
+    // What the log kept of a failure is the sentence it was drawn with, so that is what it is
+    // recognised by. A stopped turn is not this: it comes back blank and is drawn as [stopped].
+    failed = speaker != Speaker.USER && text == UiCopy.SERVICE_UNAVAILABLE,
     images = images,
     quoted = quoted,
     // The working panel, restored. Both halves: the reasoning the model wrote and the lines the

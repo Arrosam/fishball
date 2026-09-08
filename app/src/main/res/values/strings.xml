@@ -179,6 +179,13 @@
     <string name="answer_copy">复制答案</string>
     <string name="answer_copied">已复制</string>
     <string name="answer_quote">引用这段，接着问</string>
+    <string name="answer_retry">重新问一次</string>
+
+    <!--
+      The only thing there is to do with a failure, so it is a button rather than a mark. Read
+      rather than heard, unlike the four above it.
+    -->
+    <string name="answer_retry_big">重试</string>
 
     <!-- A picture the answer carries, while it loads and if it never does. -->
     <string name="answer_image_loading">图片加载中…</string>

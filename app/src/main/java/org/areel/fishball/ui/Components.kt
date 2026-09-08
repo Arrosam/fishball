@@ -602,6 +602,14 @@ fun AssistantBubble(
      * thing anyone helping them will ask for.
      */
     detail: String? = null,
+    /**
+     * This plate is a failure rather than an answer.
+     *
+     * Not the same question as `detail != null`: the explanation is not written down and a
+     * failure read back out of the log has none, while still being a failure and still being
+     * the thing somebody reopened the app to try again. See `ChatMessage.failed`.
+     */
+    failed: Boolean = false,
     /** §21's narration for this turn, kept after the answer landed rather than discarded. */
     steps: List<String> = emptyList(),
     /** What it was thinking while it worked. Same: kept, not thrown away when the answer came. */
@@ -616,6 +624,15 @@ fun AssistantBubble(
      * and offering to would be the app inviting somebody to argue with an error message.
      */
     onQuote: ((String) -> Unit)? = null,
+    /**
+     * Ask for this answer again, when this is an answer worth offering that for.
+     *
+     * Null on the answers in the middle of a conversation: asking again for something three
+     * questions back appends a fresh answer at the bottom, which reads as the app having
+     * answered something nobody just asked. The caller decides - see the call site - and the
+     * rule there is the last answer, plus any answer that is a failure wherever it sits.
+     */
+    onRetry: (() -> Unit)? = null,
 ) {
     val edge = remember { Path() }
     var showDetail by remember(detail) { mutableStateOf(false) }
@@ -686,11 +703,41 @@ fun AssistantBubble(
             }
             SourceCard(sources)
 
+            /*
+             * A failure gets a real button, not a mark.
+             *
+             * The marks under an answer are for things somebody might do; this is the only
+             * thing there is to do with 「这会儿连不上」, and a 26dp glyph offering it is the app
+             * being coy about having failed. So it is the width of the plate and the same
+             * magenta the send key is - the one control on the screen that is unmistakably the
+             * next step.
+             *
+             * The marks stay underneath it all the same. This is one more way to reach what is
+             * already in the row rather than a second mechanism with its own rules.
+             */
+            if (failed && onRetry != null) {
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Areel.Magenta, RectangleShape)
+                        .pressable(Feel.CLICKY, onClick = onRetry)
+                        .padding(vertical = 13.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        stringResource(R.string.answer_retry_big),
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                        color = Areel.Paper,
+                    )
+                }
+            }
+
             // The working-out does not vanish when the answer arrives. Watching it and then
             // losing it is worse than never seeing it — the one moment you want to check how
             // something was reached is after you have read what it says.
             val work = steps.isNotEmpty() || thinking.isNotBlank()
-            if (work || onQuote != null) {
+            if (work || onQuote != null || onRetry != null) {
                 Spacer(Modifier.height(10.dp))
                 /*
                  * The three things you can do with an answer, on one row under it.
@@ -745,6 +792,14 @@ fun AssistantBubble(
                             label = stringResource(R.string.answer_quote),
                             tint = Areel.Ink40,
                         ) { quote(plain) }
+                    }
+                    onRetry?.let {
+                        PlateAction(
+                            icon = R.drawable.ic_retry,
+                            label = stringResource(R.string.answer_retry),
+                            tint = Areel.Ink40,
+                            onClick = it,
+                        )
                     }
                 }
                 if (showWork) {

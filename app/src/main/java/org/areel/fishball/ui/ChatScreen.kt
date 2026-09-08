@@ -480,7 +480,29 @@ fun ChatScreen(
                                      * 「这会儿连不上」 back at the model would be the app
                                      * inviting somebody to argue with an error message.
                                      */
-                                    onQuote = if (message.detail != null) {
+                                    /*
+                                     * The last answer, and any failure wherever it sits.
+                                     *
+                                     * The last one because a retry appends its answer at the
+                                     * bottom, and doing that for something three questions back
+                                     * reads as the app answering a question nobody just asked.
+                                     * A failure is the exception because there is no answer
+                                     * there to be displaced - only the thing that went wrong,
+                                     * which is worth a way out however far up it has scrolled.
+                                     *
+                                     * Never while a turn is running: two turns at once is not
+                                     * a state this app has, and `send` would take the retry as
+                                     * a correction to the turn already going.
+                                     */
+                                    failed = message.failed,
+                                    onRetry = if (
+                                        !busy && (index == messages.lastIndex || message.failed)
+                                    ) {
+                                        { vm.retry(index) }
+                                    } else {
+                                        null
+                                    },
+                                    onQuote = if (message.failed) {
                                         null
                                     } else {
                                         { quoted ->

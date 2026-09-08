@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Retry. A square loop with one corner open and an arrowhead on the end, so it
+  reads as "round again" without a circle - there are no circles in this set.
+
+  Geometry from docs/06-design-directions.md section E: 24 grid, stroke 1.5,
+  butt caps, miter joins. Colour is set by the Icon() tint at the call site.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- three sides and most of the fourth, opened at the top right -->
+    <path
+        android:pathData="M15 4 H20 V19 H4 V4 H10"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+    <!-- the head, on 45s, pointing back into the gap -->
+    <path
+        android:pathData="M12 1 L15 4 L12 7"
+        android:strokeColor="#FF101010"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="miter" />
+</vector>
