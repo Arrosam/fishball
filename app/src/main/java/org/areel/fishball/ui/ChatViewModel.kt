@@ -56,6 +56,15 @@ data class ChatMessage(
      */
     val failed: Boolean = false,
     /**
+     * This turn was stopped part way, so there is work in the log behind it.
+     *
+     * Drawn as 「那就先不查了」 either way; what this adds is that retrying it should carry on
+     * rather than start over. Recognised on the way out of the log by the answer being blank,
+     * which is exactly what the driver leaves when a turn ends without one - the same signal
+     * `Conversation.continueLast` refuses on when it is absent.
+     */
+    val unfinished: Boolean = false,
+    /**
      * The earlier answer this question was about, whole, on a question that quoted one.
      *
      * Whole here as well as in the log, and trimmed only where it is drawn - so the bubble and
@@ -195,17 +204,53 @@ class ChatViewModel(
         val feeding = feeding(messages, index)
         if (feeding.isEmpty()) return
 
-        val text = feeding.joinToString(separator = "\n") { it.text }.trim()
+        val message = messages.getOrNull(index) ?: return
+        val last = index == messages.lastIndex
         val images = feeding.flatMap { it.images }.mapNotNull { backend.attachments.reload(it) }
         // Several quotations in one retry is not a thing anybody set out to make, but two
         // messages either side of a correction can each carry one. Joined rather than dropped:
         // losing one would quietly change what is being asked about.
+        val asWritten = feeding.joinToString(separator = "\n") { it.text }.trim()
         val quoted = feeding.mapNotNull { it.quoted }
             .takeIf { it.isNotEmpty() }
             ?.joinToString(separator = "\n\n")
 
+        /*
+         * A turn that was stopped is carried on, not asked again.
+         *
+         * It got somewhere before it was stopped - that is what stopping is for, as against a
+         * turn that failed - and the rounds it got through are in the log. Asking again would
+         * throw those away and pay for the same searches a second time. Only ever the newest
+         * one: the driver can only continue the tail, and there is nowhere else retry is
+         * offered that could reach this.
+         */
+        if (last && message.unfinished) {
+            begin(asked = null, said = emptyList()) { conversation, progress ->
+                // Falling back to asking, because between drawing the button and pressing it the
+                // tail can have stopped being what it was. Better a fresh answer than none.
+                conversation.continueLast(progress, images)
+                    ?: conversation.ask(asWritten, progress, images, quoted)
+            }
+            return
+        }
+
+        /*
+         * The newest answer is replaced rather than added to.
+         *
+         * Taken off the record first, so the thread does not end up holding the same question
+         * twice with two different answers under it - a record of something that did not happen.
+         * The bubbles go with it and `send` puts them back, which is what makes this read as the
+         * question being asked again rather than as a second question that happens to match.
+         *
+         * An older failure is the other way round: there is a conversation after it, so its
+         * retry is a new question at the bottom and the failure stays where it is.
+         */
+        val rewound = if (last) backend.conversation?.rewind() else null
+        if (rewound != null) messages.subList(index - feeding.size, messages.size).clear()
+
+        val text = rewound?.question ?: asWritten
         if (text.isBlank() && images.isEmpty()) return
-        send(text, images, quoted)
+        send(text, images, rewound?.quoted ?: quoted)
     }
 
     fun send(
@@ -429,6 +474,9 @@ class ChatViewModel(
                     text = stoppedNotice,
                     steps = narration.toList(),
                     thinking = thinking,
+                    // There is a half-done turn in the log behind this one. Retrying it carries
+                    // on from what it found rather than asking again from nothing.
+                    unfinished = true,
                 )
                 throw stopped
             } finally {
@@ -600,6 +648,8 @@ private fun ConversationTurn.toMessage(stopped: String) = ChatMessage(
     // What the log kept of a failure is the sentence it was drawn with, so that is what it is
     // recognised by. A stopped turn is not this: it comes back blank and is drawn as [stopped].
     failed = speaker != Speaker.USER && text == UiCopy.SERVICE_UNAVAILABLE,
+    // A blank answer is a turn that ended without one, which is what stopping leaves behind.
+    unfinished = speaker != Speaker.USER && text.isBlank(),
     images = images,
     quoted = quoted,
     // The working panel, restored. Both halves: the reasoning the model wrote and the lines the

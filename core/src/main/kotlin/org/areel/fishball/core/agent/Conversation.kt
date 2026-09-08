@@ -375,6 +375,81 @@ class Conversation(
     }
 
     /**
+     * The last exchange of this session, taken back off the record.
+     *
+     * For a retry of the newest answer, which re-asks the question rather than adding to it: the
+     * answer being replaced has to go, or the thread keeps the same question twice with two
+     * different answers under it, which is a record of something that did not happen.
+     *
+     * What comes back is what fed that answer, so the caller can ask it again - the question and
+     * anything said into the turn while it ran, in the order they were said. Null when the tail
+     * is not an exchange this can take back: no session, no trailing answer, or nothing above it
+     * to re-ask.
+     *
+     * Only ever the tail. Removing an exchange from the middle would renumber nothing and break
+     * nothing, and would still be wrong: everything after it was said in reply to it.
+     */
+    fun rewind(): Rewound? {
+        val open = session ?: store.loadSession() ?: return null
+        val turns = store.turnsInSession(open.id)
+        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT } ?: return null
+        // Everything said since the answer before it: the question, and any correction steered
+        // into the turn. See `feeding` on the other side of this - the same rule, because it is
+        // the same question of what produced an answer.
+        val fed = turns.dropLast(1).takeLastWhile { it.speaker == Speaker.USER }
+        if (fed.isEmpty()) return null
+
+        store.dropTurns((fed + answer).map { it.id }.toSet())
+        // The thread is rebuilt from the log on the next turn, so nothing else has to be undone
+        // here - but this object is holding the row it was writing, and that row is gone.
+        writing = null
+        return Rewound(
+            question = fed.joinToString("\n") { it.text }.trim(),
+            images = fed.flatMap { it.images },
+            quoted = fed.mapNotNull { it.quoted }.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
+        )
+    }
+
+    /**
+     * Carry on with the last answer when it was stopped, rather than asking for it again.
+     *
+     * [resume] is the launch-time path and is gated on the flags that distinguish a turn the app
+     * lost from one somebody ended: in-flight, and inside the hour a session goes stale in. This
+     * is the other way in, and neither gate belongs on it. A turn somebody stopped is deliberately
+     * *not* in flight - that is what stopping means - and somebody who has just pressed 重试 has
+     * said, in the only way the app offers, that they are waiting for it however old it is.
+     *
+     * The rounds it got through go back to the model as the calls and results they were, so it
+     * carries on from what it found. Null when that turn is not there any more, or has no
+     * question above it.
+     */
+    suspend fun continueLast(
+        progress: TurnProgress = TurnProgress.Silent,
+        images: List<LlmContent.Image> = emptyList(),
+    ): Reply? {
+        val open = session ?: store.loadSession() ?: return null
+        val turns = store.turnsInSession(open.id)
+        // The tail, and only the tail. A stopped answer further up has a conversation after it,
+        // and continuing it would put its answer at the bottom under somebody else's question.
+        val answer = turns.lastOrNull()?.takeIf { it.speaker == Speaker.ASSISTANT } ?: return null
+        // Nothing to carry on from an answer that already is one.
+        if (answer.text.isNotBlank()) return null
+        val asked = turns.getOrNull(turns.size - 2)?.takeIf { it.speaker == Speaker.USER }
+            ?: return null
+        // The same refusal [resume] makes, and for the same reason: a picture question with no
+        // picture is a different question, and carrying on regardless gets a confident answer
+        // about nothing.
+        if (images.size < asked.images.size) return null
+
+        memory.turnStarted()
+        try {
+            return turn(asked.text, progress, images, resuming = answer, askedId = asked.id)
+        } finally {
+            memory.turnEnded()
+        }
+    }
+
+    /**
      * Pick that turn up and carry on with it.
      *
      * Not a re-ask. The question is the one already in the log, its row is not written again,
@@ -2159,6 +2234,19 @@ data class Reply(
  * off, and no more: the driver re-reads the rows itself when [Conversation.resume] is called, so
  * there is one reader of the log rather than two able to disagree about which turn this is.
  */
+/**
+ * An exchange taken back off the record, as the question that produced it.
+ *
+ * Everything needed to ask it again and nothing about the answer, because the answer is what is
+ * being thrown away. See [Conversation.rewind].
+ */
+data class Rewound(
+    val question: String,
+    /** The names the app kept the pictures under, for whoever can turn those back into bytes. */
+    val images: List<String> = emptyList(),
+    val quoted: String? = null,
+)
+
 data class Unfinished(
     val id: Long,
     val question: String,

@@ -121,6 +121,19 @@ interface MemoryStore {
      */
     fun clearTurns()
 
+    /**
+     * Drop [ids] from the log, as though those turns had never been written.
+     *
+     * For a retry, which re-asks a question and must not leave the answer it is replacing above
+     * the new one - a thread showing the same question twice with two different answers is a
+     * record of something that did not happen.
+     *
+     * The session is kept, unlike [clearTurns]: the conversation is carrying on, and it is one
+     * exchange being taken back rather than the whole of it. Ids that are not there are ignored,
+     * so a caller racing something that already removed them is not an error.
+     */
+    fun dropTurns(ids: Set<Long>)
+
     // ---- session --------------------------------------------------------------------
 
     /**

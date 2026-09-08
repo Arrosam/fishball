@@ -385,6 +385,24 @@ class PersistentStore(
         record(turn)
     }
 
+    /**
+     * A removal in an append-only file is a rewrite, so it is one.
+     *
+     * Nothing can be appended that means "forget the turn above": the reader is last-one-wins by
+     * id and has no way to express absence. So the log is written out whole from what is left,
+     * which is the same thing [compactLog] does and cheap for the same reason - it is bounded by
+     * the live set rather than by the history.
+     *
+     * Under the one lock, like the other two writers here: the removal and the rewrite are one
+     * change, and a checkpoint landing between them would put a dropped turn back.
+     */
+    override fun dropTurns(ids: Set<Long>) = synchronized(this) {
+        if (ids.isEmpty()) return@synchronized
+        inner.dropTurns(ids)
+        compactLog()
+        flush()
+    }
+
     override fun turnsInSession(sessionId: Long): List<ConversationTurn> = inner.turnsInSession(sessionId)
 
     override fun searchTurns(query: String, from: Long?, to: Long?, limit: Int): List<ConversationTurn> =

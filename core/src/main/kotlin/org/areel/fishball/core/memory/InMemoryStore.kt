@@ -190,6 +190,11 @@ class InMemoryStore : MemoryStore {
             }
     }
 
+    override fun dropTurns(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        turns.removeAll { it.id in ids }
+    }
+
     override fun clearTurns() {
         turns.clear()
         // The session goes too. Its bridge summarises a conversation that no longer exists, and

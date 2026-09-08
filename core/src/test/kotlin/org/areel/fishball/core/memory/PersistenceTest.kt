@@ -388,6 +388,43 @@ class PersistenceTest {
         assertNull(old.open().recentTurns().single().quoted)
     }
 
+    /**
+     * A dropped turn stays dropped, which in an append-only file means a rewrite.
+     *
+     * Nothing can be appended that means "forget the line above" - the reader is last-one-wins
+     * by id and has no way to express absence - so a removal that only changed memory would come
+     * back on the next launch. This is the test that would have caught that.
+     */
+    @Test
+    fun `a turn dropped for a retry does not come back`() {
+        val disk = Disk()
+        val store = disk.open()
+        store.appendTurn(turn(1, Speaker.USER, "布洛芬孕妇能吃吗"))
+        store.appendTurn(turn(2, Speaker.ASSISTANT, "孕晚期禁用。"))
+        store.appendTurn(turn(3, Speaker.USER, "那孕早期呢"))
+
+        store.dropTurns(setOf(2L, 3L))
+
+        assertEquals(listOf("布洛芬孕妇能吃吗"), store.recentTurns().map { it.text })
+        assertEquals(
+            listOf("布洛芬孕妇能吃吗"),
+            disk.open().recentTurns().map { it.text },
+            "the dropped turns came back on the next launch",
+        )
+    }
+
+    /** And it leaves the session alone: one exchange is being taken back, not the conversation. */
+    @Test
+    fun `dropping turns is not clearing them`() {
+        val disk = Disk()
+        val store = disk.open()
+        store.saveSession(org.areel.fishball.core.session.Session(1, 1_000))
+        store.appendTurn(turn(1, Speaker.USER, "问题"))
+        store.dropTurns(setOf(1L))
+
+        assertNotNull(disk.open().loadSession(), "the session went with the turn")
+    }
+
     /** Ids handed out before a crash must not be handed out again. */
     @Test
     fun `the id sequence never rewinds`() {
